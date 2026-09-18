@@ -92,7 +92,7 @@ class BatchControlTests(unittest.TestCase):
         self.assertFalse(app.pause_event.is_set())
         self.assertTrue(self._pump_until(lambda: not app.conversion_running, 60))
         self.assertEqual(sum(r.status == "Completed" for r in app.row_results.values()), 5)
-        self.assertFalse(app.retry_button.winfo_ismapped())
+        self.assertEqual(app.retry_button.winfo_manager(), "")
 
     def test_retry_failed_reruns_only_failed_rows(self) -> None:
         app = self.app
@@ -105,7 +105,8 @@ class BatchControlTests(unittest.TestCase):
         self.assertEqual(app.row_results[good].status, "Completed")
         self.assertEqual(app.row_results[bad].status, "Failed")
         self.assertEqual(app._failed_paths(), [bad])
-        self.assertTrue(app.retry_button.winfo_ismapped())
+        # winfo_manager reflects grid() immediately; winfo_ismapped waits for Tk's geometry pass.
+        self.assertEqual(app.retry_button.winfo_manager(), "grid")
 
         good_out_mtime = app.row_results[good].output_path.stat().st_mtime
         Image.new("RGB", (32, 32), "green").save(bad)  # user fixes the file
@@ -115,7 +116,7 @@ class BatchControlTests(unittest.TestCase):
         self.assertEqual(app.row_results[bad].status, "Completed")
         self.assertEqual(app.row_results[good].output_path.stat().st_mtime, good_out_mtime)
         self.assertEqual(app._failed_paths(), [])
-        self.assertFalse(app.retry_button.winfo_ismapped())
+        self.assertEqual(app.retry_button.winfo_manager(), "")
 
     def test_cancel_while_paused_unblocks_workers(self) -> None:
         app = self.app

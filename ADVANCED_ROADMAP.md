@@ -34,11 +34,11 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Intelligent optimizer
 
-- [-] Optimize for a requested maximum size while protecting visual quality
-      (engine: `optimizer.optimize_for_size` with an SSIM floor; not yet surfaced in the
-      Smart Sizer UI, which still solves for size alone).
-- [-] Optimize for a perceptual-quality target (engine: `optimizer.optimize_for_quality`;
-      no UI entry point yet).
+- [x] Optimize for a requested maximum size while protecting visual quality
+      ("Protect quality: keep SSIM ≥" beside the Target size solver; when the size
+      target would breach the floor, quality is raised and the row says so).
+- [x] Optimize for a perceptual-quality target ("Quality target instead of slider:
+      SSIM" — lowest quality meeting the target, for WebP/AVIF/HEIC/JPEG).
 - [x] Automatically compare WebP, AVIF, HEIC, JPEG, and JPEG 2000 (Optimize button;
       dialog sweeps the first four by default, JPEG 2000 is available in the engine).
 - [-] Add SSIM and Butteraugli-style perceptual scoring (block-SSIM and PSNR done in
@@ -77,11 +77,13 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
       beside Cancel; in-flight items finish, workers hold before the next item).
 - [x] Retry failed jobs with editable settings ("Retry failed" appears after a batch with
       failures and re-runs only those rows with the settings currently in the UI).
-- [ ] Add job priorities, duplicate detection, and dependency rules.
+- [-] Add job priorities, duplicate detection, and dependency rules (duplicate detection
+      done: content fingerprints flag "Duplicate of X" rows on ingest and a palette action
+      removes them; priorities and dependency rules not started).
 - [x] Add conversion history with searchable logs and reproducible settings.
 - [ ] Add CPU, GPU, memory, throughput, and ETA telemetry.
 - [ ] Tune worker concurrency automatically from workload and memory pressure.
-- [ ] Add safe disk-space preflight and temporary-file cleanup.
+- [x] Add safe disk-space preflight and temporary-file cleanup.
 - [x] Add structured logs and one-click diagnostics export.
 
 ## Automation and extensibility
@@ -109,20 +111,30 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
-2. Disk-space preflight and temp-file cleanup; job duplicate detection.
-3. Represent operations as a visible processing stack (recipes already carry the data).
-4. Pixel inspector and gamut/alpha/metadata-loss warnings in the comparison studio.
+1. Represent operations as a visible processing stack (recipes already carry the data).
+2. Pixel inspector and gamut/alpha/metadata-loss warnings in the comparison studio.
+3. Rule-based watched folders with recipes; headless CLI.
+4. CPU/memory/throughput/ETA telemetry and automatic worker tuning.
 
 ## Current verification baseline
 
-- Unit/integration tests: 121 passing after the format browser, versioned recipes,
+- Unit/integration tests: 138 passing after the format browser, versioned recipes,
   queue recovery, the optimizer, density modes, the command palette, batch
-  pause/retry and history/diagnostics (`tests/test_format_browser.py`,
-  `tests/test_recipes.py`, `tests/test_queue_store.py`, `tests/test_optimizer.py`,
-  `tests/test_command_palette.py`, `tests/test_batch_controls.py`, `tests/test_history.py`
-  drive the real window; batch tests run real conversions through pause, resume,
-  cancel and retry and point `SHADOW_HISTORY_FILE` at a temp file).
+  pause/retry, history/diagnostics, SSIM quality targets and preflight/dedupe
+  (`tests/test_format_browser.py`, `tests/test_recipes.py`, `tests/test_queue_store.py`,
+  `tests/test_optimizer.py`, `tests/test_command_palette.py`, `tests/test_batch_controls.py`,
+  `tests/test_history.py`, `tests/test_quality_targets.py`, `tests/test_preflight.py` drive
+  the real window; batch tests run real conversions through pause, resume, cancel and
+  retry; env overrides `SHADOW_HISTORY_FILE` / `SHADOW_TEMP_REGISTRY` keep test runs out
+  of the real app data).
+- Preflight & cleanup: `preflight.py` (pessimistic needed-bytes estimate by target
+  format + 50 MB headroom vs. `shutil.disk_usage`; blake2b fingerprint of size + first/last
+  64 KB for duplicates) and `temp_tracker.py` (converters register every `tmp*.tmp.<ext>`
+  they create and unregister on rename/cleanup; startup deletes whatever is still listed).
+- Quality targets: `metrics.py` now owns block-SSIM/PSNR (optimizer re-exports them);
+  `converter.convert_image(min_ssim=, target_ssim=)` + `solve_quality_for_ssim`. Both
+  values are recipe fields and feed the live size estimate. `ConversionResult.note`
+  carries solver explanations and the table shows "Completed · <note>".
 - History & diagnostics: `history.py` appends one JSON line per result to
   `<app data>/history.jsonl` (capped at 5000, each line carries the recipe snapshot;
   History button in the header → search, re-apply settings, open/reveal output);

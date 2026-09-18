@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from converter import ConversionResult
+import temp_tracker
 from utils import (
     build_destination_filename,
     format_file_size,
@@ -329,6 +330,7 @@ def convert_media_file(
         )
         os.close(temp_fd)
         temporary_file = Path(temp_name)
+        temp_tracker.register(temporary_file)
 
         args = [ffmpeg, "-y", "-i", str(source_path.resolve())]
 
@@ -436,10 +438,12 @@ def convert_media_file(
 
         if proc.returncode != 0:
             temporary_file.unlink(missing_ok=True)
+            temp_tracker.unregister(temporary_file)
             raise RuntimeError(f"FFmpeg error: {proc.stderr[-300:] if proc.stderr else 'Unknown conversion failure'}")
 
         # Atomic rename to final output path
         os.replace(temporary_file, output_path)
+        temp_tracker.unregister(temporary_file)
 
         output_size = output_path.stat().st_size
         return ConversionResult(

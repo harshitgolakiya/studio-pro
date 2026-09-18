@@ -26,7 +26,10 @@ from queue_store import (
 
 
 def _png(path: Path, size: int = 40) -> Path:
-    Image.new("RGB", (size, size), "blue").save(path)
+    # Colour derived from the name so differently named fixtures never share
+    # content (identical bytes would be flagged as queue duplicates).
+    shade = sum(path.name.encode()) % 256
+    Image.new("RGB", (size, size), (shade, 64, 255 - shade)).save(path)
     # The app stores resolved paths (which expands 8.3 short names on Windows),
     # so compare against the same form.
     return path.resolve()

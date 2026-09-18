@@ -17,6 +17,7 @@ except ImportError:
     # gives source users a useful error only when they actually select HEIF.
     pass
 
+import temp_tracker
 from utils import (
     build_destination_filename,
     format_file_size,
@@ -118,6 +119,7 @@ class ConversionResult:
     error: str | None = None
     width: int | None = None
     height: int | None = None
+    note: str | None = None  # e.g. why the size solver overshot its target
 
     @property
     def original_size_text(self) -> str:
@@ -167,6 +169,51 @@ def solve_target_size_quality(
     # Use the smallest result we actually produced instead of silently
     # falling back to a high default quality that overshoots the target.
     return smallest_quality_seen if smallest_quality_seen is not None else 5
+
+
+def _encode_and_measure(
+    image: Image.Image,
+    fmt: str,
+    quality: int,
+    save_kwargs: dict | None = None,
+) -> tuple[int, float]:
+    """Encode in memory at ``quality``; return (bytes, SSIM vs. the input)."""
+    from metrics import ssim_downscaled
+
+    buf = io.BytesIO()
+    image.save(buf, format=fmt, quality=quality, **(save_kwargs or {}))
+    size = buf.getbuffer().nbytes
+    buf.seek(0)
+    decoded = Image.open(buf)
+    decoded.load()
+    return size, ssim_downscaled(image, decoded)
+
+
+def solve_quality_for_ssim(
+    image: Image.Image,
+    target_ssim: float,
+    fmt: str = "WEBP",
+    save_kwargs: dict | None = None,
+) -> tuple[int, float]:
+    """Lowest quality (5-95) whose SSIM meets ``target_ssim``; if none does,
+    the highest-SSIM quality tried. Returns (quality, achieved_ssim)."""
+    low, high = 5, 95
+    best: tuple[int, float] | None = None
+    highest: tuple[int, float] | None = None
+    for _ in range(7):
+        mid = (low + high) // 2
+        try:
+            _size, ssim = _encode_and_measure(image, fmt, mid, save_kwargs)
+        except Exception:
+            break
+        if highest is None or ssim > highest[1]:
+            highest = (mid, ssim)
+        if ssim >= target_ssim:
+            best = (mid, ssim)
+            high = mid - 1
+        else:
+            low = mid + 1
+    return best or highest or (95, 1.0)
 
 
 def apply_image_transformations(
@@ -337,11 +384,21 @@ def convert_image(
     aspect_ratio: str | None = None,
     corner_radius: int = 0,
     grayscale: bool = False,
+    min_ssim: float | None = None,
+    target_ssim: float | None = None,
 ) -> ConversionResult:
-    """Convert and optimize image with format conversion, resizing, watermarking, and target size solver."""
+    """Convert and optimize image with format conversion, resizing, watermarking, and target size solver.
+
+    ``target_ssim`` switches lossy formats to quality-target mode: the lowest
+    quality whose SSIM meets the target is used and ``quality`` is ignored.
+    ``min_ssim`` is a floor for the size solver: if hitting ``target_kb``
+    would drop SSIM below it, quality is raised to the floor instead and the
+    result carries a note saying the target was overshot.
+    """
     original_size = None
     width = None
     height = None
+    note: str | None = None
     try:
         if source_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             raise ValueError("Unsupported image format")
@@ -422,6 +479,7 @@ def convert_image(
                         dir=output_directory, suffix=f".tmp{dest_ext}", delete=False
                     ) as temporary_file:
                         temporary_path = Path(temporary_file.name)
+                    temp_tracker.register(temporary_path)
 
                     if fmt == "WEBP":
                         save_options = {
@@ -454,8 +512,9 @@ def convert_image(
                         )
                     os.replace(temporary_path, output_path)
                 finally:
-                    if temporary_path and temporary_path.exists():
-                        temporary_path.unlink()
+                    if temporary_path is not None:
+                        temporary_path.unlink(missing_ok=True)
+                        temp_tracker.unregister(temporary_path)
 
                 output_size = output_path.stat().st_size
                 return ConversionResult(
@@ -545,20 +604,41 @@ def convert_image(
             elif fmt == "XBM":
                 image = image.convert("1")
 
-            # Smart target file size solver
+            # Smart target file size solver / quality-target mode
             chosen_quality = quality
-            if target_kb and target_kb > 0 and fmt in ("WEBP", "JPEG", "AVIF", "HEIC"):
-                target_bytes = target_kb * 1024
+            solvable = fmt in ("WEBP", "JPEG", "AVIF", "HEIC") and not lossless
+            if solvable and (target_ssim or (target_kb and target_kb > 0)):
                 fmt_target = (
                     "WEBP" if fmt == "WEBP" else
                     ("AVIF" if fmt == "AVIF" else ("HEIF" if fmt == "HEIC" else "JPEG"))
                 )
-                chosen_quality = solve_target_size_quality(
-                    image,
-                    target_bytes,
-                    fmt=fmt_target,
-                    save_kwargs={"method": 6} if fmt == "WEBP" else {},
-                )
+                solver_kwargs = {"method": 6} if fmt == "WEBP" else {}
+                if target_ssim:
+                    chosen_quality, achieved = solve_quality_for_ssim(
+                        image, target_ssim, fmt=fmt_target, save_kwargs=solver_kwargs
+                    )
+                    note = f"quality {chosen_quality} for SSIM {achieved:.3f}"
+                    if achieved < target_ssim:
+                        note = f"best SSIM {achieved:.3f} < target {target_ssim:.2f} at quality {chosen_quality}"
+                else:
+                    target_bytes = target_kb * 1024
+                    chosen_quality = solve_target_size_quality(
+                        image, target_bytes, fmt=fmt_target, save_kwargs=solver_kwargs
+                    )
+                    if min_ssim:
+                        _size, achieved = _encode_and_measure(
+                            image, fmt_target, chosen_quality, solver_kwargs
+                        )
+                        if achieved < min_ssim:
+                            floor_quality, floor_ssim = solve_quality_for_ssim(
+                                image, min_ssim, fmt=fmt_target, save_kwargs=solver_kwargs
+                            )
+                            if floor_quality > chosen_quality:
+                                chosen_quality = floor_quality
+                                note = (
+                                    f"over target: quality raised to {floor_quality} "
+                                    f"to keep SSIM ≥ {min_ssim:.2f} (got {floor_ssim:.3f})"
+                                )
 
             temporary_path: Path | None = None
             try:
@@ -566,6 +646,7 @@ def convert_image(
                     dir=output_directory, suffix=f".tmp{dest_ext}", delete=False
                 ) as temporary_file:
                     temporary_path = Path(temporary_file.name)
+                temp_tracker.register(temporary_path)
 
                 if fmt == "WEBP":
                     save_options = {
@@ -647,6 +728,7 @@ def convert_image(
             finally:
                 if temporary_path is not None:
                     temporary_path.unlink(missing_ok=True)
+                    temp_tracker.unregister(temporary_path)
 
         output_size = output_path.stat().st_size
         return ConversionResult(
@@ -658,6 +740,7 @@ def convert_image(
             "Completed",
             width=width,
             height=height,
+            note=note,
         )
     except Exception as error:
         return ConversionResult(

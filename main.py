@@ -72,6 +72,7 @@ from media_engine import (
     get_ffmpeg_path,
 )
 from optimizer_dialog import OptimizerDialog
+from preflight import disk_preflight, find_duplicates
 from preview_modal import ImagePreviewDialog
 from queue_store import (
     build_state,
@@ -85,6 +86,7 @@ from queue_store import (
 from recipe_dialog import RecipeManagerDialog
 from recipes import RECIPE_FIELDS
 from settings import load_settings, update_setting
+import temp_tracker
 from url_downloader_dialog import URLDownloaderDialog
 from video_trimmer_dialog import VideoTrimmerDialog
 from watch_folder_dialog import WatchFolderDialog
@@ -137,6 +139,10 @@ class WebPCompressorApp(ctk.CTk):
         super().__init__()
         self.settings = load_settings()
         self.log = setup_logging()
+        stale = temp_tracker.cleanup_stale()
+        if stale:
+            self.log.info("removed %d stale temp file(s) from an interrupted batch", len(stale))
+        self.duplicate_of: dict[Path, Path] = {}
 
         self.title("Shadow Media Studio Pro")
         self.geometry("1180x860")
@@ -174,6 +180,12 @@ class WebPCompressorApp(ctk.CTk):
         self.enable_target_size = tk.BooleanVar(value=False)
         self.target_size_val = tk.StringVar(value="200")
         self.target_size_unit = tk.StringVar(value="KB")
+        # Perceptual-quality controls (SSIM 0-1): a floor for the size solver
+        # and a standalone quality-target mode.
+        self.protect_quality = tk.BooleanVar(value=False)
+        self.min_ssim_text = tk.StringVar(value="0.95")
+        self.enable_quality_target = tk.BooleanVar(value=False)
+        self.target_ssim_text = tk.StringVar(value="0.95")
 
         # Resizing
         self.enable_resize = tk.BooleanVar(
@@ -1029,6 +1041,35 @@ class WebPCompressorApp(ctk.CTk):
         # Sizing / Constraints Row
         size_row = ctk.CTkFrame(tab_format, fg_color="transparent")
         size_row.pack(fill="x", pady=(2, 2))
+
+        ssim_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        ssim_row.pack(fill="x", pady=(0, 2), after=size_row)
+        ctk.CTkCheckBox(
+            ssim_row,
+            text="Protect quality: keep SSIM ≥",
+            variable=self.protect_quality,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+        self.min_ssim_entry = ctk.CTkEntry(
+            ssim_row, width=50, height=24, textvariable=self.min_ssim_text, justify="center"
+        )
+        self.min_ssim_entry.pack(side="left", padx=(4, 20))
+        ctk.CTkCheckBox(
+            ssim_row,
+            text="Quality target instead of slider: SSIM",
+            variable=self.enable_quality_target,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+        self.target_ssim_entry = ctk.CTkEntry(
+            ssim_row, width=50, height=24, textvariable=self.target_ssim_text, justify="center"
+        )
+        self.target_ssim_entry.pack(side="left", padx=(4, 6))
+        ctk.CTkLabel(
+            ssim_row,
+            text="(lossy image formats; 0.95 ≈ visually lossless, 0.90 = clearly compressed)",
+            font=ctk.CTkFont(size=10),
+            text_color=APP_MUTED,
+        ).pack(side="left")
 
         ctk.CTkCheckBox(
             size_row,
@@ -2000,6 +2041,7 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("Select all", self._select_all_rows, "Queue", "Ctrl+A", "", has_files),
             PaletteAction("Remove selected", self._remove_selected, "Queue", "Del", "delete", lambda: has_sel() and idle()),
             PaletteAction("Clear all", self._clear_all, "Queue", "", "empty queue", lambda: has_files() and idle()),
+            PaletteAction("Remove duplicate files", self._remove_duplicates, "Queue", "", "same content dedupe", lambda: idle() and bool(self._duplicate_paths())),
             PaletteAction("Move selected up", self._move_selected_up, "Queue", "Alt+↑", "reorder", has_sel),
             PaletteAction("Move selected down", self._move_selected_down, "Queue", "Alt+↓", "reorder", has_sel),
             PaletteAction("Convert", self._start_conversion, "Conversion", "Ctrl+Enter", "start run compress", lambda: has_files() and idle()),
@@ -2339,6 +2381,8 @@ class WebPCompressorApp(ctk.CTk):
         if not self.output_directory.get().strip() and self.selected_files:
             self.output_directory.set(str(self.selected_files[0].parent))
 
+        self._flag_duplicates()
+
         if self.selected_files:
             self.empty_state.grid_remove()
             self.table_frame.grid()
@@ -2349,6 +2393,42 @@ class WebPCompressorApp(ctk.CTk):
         self._update_image_summary()
         self._update_button_states()
         self._schedule_queue_save()
+
+    def _flag_duplicates(self) -> None:
+        """Mark rows whose content matches an earlier queue item."""
+        self.duplicate_of = find_duplicates(self.selected_files)
+        for path, original in self.duplicate_of.items():
+            row_id = self.row_ids.get(path)
+            if row_id and path not in self.row_results:
+                vals = list(self.table.item(row_id)["values"])
+                vals[-1] = f"Duplicate of {original.name}"
+                self.table.item(row_id, values=vals)
+        if self.duplicate_of:
+            n = len(self.duplicate_of)
+            self.status_text.set(f"{n} duplicate file{'s' if n != 1 else ''} in the queue (same content, different name)")
+
+    def _duplicate_paths(self) -> list[Path]:
+        return [p for p in self.selected_files if p in self.duplicate_of]
+
+    def _remove_duplicates(self) -> None:
+        dupes = set(self._duplicate_paths())
+        if not dupes:
+            self.status_text.set("No duplicate files in the queue")
+            return
+        for path in list(dupes):
+            row_id = self.row_ids.pop(path, None)
+            if row_id:
+                self.table.delete(row_id)
+            self.selected_files.remove(path)
+            self.row_results.pop(path, None)
+        self.duplicate_of = {}
+        if not self.selected_files:
+            self.empty_state.grid()
+            self.table_frame.grid_remove()
+        self._update_image_summary()
+        self._update_button_states()
+        self._schedule_queue_save()
+        self.status_text.set(f"Removed {len(dupes)} duplicate file{'s' if len(dupes) != 1 else ''}")
 
     def _remove_selected(self) -> None:
         for item_id in self.table.selection():
@@ -2642,6 +2722,10 @@ class WebPCompressorApp(ctk.CTk):
             self.watermark_text,
             self.watermark_logo_path,
             self.watermark_position,
+            self.protect_quality,
+            self.min_ssim_text,
+            self.enable_quality_target,
+            self.target_ssim_text,
         )
         for variable in variables:
             variable.trace_add("write", lambda *_args: self._schedule_size_estimate())
@@ -2713,6 +2797,7 @@ class WebPCompressorApp(ctk.CTk):
                 else 0
             )
             rotate_angle = int(self.rotate_angle.get().split("°", 1)[0].strip())
+            min_ssim, target_ssim = self._quality_targets()
         except (TypeError, ValueError):
             self.estimate_text.set("Fix invalid settings to estimate size")
             return
@@ -2748,6 +2833,8 @@ class WebPCompressorApp(ctk.CTk):
             ),
             "corner_radius": corner_radius,
             "grayscale": self.grayscale.get(),
+            "min_ssim": min_ssim,
+            "target_ssim": target_ssim,
         }
         self.estimate_text.set("Estimating output…")
         threading.Thread(
@@ -2794,6 +2881,27 @@ class WebPCompressorApp(ctk.CTk):
         self.quality.set(value)
         self.quality_text.set(str(value))
         return True
+
+    @staticmethod
+    def _parse_ssim(text: str) -> float:
+        value = float(text.strip())
+        if not 0.5 <= value <= 1.0:
+            raise ValueError("SSIM must be between 0.50 and 1.00")
+        return value
+
+    def _quality_targets(self) -> tuple[float | None, float | None]:
+        """(min_ssim, target_ssim) from the UI; raises ValueError on bad input."""
+        min_ssim = self._parse_ssim(self.min_ssim_text.get()) if self.protect_quality.get() else None
+        target_ssim = self._parse_ssim(self.target_ssim_text.get()) if self.enable_quality_target.get() else None
+        return min_ssim, target_ssim
+
+    def _confirm_low_disk(self, check: Any) -> bool:
+        return messagebox.askyesno(
+            "Low disk space",
+            f"Only {format_file_size(check.free_bytes)} is free on the destination drive, but this "
+            f"batch could need up to {format_file_size(check.needed_bytes)} (a pessimistic estimate).\n\n"
+            "Continue anyway?",
+        )
 
     def _start_conversion(self, only: list[Path] | None = None) -> None:
         """Run the queue, or just ``only`` (a subset of it, e.g. failed rows)
@@ -2885,11 +2993,26 @@ class WebPCompressorApp(ctk.CTk):
                 self.status_text.set("Corner Radius must be a whole number of 0 or more")
                 return
 
+        try:
+            min_ssim, target_ssim = self._quality_targets()
+        except ValueError:
+            self.status_text.set("SSIM values must be numbers between 0.50 and 1.00")
+            return
+
         selected_batch = (
             batch_source
             if is_pro
             else batch_source[:FREE_BATCH_LIMIT]
         )
+
+        preflight_dest = output if output is not None else selected_batch[0].parent
+        check = disk_preflight(selected_batch, preflight_dest, self.target_format.get())
+        if not check.ok and not self._confirm_low_disk(check):
+            self.status_text.set(
+                f"Stopped: only {format_file_size(check.free_bytes)} free on the destination, "
+                f"batch may need up to {format_file_size(check.needed_bytes)}"
+            )
+            return
 
         self.conversion_running = True
         self.cancel_event.clear()
@@ -2955,6 +3078,8 @@ class WebPCompressorApp(ctk.CTk):
                 filename_prefix,
                 filename_suffix,
                 normalize_audio,
+                min_ssim,
+                target_ssim,
             ),
             daemon=True,
         ).start()
@@ -2987,6 +3112,8 @@ class WebPCompressorApp(ctk.CTk):
         filename_prefix: str = "",
         filename_suffix: str = "",
         normalize_audio: bool = False,
+        min_ssim: float | None = None,
+        target_ssim: float | None = None,
     ) -> None:
         total = len(files_snapshot)
         results: list[ConversionResult] = []
@@ -3145,6 +3272,8 @@ class WebPCompressorApp(ctk.CTk):
                         aspect_ratio=aspect_ratio,
                         corner_radius=corner_radius,
                         grayscale=grayscale,
+                        min_ssim=min_ssim,
+                        target_ssim=target_ssim,
                     )
 
             with counter_lock:
@@ -3263,6 +3392,8 @@ class WebPCompressorApp(ctk.CTk):
                 if result.status in ("Completed", "Cancelled")
                 else f"Failed: {result.error or 'Error'}"
             )
+            if result.status == "Completed" and getattr(result, "note", None):
+                status = f"Completed · {result.note}"
             self.table.item(
                 row_id,
                 values=(
