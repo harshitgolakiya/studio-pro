@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
+# Real conversions run here; keep their history out of the user's real log.
+os.environ.setdefault("SHADOW_HISTORY_FILE", str(Path(tempfile.gettempdir()) / "shadow-test-history.jsonl"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PIL import Image

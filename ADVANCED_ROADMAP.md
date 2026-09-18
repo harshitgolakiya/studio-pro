@@ -78,11 +78,11 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 - [x] Retry failed jobs with editable settings ("Retry failed" appears after a batch with
       failures and re-runs only those rows with the settings currently in the UI).
 - [ ] Add job priorities, duplicate detection, and dependency rules.
-- [ ] Add conversion history with searchable logs and reproducible settings.
+- [x] Add conversion history with searchable logs and reproducible settings.
 - [ ] Add CPU, GPU, memory, throughput, and ETA telemetry.
 - [ ] Tune worker concurrency automatically from workload and memory pressure.
 - [ ] Add safe disk-space preflight and temporary-file cleanup.
-- [ ] Add structured logs and one-click diagnostics export.
+- [x] Add structured logs and one-click diagnostics export.
 
 ## Automation and extensibility
 
@@ -109,19 +109,26 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Conversion history with searchable logs; structured diagnostics export.
-2. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
+1. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
+2. Disk-space preflight and temp-file cleanup; job duplicate detection.
 3. Represent operations as a visible processing stack (recipes already carry the data).
-4. Disk-space preflight and temp-file cleanup; job duplicate detection.
+4. Pixel inspector and gamut/alpha/metadata-loss warnings in the comparison studio.
 
 ## Current verification baseline
 
-- Unit/integration tests: 115 passing after the format browser, versioned recipes,
-  queue recovery, the optimizer, density modes, the command palette and batch
-  pause/retry (`tests/test_format_browser.py`, `tests/test_recipes.py`,
-  `tests/test_queue_store.py`, `tests/test_optimizer.py`, `tests/test_command_palette.py`,
-  `tests/test_batch_controls.py` drive the real window; the last one runs real
-  conversions through pause, resume, cancel and retry).
+- Unit/integration tests: 121 passing after the format browser, versioned recipes,
+  queue recovery, the optimizer, density modes, the command palette, batch
+  pause/retry and history/diagnostics (`tests/test_format_browser.py`,
+  `tests/test_recipes.py`, `tests/test_queue_store.py`, `tests/test_optimizer.py`,
+  `tests/test_command_palette.py`, `tests/test_batch_controls.py`, `tests/test_history.py`
+  drive the real window; batch tests run real conversions through pause, resume,
+  cancel and retry and point `SHADOW_HISTORY_FILE` at a temp file).
+- History & diagnostics: `history.py` appends one JSON line per result to
+  `<app data>/history.jsonl` (capped at 5000, each line carries the recipe snapshot;
+  History button in the header → search, re-apply settings, open/reveal output);
+  `diagnostics.py` sets up a rotating `shadow.log` (1 MB × 3) and exports a zip with
+  system/ffmpeg/Pillow info, redacted settings, recent history, queue state and logs.
+  `diagnostics.APP_VERSION` is the app's version constant.
 - Batch controls: `pause_event` held by workers between items (in-flight items finish);
   cancelled items now emit a result event so their rows show "Cancelled" instead of
   silently staying "Ready"; `_start_conversion(only=[...])` re-runs a subset.

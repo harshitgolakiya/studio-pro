@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from concurrent.futures import ThreadPoolExecutor
@@ -57,8 +58,11 @@ from converter import (
     estimate_image_output_size,
     normalize_output_format,
 )
+from diagnostics import export_diagnostics, setup_logging
 from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
 from format_browser import FormatBrowserDialog, describe_format, render_capability_badges
+from history import record_batch
+from history_dialog import HistoryDialog
 from license_dialog import LicenseDialog
 from licensing import FREE_BATCH_LIMIT, is_pro_activated, is_vip_activated
 from media_engine import (
@@ -132,6 +136,7 @@ class WebPCompressorApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.settings = load_settings()
+        self.log = setup_logging()
 
         self.title("Shadow Media Studio Pro")
         self.geometry("1180x860")
@@ -431,6 +436,20 @@ class WebPCompressorApp(ctk.CTk):
             font=ctk.CTkFont(weight="bold" if not is_pro else "normal"),
         )
         self.license_btn_header.pack(side="left", padx=(0, 10))
+
+        self.history_button = ctk.CTkButton(
+            header_right,
+            text="History",
+            command=self._open_history,
+            width=78,
+            height=30,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+        )
+        self.history_button.pack(side="left", padx=(0, 8))
 
         self.density_menu = ctk.CTkOptionMenu(
             header_right,
@@ -2002,12 +2021,29 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("Theme: Light", lambda: self._set_theme("Light"), "Appearance", "", "appearance"),
             PaletteAction("Density: Compact", lambda: self._change_density("Compact"), "Appearance", "", "scaling small tight"),
             PaletteAction("Density: Comfortable", lambda: self._change_density("Comfortable"), "Appearance", "", "scaling default"),
+            PaletteAction("History…", self._open_history, "Help", "", "log past conversions reproduce"),
+            PaletteAction("Export diagnostics…", self._export_diagnostics_bundle, "Help", "", "support bundle logs system info"),
             PaletteAction("License…", self._open_license_manager, "Help", "", "activate pro vip key"),
         ]
 
     def _set_theme(self, mode: str) -> None:
         self.theme_menu.set(mode)
         self._change_appearance_mode(mode)
+
+    def _open_history(self) -> HistoryDialog:
+        return HistoryDialog(self, self._apply_recipe_settings)
+
+    def _export_diagnostics_bundle(self) -> None:
+        folder = filedialog.askdirectory(title="Save diagnostics bundle to…")
+        if not folder:
+            return
+        try:
+            out = export_diagnostics(Path(folder))
+        except Exception as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+        self.status_text.set(f"Diagnostics saved: {out.name}")
+        reveal_in_file_manager(out)
 
     def _open_command_palette(self) -> CommandPalette:
         return CommandPalette(self, self._palette_actions())
@@ -2858,6 +2894,7 @@ class WebPCompressorApp(ctk.CTk):
         self.conversion_running = True
         self.cancel_event.clear()
         self.pause_event.clear()
+        self.log.info("batch start: %d items -> %s", len(selected_batch), self.target_format.get())
         self.pause_button.configure(text="Pause")
         self.retry_button.grid_remove()
         self._set_controls_enabled(False)
@@ -3190,6 +3227,17 @@ class WebPCompressorApp(ctk.CTk):
                     self.status_text.set(
                         f"Cancelled: {summary}" if cancelled else summary
                     )
+                    try:
+                        record_batch(results, self._collect_recipe_settings(), self.target_format.get())
+                        self.log.info(
+                            "batch done: %d completed, %d failed, cancelled=%s, %.2fs, saved %s",
+                            completed, failed, cancelled, elapsed, format_file_size(saved_bytes),
+                        )
+                        for r in results:
+                            if r.status == "Failed":
+                                self.log.warning("failed: %s -> %s", r.source_path, r.error)
+                    except Exception:
+                        self.log.exception("could not record history")
                     self.conversion_running = False
                     self.pause_event.clear()
                     self._set_controls_enabled(True)
