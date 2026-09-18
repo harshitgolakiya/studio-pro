@@ -16,8 +16,8 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 - [x] Preserve multi-frame animation when exporting GIF and WebP.
 - [x] Replace the long format dropdown with a searchable, categorized format browser.
 - [x] Add format capability badges: alpha, animation, HDR, lossless, metadata, and compatibility.
-- [ ] Add compact and comfortable density modes.
-- [ ] Add a command palette for every major action.
+- [x] Add compact and comfortable density modes.
+- [x] Add a command palette for every major action.
 
 ## Inspection and comparison studio
 
@@ -107,16 +107,22 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Add compact/comfortable density modes and the command palette.
-2. Retry failed jobs with editable settings; pause/resume the queue.
-3. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
-4. Represent operations as a visible processing stack (recipes already carry the data).
+1. Retry failed jobs with editable settings; pause/resume the queue.
+2. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
+3. Represent operations as a visible processing stack (recipes already carry the data).
+4. Conversion history with searchable logs; structured diagnostics export.
 
 ## Current verification baseline
 
-- Unit/integration tests: 109 passing after the format browser, versioned recipes,
-  queue recovery and the optimizer (`tests/test_format_browser.py`, `tests/test_recipes.py`,
-  `tests/test_queue_store.py`, `tests/test_optimizer.py` drive the real window).
+- Unit/integration tests: 112 passing after the format browser, versioned recipes,
+  queue recovery, the optimizer, density modes and the command palette
+  (`tests/test_format_browser.py`, `tests/test_recipes.py`, `tests/test_queue_store.py`,
+  `tests/test_optimizer.py`, `tests/test_command_palette.py` drive the real window).
+- Density: header menu (Compact 0.88× / Comfortable 1.0×) mapped to CustomTkinter's
+  global widget scaling, persisted as `settings.density`, applied before the UI builds.
+- Command palette: `command_palette.py`, Ctrl+K / Ctrl+Shift+P; actions come from
+  `WebPCompressorApp._palette_actions()` with per-action enabled predicates (needs
+  selection, idle, running…), grouped by category, word-match filter.
 - Optimizer: `optimizer.py` (pure-Pillow block-SSIM/PSNR, image profiling, in-memory
   codec sweep on a ≤1024 px working copy with sizes scaled to full resolution, Pareto
   frontier, destination-aware recommendation, exact size solver with SSIM floor,

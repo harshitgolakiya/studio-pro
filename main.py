@@ -46,6 +46,7 @@ try:
 except ImportError:
     HAS_DRAG_DROP = False
 
+from command_palette import CommandPalette, PaletteAction
 from converter import (
     IMAGE_OUTPUT_FORMATS,
     LOSSY_IMAGE_FORMATS,
@@ -121,6 +122,10 @@ APP_MUTED = ("#607181", "#91A0AE")
 APP_CTA = "#D4A03C"
 APP_CTA_STRONG = "#E8B750"
 APP_BORDER = ("#D6DFE7", "#27303B")
+
+# Density presets map to CustomTkinter's global widget scaling, which rescales
+# paddings, fonts and control heights together so the layout stays coherent.
+DENSITY_SCALES = {"Compact": 0.88, "Comfortable": 1.0}
 
 
 class WebPCompressorApp(ctk.CTk):
@@ -233,6 +238,7 @@ class WebPCompressorApp(ctk.CTk):
         self._estimate_after_id: str | None = None
         self._estimate_generation = 0
 
+        self._apply_density(self.settings.get("density", "Comfortable"))
         self._build_interface()
         self._setup_estimate_traces()
         self._setup_drag_and_drop()
@@ -296,6 +302,9 @@ class WebPCompressorApp(ctk.CTk):
         self.bind("<Alt-Up>", lambda _e: self._move_selected_up())
         self.bind("<Alt-Down>", lambda _e: self._move_selected_down())
         self.bind("<Control-Return>", lambda _e: self._start_conversion())
+        self.bind("<Control-k>", lambda _e: self._open_command_palette())
+        self.bind("<Control-K>", lambda _e: self._open_command_palette())
+        self.bind("<Control-Shift-P>", lambda _e: self._open_command_palette())
 
     @staticmethod
     def _resource_path(relative_path: str) -> Path:
@@ -421,6 +430,17 @@ class WebPCompressorApp(ctk.CTk):
             font=ctk.CTkFont(weight="bold" if not is_pro else "normal"),
         )
         self.license_btn_header.pack(side="left", padx=(0, 10))
+
+        self.density_menu = ctk.CTkOptionMenu(
+            header_right,
+            values=list(DENSITY_SCALES),
+            command=self._change_density,
+            width=112,
+            height=30,
+            corner_radius=7,
+        )
+        self.density_menu.set(self.settings.get("density", "Comfortable"))
+        self.density_menu.pack(side="left", padx=(0, 8))
 
         self.theme_menu = ctk.CTkOptionMenu(
             header_right,
@@ -1901,6 +1921,64 @@ class WebPCompressorApp(ctk.CTk):
         ctk.set_appearance_mode(new_mode)
         update_setting("theme", new_mode)
         self.after(50, self._apply_table_theme)
+
+    def _apply_density(self, density: str) -> None:
+        ctk.set_widget_scaling(DENSITY_SCALES.get(density, 1.0))
+
+    def _change_density(self, density: str) -> None:
+        if density not in DENSITY_SCALES:
+            density = "Comfortable"
+        self._apply_density(density)
+        update_setting("density", density)
+        if hasattr(self, "density_menu"):
+            self.density_menu.set(density)
+        self.after(50, self._force_redraw_after_resize)
+
+    # -- command palette ----------------------------------------------------
+
+    def _palette_actions(self) -> list[PaletteAction]:
+        has_sel = lambda: bool(self.table.selection())
+        has_files = lambda: bool(self.selected_files)
+        idle = lambda: not self.conversion_running
+        sel_is_video = lambda: any(
+            p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+            for p, r in self.row_ids.items()
+            if r in self.table.selection()
+        )
+        return [
+            PaletteAction("Add files…", self._add_files, "Queue", "Ctrl+O", "open images import", idle),
+            PaletteAction("Add folder…", self._add_folder, "Queue", "", "import directory", idle),
+            PaletteAction("Select all", self._select_all_rows, "Queue", "Ctrl+A", "", has_files),
+            PaletteAction("Remove selected", self._remove_selected, "Queue", "Del", "delete", lambda: has_sel() and idle()),
+            PaletteAction("Clear all", self._clear_all, "Queue", "", "empty queue", lambda: has_files() and idle()),
+            PaletteAction("Move selected up", self._move_selected_up, "Queue", "Alt+↑", "reorder", has_sel),
+            PaletteAction("Move selected down", self._move_selected_down, "Queue", "Alt+↓", "reorder", has_sel),
+            PaletteAction("Convert", self._start_conversion, "Conversion", "Ctrl+Enter", "start run compress", lambda: has_files() and idle()),
+            PaletteAction("Cancel conversion", self._cancel_conversion, "Conversion", "", "stop abort", lambda: self.conversion_running),
+            PaletteAction("Browse formats…", self._open_format_browser, "Conversion", "", "target output codec", idle),
+            PaletteAction("Recipes…", self._open_recipe_manager, "Conversion", "", "presets save load settings", idle),
+            PaletteAction("Preview & compare selected", self._open_selected_preview, "Inspect", "", "diff before after", has_sel),
+            PaletteAction("Optimize selected…", self._open_selected_optimizer, "Inspect", "", "codec compare ssim pareto recommend", has_sel),
+            PaletteAction("Trim selected video…", self._open_selected_trimmer, "Inspect", "", "cut clip", sel_is_video),
+            PaletteAction("Choose output folder…", self._choose_output_directory, "Output", "", "destination directory", idle),
+            PaletteAction("Open output folder", self._open_output_folder, "Output", "", "reveal explorer finder"),
+            PaletteAction("Export CSV report…", self._export_csv_report, "Output", "", "audit results spreadsheet", lambda: bool(self.row_results)),
+            PaletteAction("Watch folder…", self._open_watch_folder_dialog, "Automation", "", "auto monitor pipeline"),
+            PaletteAction("Media downloader…", self._open_url_downloader, "Automation", "", "url stream vip"),
+            PaletteAction("Theme: System", lambda: self._set_theme("System"), "Appearance", "", "appearance"),
+            PaletteAction("Theme: Dark", lambda: self._set_theme("Dark"), "Appearance", "", "appearance"),
+            PaletteAction("Theme: Light", lambda: self._set_theme("Light"), "Appearance", "", "appearance"),
+            PaletteAction("Density: Compact", lambda: self._change_density("Compact"), "Appearance", "", "scaling small tight"),
+            PaletteAction("Density: Comfortable", lambda: self._change_density("Comfortable"), "Appearance", "", "scaling default"),
+            PaletteAction("License…", self._open_license_manager, "Help", "", "activate pro vip key"),
+        ]
+
+    def _set_theme(self, mode: str) -> None:
+        self.theme_menu.set(mode)
+        self._change_appearance_mode(mode)
+
+    def _open_command_palette(self) -> CommandPalette:
+        return CommandPalette(self, self._palette_actions())
 
     def _apply_preset(self, quality: int, is_lossless: bool) -> None:
         if self.conversion_running:

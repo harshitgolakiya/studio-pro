@@ -95,6 +95,7 @@ a = Analysis(
         'queue_store',
         'optimizer',
         'optimizer_dialog',
+        'command_palette',
     ],
     hookspath=[],
     hooksconfig={},

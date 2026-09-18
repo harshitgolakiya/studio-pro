@@ -46,6 +46,7 @@ SETTINGS_FILE = get_app_data_dir() / "settings.json"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "System",
+    "density": "Comfortable",
     "last_output_directory": "",
     "save_in_source_folder": False,
     "default_format": "WEBP",
