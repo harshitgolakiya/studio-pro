@@ -68,8 +68,15 @@ def get_setup_guidance_message() -> str:
             "Python packages: " + ", ".join(missing_packages) + " (run: python -m pip install -r requirements.txt)"
         )
     if missing_tools:
+        if sys.platform == "darwin":
+            install_hint = "brew install ffmpeg"
+        elif sys.platform == "win32":
+            install_hint = "winget install Gyan.Dev.FFmpeg"
+        else:
+            install_hint = "install ffmpeg with your package manager"
         issues.append(
-            "System tools: " + ", ".join(missing_tools) + " (install FFmpeg and ffprobe from https://www.ffmpeg.org/download.html or winget install Gyan.Dev.FFmpeg)"
+            "System tools: " + ", ".join(missing_tools)
+            + f" (install FFmpeg and ffprobe from https://www.ffmpeg.org/download.html or {install_hint})"
         )
 
     if not issues:

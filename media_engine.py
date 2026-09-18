@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -219,11 +220,17 @@ def get_best_hardware_encoder() -> tuple[str, str]:
         if hasattr(subprocess, "CREATE_NO_WINDOW")
         else 0
     )
-    candidates = [
-        ("h264_nvenc", "GPU: NVIDIA NVENC"),
-        ("h264_qsv", "GPU: Intel QuickSync"),
-        ("h264_amf", "GPU: AMD AMF"),
-    ]
+    if sys.platform == "darwin":
+        # VideoToolbox is the only hardware H.264 path on macOS; it covers
+        # every Apple-chip Mac (M-series and the A18 Pro MacBook Neo) as well
+        # as Intel Macs with Quick Sync.
+        candidates = [("h264_videotoolbox", "GPU: Apple VideoToolbox")]
+    else:
+        candidates = [
+            ("h264_nvenc", "GPU: NVIDIA NVENC"),
+            ("h264_qsv", "GPU: Intel QuickSync"),
+            ("h264_amf", "GPU: AMD AMF"),
+        ]
     for enc, label in candidates:
         try:
             cmd = [
@@ -338,6 +345,17 @@ def convert_media_file(
                     args.extend(["-cq", cq, "-preset", "p4"])
                 elif gpu_enc == "h264_amf":
                     args.extend(["-rc", "cbr"])
+                elif gpu_enc == "h264_videotoolbox":
+                    # Constant-quality (-q:v, 1-100) is only honoured by the
+                    # Apple-silicon encoder; the Intel-Mac encoder silently
+                    # ignores it, so it gets an explicit bitrate instead.
+                    if platform.machine() == "arm64":
+                        q = "75" if video_quality == "high" else ("45" if video_quality == "low" else "60")
+                        args.extend(["-q:v", q])
+                    else:
+                        b = "8M" if video_quality == "high" else ("2M" if video_quality == "low" else "4M")
+                        args.extend(["-b:v", b])
+                    args.extend(["-pix_fmt", "yuv420p"])
             else:
                 args.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
                 if video_quality == "high":

@@ -25,7 +25,7 @@ A commercial-grade, native CustomTkinter desktop media conversion and compressio
 
 ### 2. Video & Audio Engine (Powered by FFmpeg & Hardware GPU)
 - **Input Media**: MP4, MKV, MOV, AVI, WEBM, FLV, MP3, WAV, AAC, OGG, M4A, OPUS.
-- **Hardware Acceleration**: Auto-detects Intel QuickSync (`h264_qsv`), NVIDIA NVENC (`h264_nvenc`), and AMD AMF (`h264_amf`) for blazing fast encoding, with graceful CPU fallback.
+- **Hardware Acceleration**: Auto-detects Intel QuickSync (`h264_qsv`), NVIDIA NVENC (`h264_nvenc`), and AMD AMF (`h264_amf`) on Windows, and Apple VideoToolbox (`h264_videotoolbox`) on every Mac, for blazing fast encoding with graceful CPU fallback.
 - **Output Video**:
   - **WebM**: Modern VP9 video codec with Opus audio encoding for web streaming.
   - **MP4**: Universal H.264 video with AAC audio for cross-device compatibility.
@@ -212,8 +212,14 @@ hdiutil create -volname "Shadow Media Studio Pro" -srcfolder dmg_staging \
 This build isn't code-signed or notarized (that requires a paid Apple
 Developer account). On first launch, macOS will refuse to open it via a
 normal double-click. To run it anyway:
-- Right-click (or Control-click) `Shadow.app` -> **Open** -> **Open** again in the dialog, or
-- Run `xattr -cr /Applications/Shadow.app` in Terminal after installing.
+- **macOS 15 Sequoia and later** (this includes the MacBook Neo): double-click
+  `Shadow.app` once and dismiss the "not opened" dialog, then go to
+  **System Settings -> Privacy & Security**, scroll down to the
+  *"Shadow" was blocked* notice and click **Open Anyway**. This is needed once.
+- **macOS 14 and earlier**: right-click (or Control-click) `Shadow.app` ->
+  **Open** -> **Open** again in the dialog.
+- Either version: run `xattr -cr /Applications/Shadow.app` in Terminal after
+  installing, which removes the quarantine flag entirely.
 
 Signing and notarizing for a friction-free install is a separate step --
 it needs an Apple Developer Program membership and a Developer ID

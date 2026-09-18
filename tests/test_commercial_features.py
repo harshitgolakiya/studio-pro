@@ -191,7 +191,7 @@ class CommercialFeaturesTests(unittest.TestCase):
         encoder, label = get_best_hardware_encoder()
         self.assertIsInstance(encoder, str)
         self.assertIsInstance(label, str)
-        self.assertIn(encoder, ["h264_nvenc", "h264_qsv", "h264_amf", "libx264"])
+        self.assertIn(encoder, ["h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox", "libx264"])
 
     def test_watch_folder_pipeline(self) -> None:
         """Test auto-watch folder daemon detecting and processing incoming files."""
