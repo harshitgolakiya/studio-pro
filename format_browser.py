@@ -271,7 +271,10 @@ class FormatBrowserDialog(ctk.CTkToplevel):
             ctk.CTkFrame(row, fg_color="transparent", height=6).pack()
 
         self._bind_recursive(row, "<Button-1>", lambda _e, label=entry.label: self._choose(label))
-        self._bind_recursive(row, "<Enter>", lambda _e, label=entry.label: self._hover(label))
+        # <Motion>, not <Enter>: Enter fires when the window opens beneath a
+        # stationary pointer and would steal the highlight from the current
+        # selection before the user has touched anything.
+        self._bind_recursive(row, "<Motion>", lambda _e, label=entry.label: self._hover(label))
         return row
 
     def _bind_recursive(self, widget: Any, sequence: str, handler: Callable[[Any], None]) -> None:

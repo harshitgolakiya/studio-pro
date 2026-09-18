@@ -66,6 +66,7 @@ from media_engine import (
     convert_media_file,
     get_ffmpeg_path,
 )
+from optimizer_dialog import OptimizerDialog
 from preview_modal import ImagePreviewDialog
 from queue_store import (
     build_state,
@@ -540,6 +541,21 @@ class WebPCompressorApp(ctk.CTk):
             state="disabled",
         )
         self.preview_button.pack(side="left", padx=(0, 4))
+
+        self.optimize_button = ctk.CTkButton(
+            actions,
+            text="Optimize",
+            command=self._open_selected_optimizer,
+            width=74,
+            height=28,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            state="disabled",
+        )
+        self.optimize_button.pack(side="left", padx=(0, 4))
 
         self.remove_button = ctk.CTkButton(
             actions,
@@ -2009,6 +2025,31 @@ class WebPCompressorApp(ctk.CTk):
         if path:
             self._show_preview_dialog(path)
 
+    def _open_selected_optimizer(self) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        path = next((p for p, r in self.row_ids.items() if r == sel[0]), None)
+        if path is None:
+            return
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            messagebox.showinfo("Optimizer", "The optimizer compares image codecs. Select an image file to analyze.")
+            return
+        OptimizerDialog(self, path, self._apply_optimizer_choice)
+
+    def _apply_optimizer_choice(self, codec: str, quality: int) -> None:
+        options = list(self.format_menu.cget("values"))
+        if codec not in options:
+            self.format_menu.configure(values=[*options, codec])
+        self.target_format.set(codec)
+        self.quality.set(int(quality))
+        self.quality_text.set(str(int(quality)))
+        self.lossless.set(False)
+        self.preset_profile.set("Manual / Custom")
+        self._format_changed(codec)
+        self._lossless_changed()
+        self.status_text.set(f"Optimizer applied {codec} at quality {int(quality)}")
+
     def _open_selected_trimmer(self) -> None:
         sel = self.table.selection()
         if not sel:
@@ -3059,6 +3100,9 @@ class WebPCompressorApp(ctk.CTk):
         self.preview_button.configure(
             state=state if self.table.selection() else "disabled"
         )
+        self.optimize_button.configure(
+            state=state if self.table.selection() else "disabled"
+        )
         self.remove_button.configure(
             state=state if self.table.selection() else "disabled"
         )
@@ -3094,6 +3138,7 @@ class WebPCompressorApp(ctk.CTk):
         if not self.conversion_running:
             has_sel = bool(self.table.selection())
             self.preview_button.configure(state="normal" if has_sel else "disabled")
+            self.optimize_button.configure(state="normal" if has_sel else "disabled")
             self.remove_button.configure(state="normal" if has_sel else "disabled")
             self.clear_button.configure(
                 state="normal" if self.selected_files else "disabled"

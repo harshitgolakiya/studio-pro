@@ -34,12 +34,19 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Intelligent optimizer
 
-- [ ] Optimize for a requested maximum size while protecting visual quality.
-- [ ] Optimize for a perceptual-quality target.
-- [ ] Automatically compare WebP, AVIF, HEIC, JPEG, and JPEG 2000.
-- [ ] Add SSIM and Butteraugli-style perceptual scoring.
-- [ ] Display a Pareto frontier of quality versus file size.
-- [ ] Recommend the best codec using image content, alpha, animation, and destination.
+- [-] Optimize for a requested maximum size while protecting visual quality
+      (engine: `optimizer.optimize_for_size` with an SSIM floor; not yet surfaced in the
+      Smart Sizer UI, which still solves for size alone).
+- [-] Optimize for a perceptual-quality target (engine: `optimizer.optimize_for_quality`;
+      no UI entry point yet).
+- [x] Automatically compare WebP, AVIF, HEIC, JPEG, and JPEG 2000 (Optimize button;
+      dialog sweeps the first four by default, JPEG 2000 is available in the engine).
+- [-] Add SSIM and Butteraugli-style perceptual scoring (block-SSIM and PSNR done in
+      pure Pillow; no Butteraugli).
+- [x] Display a Pareto frontier of quality versus file size.
+- [-] Recommend the best codec using image content, alpha, animation, and destination
+      (content kind, alpha and destination are used; animation is detected but not yet
+      weighted).
 - [ ] Learn optional per-user preferences without uploading media.
 
 ## Non-destructive processing recipes
@@ -100,16 +107,22 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Begin the intelligent multi-codec optimizer (size-target and multi-codec compare first).
-2. Add compact/comfortable density modes and the command palette.
-3. Retry failed jobs with editable settings; pause/resume the queue.
+1. Add compact/comfortable density modes and the command palette.
+2. Retry failed jobs with editable settings; pause/resume the queue.
+3. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
 4. Represent operations as a visible processing stack (recipes already carry the data).
 
 ## Current verification baseline
 
-- Unit/integration tests: 92 passing after the format browser, versioned recipes and
-  queue recovery (`tests/test_format_browser.py`, `tests/test_recipes.py`,
-  `tests/test_queue_store.py` drive the real window). Test modules that construct the
+- Unit/integration tests: 109 passing after the format browser, versioned recipes,
+  queue recovery and the optimizer (`tests/test_format_browser.py`, `tests/test_recipes.py`,
+  `tests/test_queue_store.py`, `tests/test_optimizer.py` drive the real window).
+- Optimizer: `optimizer.py` (pure-Pillow block-SSIM/PSNR, image profiling, in-memory
+  codec sweep on a ≤1024 px working copy with sizes scaled to full resolution, Pareto
+  frontier, destination-aware recommendation, exact size solver with SSIM floor,
+  quality-target solver) + `optimizer_dialog.py` (Optimize button beside Preview:
+  candidate table, size-vs-SSIM scatter with frontier, apply to main window).
+  AVIF/HEIC encodes cost ~0.3–0.6 s each, so a full 4-codec sweep is ~5 s. Test modules that construct the
   app set `SHADOW_NO_QUEUE_RESTORE=1` so the suite never prompts or touches the real
   queue file.
 - Queue recovery: `queue_store.py` writes `<app data>/queue_state.json` (debounced 0.5 s

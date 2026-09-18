@@ -93,6 +93,8 @@ a = Analysis(
         'recipes',
         'recipe_dialog',
         'queue_store',
+        'optimizer',
+        'optimizer_dialog',
     ],
     hookspath=[],
     hooksconfig={},
