@@ -73,8 +73,10 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 ## Queue, performance, and reliability
 
 - [x] Persist the queue and restore it after restart or crash.
-- [ ] Pause and resume individual jobs or the whole queue.
-- [ ] Retry failed jobs with editable settings.
+- [-] Pause and resume individual jobs or the whole queue (whole queue: Pause/Resume
+      beside Cancel; in-flight items finish, workers hold before the next item).
+- [x] Retry failed jobs with editable settings ("Retry failed" appears after a batch with
+      failures and re-runs only those rows with the settings currently in the UI).
 - [ ] Add job priorities, duplicate detection, and dependency rules.
 - [ ] Add conversion history with searchable logs and reproducible settings.
 - [ ] Add CPU, GPU, memory, throughput, and ETA telemetry.
@@ -107,17 +109,22 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Retry failed jobs with editable settings; pause/resume the queue.
+1. Conversion history with searchable logs; structured diagnostics export.
 2. Surface the optimizer's SSIM floor in the Smart Sizer and add a quality-target mode.
 3. Represent operations as a visible processing stack (recipes already carry the data).
-4. Conversion history with searchable logs; structured diagnostics export.
+4. Disk-space preflight and temp-file cleanup; job duplicate detection.
 
 ## Current verification baseline
 
-- Unit/integration tests: 112 passing after the format browser, versioned recipes,
-  queue recovery, the optimizer, density modes and the command palette
-  (`tests/test_format_browser.py`, `tests/test_recipes.py`, `tests/test_queue_store.py`,
-  `tests/test_optimizer.py`, `tests/test_command_palette.py` drive the real window).
+- Unit/integration tests: 115 passing after the format browser, versioned recipes,
+  queue recovery, the optimizer, density modes, the command palette and batch
+  pause/retry (`tests/test_format_browser.py`, `tests/test_recipes.py`,
+  `tests/test_queue_store.py`, `tests/test_optimizer.py`, `tests/test_command_palette.py`,
+  `tests/test_batch_controls.py` drive the real window; the last one runs real
+  conversions through pause, resume, cancel and retry).
+- Batch controls: `pause_event` held by workers between items (in-flight items finish);
+  cancelled items now emit a result event so their rows show "Cancelled" instead of
+  silently staying "Ready"; `_start_conversion(only=[...])` re-runs a subset.
 - Density: header menu (Compact 0.88× / Comfortable 1.0×) mapped to CustomTkinter's
   global widget scaling, persisted as `settings.density`, applied before the UI builds.
 - Command palette: `command_palette.py`, Ctrl+K / Ctrl+Shift+P; actions come from

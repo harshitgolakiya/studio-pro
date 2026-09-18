@@ -229,6 +229,7 @@ class WebPCompressorApp(ctk.CTk):
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.conversion_running = False
         self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()  # set = paused; workers wait between items
         self.row_ids: dict[Path, str] = {}
         self.row_results: dict[Path, ConversionResult] = {}
         self.last_results: list[ConversionResult] = []
@@ -1305,14 +1306,43 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.open_button.grid(row=2, column=2, padx=(0, 8))
 
+        self.run_controls = ctk.CTkFrame(footer, fg_color="transparent")
+        self.pause_button = ctk.CTkButton(
+            self.run_controls,
+            text="Pause",
+            command=self._toggle_pause,
+            width=80,
+            height=34,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+            text_color=("#334155", "#f1f5f9"),
+            state="disabled",
+        )
+        self.pause_button.pack(side="left", padx=(0, 6))
         self.cancel_button = ctk.CTkButton(
-            footer,
+            self.run_controls,
             text="Cancel",
             command=self._cancel_conversion,
             width=86,
             height=34,
             corner_radius=7,
             state="disabled",
+        )
+        self.cancel_button.pack(side="left")
+
+        self.retry_button = ctk.CTkButton(
+            footer,
+            text="Retry failed",
+            command=self._retry_failed,
+            width=110,
+            height=38,
+            corner_radius=9,
+            fg_color="transparent",
+            border_width=1,
+            border_color=("#f0b4a8", "#7f1d1d"),
+            text_color=("#b91c1c", "#fca5a5"),
         )
 
         self.convert_button = ctk.CTkButton(
@@ -1955,6 +1985,8 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("Move selected down", self._move_selected_down, "Queue", "Alt+↓", "reorder", has_sel),
             PaletteAction("Convert", self._start_conversion, "Conversion", "Ctrl+Enter", "start run compress", lambda: has_files() and idle()),
             PaletteAction("Cancel conversion", self._cancel_conversion, "Conversion", "", "stop abort", lambda: self.conversion_running),
+            PaletteAction("Pause / resume queue", self._toggle_pause, "Conversion", "", "hold wait continue", lambda: self.conversion_running),
+            PaletteAction("Retry failed items", self._retry_failed, "Conversion", "", "rerun errors again", lambda: idle() and bool(self._failed_paths())),
             PaletteAction("Browse formats…", self._open_format_browser, "Conversion", "", "target output codec", idle),
             PaletteAction("Recipes…", self._open_recipe_manager, "Conversion", "", "presets save load settings", idle),
             PaletteAction("Preview & compare selected", self._open_selected_preview, "Inspect", "", "diff before after", has_sel),
@@ -2727,19 +2759,28 @@ class WebPCompressorApp(ctk.CTk):
         self.quality_text.set(str(value))
         return True
 
-    def _start_conversion(self) -> None:
+    def _start_conversion(self, only: list[Path] | None = None) -> None:
+        """Run the queue, or just ``only`` (a subset of it, e.g. failed rows)
+        with whatever settings are currently in the UI."""
         if self.conversion_running or not self.selected_files:
             self.status_text.set("Add at least one item to convert")
             return
+        batch_source = self.selected_files
+        if only is not None:
+            wanted = {p.resolve() for p in only}
+            batch_source = [p for p in self.selected_files if p in wanted]
+            if not batch_source:
+                self.status_text.set("Nothing to retry")
+                return
         if not self._sync_quality_from_entry():
             return
 
         # Check Free Evaluation Limit
         is_pro = is_pro_activated()
-        if not is_pro and len(self.selected_files) > FREE_BATCH_LIMIT:
+        if not is_pro and len(batch_source) > FREE_BATCH_LIMIT:
             msg = (
                 f"Free Evaluation Mode processes up to {FREE_BATCH_LIMIT} items per batch.\n\n"
-                f"You have {len(self.selected_files)} items selected.\n"
+                f"You have {len(batch_source)} items selected.\n"
                 "Would you like to upgrade to Pro for unlimited batch conversions?"
             )
             if messagebox.askyesno("Upgrade to Pro", msg):
@@ -2809,13 +2850,16 @@ class WebPCompressorApp(ctk.CTk):
                 return
 
         selected_batch = (
-            self.selected_files
+            batch_source
             if is_pro
-            else self.selected_files[:FREE_BATCH_LIMIT]
+            else batch_source[:FREE_BATCH_LIMIT]
         )
 
         self.conversion_running = True
         self.cancel_event.clear()
+        self.pause_event.clear()
+        self.pause_button.configure(text="Pause")
+        self.retry_button.grid_remove()
         self._set_controls_enabled(False)
         self.progress_value.set(0)
 
@@ -2952,10 +2996,18 @@ class WebPCompressorApp(ctk.CTk):
 
         def process_single(source_p: Path) -> ConversionResult:
             nonlocal completed_count
+            # Pause holds workers here, before they pick up new work; items
+            # already encoding run to completion. Cancel always wins.
+            while self.pause_event.is_set() and not self.cancel_event.is_set():
+                time.sleep(0.1)
             if self.cancel_event.is_set():
-                return ConversionResult(
+                res = ConversionResult(
                     source_p, None, None, None, "-", "Cancelled", "Operation cancelled"
                 )
+                with counter_lock:
+                    completed_count += 1
+                self.events.put(("result", res))
+                return res
 
             target_dir = source_p.parent if use_source_folder else output
             assert target_dir is not None
@@ -3139,9 +3191,14 @@ class WebPCompressorApp(ctk.CTk):
                         f"Cancelled: {summary}" if cancelled else summary
                     )
                     self.conversion_running = False
+                    self.pause_event.clear()
                     self._set_controls_enabled(True)
                     self.open_button.configure(state="normal")
                     self.export_csv_button.configure(state="normal")
+                    if self._failed_paths():
+                        self.retry_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
+                    else:
+                        self.retry_button.grid_remove()
 
                     if self.play_sound.get() and not cancelled:
                         play_completion_sound()
@@ -3200,17 +3257,52 @@ class WebPCompressorApp(ctk.CTk):
             self.browse_button.configure(state=state)
 
         self.cancel_button.configure(state="disabled" if enabled else "normal")
+        self.pause_button.configure(state="disabled" if enabled else "normal")
         if enabled:
-            self.cancel_button.grid_remove()
+            self.run_controls.grid_remove()
         else:
-            self.cancel_button.grid(row=2, column=3, padx=(0, 8))
+            self.run_controls.grid(row=2, column=3, padx=(0, 8))
         self._lossless_changed()
 
     def _cancel_conversion(self) -> None:
         if self.conversion_running:
             self.cancel_event.set()
+            self.pause_event.clear()
             self.cancel_button.configure(state="disabled")
+            self.pause_button.configure(state="disabled")
             self.status_text.set("Cancelling remaining items...")
+
+    def _toggle_pause(self) -> None:
+        if not self.conversion_running:
+            return
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self.pause_button.configure(text="Pause")
+            self.status_text.set("Resumed")
+        else:
+            self.pause_event.set()
+            self.pause_button.configure(text="Resume")
+            self.status_text.set("Paused — items already encoding will finish, then the queue waits")
+
+    def _failed_paths(self) -> list[Path]:
+        return [
+            p for p in self.selected_files
+            if (r := self.row_results.get(p)) is not None and r.status == "Failed"
+        ]
+
+    def _retry_failed(self) -> None:
+        failed = self._failed_paths()
+        if not failed:
+            self.status_text.set("No failed items to retry")
+            return
+        for p in failed:
+            self.row_results.pop(p, None)
+            row_id = self.row_ids.get(p)
+            if row_id:
+                vals = list(self.table.item(row_id)["values"])
+                vals[2:] = ["-", "-", "Ready"]
+                self.table.item(row_id, values=vals)
+        self._start_conversion(only=failed)
 
     def _update_button_states(self) -> None:
         if not self.conversion_running:
