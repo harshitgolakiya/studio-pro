@@ -92,6 +92,7 @@ a = Analysis(
         'format_browser',
         'recipes',
         'recipe_dialog',
+        'queue_store',
     ],
     hookspath=[],
     hooksconfig={},

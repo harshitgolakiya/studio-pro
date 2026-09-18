@@ -65,7 +65,7 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Queue, performance, and reliability
 
-- [ ] Persist the queue and restore it after restart or crash.
+- [x] Persist the queue and restore it after restart or crash.
 - [ ] Pause and resume individual jobs or the whole queue.
 - [ ] Retry failed jobs with editable settings.
 - [ ] Add job priorities, duplicate detection, and dependency rules.
@@ -100,15 +100,22 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Add persistent queue recovery.
-2. Begin the intelligent multi-codec optimizer.
-3. Add compact/comfortable density modes and the command palette.
+1. Begin the intelligent multi-codec optimizer (size-target and multi-codec compare first).
+2. Add compact/comfortable density modes and the command palette.
+3. Retry failed jobs with editable settings; pause/resume the queue.
 4. Represent operations as a visible processing stack (recipes already carry the data).
 
 ## Current verification baseline
 
-- Unit/integration tests: 83 passing after the format browser and versioned recipes
-  (`tests/test_format_browser.py` and `tests/test_recipes.py` drive the real window).
+- Unit/integration tests: 92 passing after the format browser, versioned recipes and
+  queue recovery (`tests/test_format_browser.py`, `tests/test_recipes.py`,
+  `tests/test_queue_store.py` drive the real window). Test modules that construct the
+  app set `SHADOW_NO_QUEUE_RESTORE=1` so the suite never prompts or touches the real
+  queue file.
+- Queue recovery: `queue_store.py` writes `<app data>/queue_state.json` (debounced 0.5 s
+  after any queue change, flushed on close, removed when the queue is emptied). On a
+  launch with no CLI paths the app offers to restore; vanished sources are pruned and
+  Completed rows are re-synthesised only if their output file still exists.
 - Recipes: `recipes.py` (schema v2, v1 flat-file migration, typed coercion, library in
   `<app data>/recipes/*.shadow-recipe.json`) + `recipe_dialog.py` (Recipes… button next
   to Profile: apply, save current, duplicate, delete, import, export).

@@ -67,6 +67,15 @@ from media_engine import (
     get_ffmpeg_path,
 )
 from preview_modal import ImagePreviewDialog
+from queue_store import (
+    build_state,
+    clear_queue_state,
+    load_queue_state,
+    persistence_enabled,
+    queue_state_path,
+    save_queue_state,
+    synthesize_result,
+)
 from recipe_dialog import RecipeManagerDialog
 from recipes import RECIPE_FIELDS
 from settings import load_settings, update_setting
@@ -231,6 +240,12 @@ class WebPCompressorApp(ctk.CTk):
         self.after(100, self._process_events)
         self._load_cli_arguments()
         self.protocol("WM_DELETE_WINDOW", self._on_app_close)
+
+        self.queue_state_file = queue_state_path()
+        self._queue_persistence_enabled = persistence_enabled()
+        self._queue_save_job: str | None = None
+        if self._queue_persistence_enabled and len(sys.argv) <= 1:
+            self.after(300, self._offer_queue_restore)
 
         # A fast/large resize (dragging the window edge, or restoring from
         # maximized) can outrun Tk's redraw, leaving stale widgets from the
@@ -1408,7 +1423,66 @@ class WebPCompressorApp(ctk.CTk):
                 self.active_watcher.stop()
             except Exception:
                 pass
+        self._save_queue_now()
         self.destroy()
+
+    # -- queue persistence ------------------------------------------------
+
+    def _schedule_queue_save(self) -> None:
+        if not self._queue_persistence_enabled:
+            return
+        if self._queue_save_job is not None:
+            self.after_cancel(self._queue_save_job)
+        self._queue_save_job = self.after(500, self._save_queue_now)
+
+    def _save_queue_now(self) -> None:
+        self._queue_save_job = None
+        if not self._queue_persistence_enabled:
+            return
+        try:
+            if not self.selected_files:
+                clear_queue_state(self.queue_state_file)
+                return
+            state = build_state(self.selected_files, self.row_results, self.output_directory.get())
+            save_queue_state(state, self.queue_state_file)
+        except Exception:
+            pass
+
+    def _confirm_queue_restore(self, count: int, dropped: int) -> bool:
+        from tkinter import messagebox
+
+        note = f" ({dropped} file{'s' if dropped != 1 else ''} no longer exist and were skipped)" if dropped else ""
+        return messagebox.askyesno(
+            "Restore previous session?",
+            f"Shadow closed with {count} item{'s' if count != 1 else ''} still in the queue{note}.\n\n"
+            "Restore them now?",
+            parent=self,
+        )
+
+    def _offer_queue_restore(self) -> None:
+        if self.selected_files:
+            return
+        state = load_queue_state(self.queue_state_file)
+        if state is None:
+            clear_queue_state(self.queue_state_file)
+            return
+        if not self._confirm_queue_restore(len(state.items), state.dropped):
+            clear_queue_state(self.queue_state_file)
+            return
+
+        if state.output_directory and not self.output_directory.get().strip():
+            self.output_directory.set(state.output_directory)
+        self._ingest_image_paths([item.path for item in state.items])
+        for item in state.items:
+            result = synthesize_result(item)
+            if result is not None:
+                self._display_result(result)
+        completed = sum(1 for i in state.items if i.status == "Completed")
+        self.status_text.set(
+            f"Restored {len(state.items)} item{'s' if len(state.items) != 1 else ''} from your previous session"
+            + (f" ({completed} already completed)" if completed else "")
+        )
+        self._schedule_queue_save()
 
 
     def _format_changed(self, new_format: str) -> None:
@@ -2087,6 +2161,7 @@ class WebPCompressorApp(ctk.CTk):
 
         self._update_image_summary()
         self._update_button_states()
+        self._schedule_queue_save()
 
     def _remove_selected(self) -> None:
         for item_id in self.table.selection():
@@ -2103,6 +2178,7 @@ class WebPCompressorApp(ctk.CTk):
             self.table_frame.grid_remove()
         self._update_image_summary()
         self._update_button_states()
+        self._schedule_queue_save()
 
     def _clear_all(self) -> None:
         self.selected_files.clear()
@@ -2113,6 +2189,7 @@ class WebPCompressorApp(ctk.CTk):
         self.table_frame.grid_remove()
         self._update_image_summary()
         self._update_button_states()
+        self._schedule_queue_save()
 
     def _select_all_rows(self) -> None:
         children = self.table.get_children()
@@ -2136,6 +2213,7 @@ class WebPCompressorApp(ctk.CTk):
                             self.selected_files[p_idx - 1],
                             self.selected_files[p_idx],
                         )
+        self._schedule_queue_save()
 
     def _move_selected_down(self) -> None:
         sel = self.table.selection()
@@ -2154,6 +2232,7 @@ class WebPCompressorApp(ctk.CTk):
                             self.selected_files[p_idx + 1],
                             self.selected_files[p_idx],
                         )
+        self._schedule_queue_save()
 
     def _apply_filter(self, _event: object = None) -> None:
         query = self.search_filter.get().strip().lower()
@@ -2970,6 +3049,7 @@ class WebPCompressorApp(ctk.CTk):
                     status,
                 ),
             )
+        self._schedule_queue_save()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
