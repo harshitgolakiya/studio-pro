@@ -1,0 +1,68 @@
+SHADOW MEDIA STUDIO - END USER LICENSE AGREEMENT
+
+Last updated: 2026
+
+This End User License Agreement ("Agreement") is between you ("Licensee")
+and the publisher of Shadow Media Studio ("Publisher", "we", "us"). By
+installing or using Shadow Media Studio ("Software"), you agree to the
+terms below.
+
+1. LICENSE GRANT
+   Subject to payment where required, Publisher grants you a
+   non-exclusive, non-transferable license to install and use the
+   Software on devices you own or control, for your personal or internal
+   business use.
+
+   - Free Evaluation Mode allows batch processing of up to 5 files per
+     conversion job, with full access to every feature, for evaluation
+     purposes.
+   - A Pro license, activated with a valid license key, removes the
+     evaluation batch limit and is a one-time, lifetime purchase for the
+     licensed major version. It is licensed per user / per machine and
+     may not be shared, resold, or redistributed.
+
+2. RESTRICTIONS
+   You may not: reverse engineer, decompile, or disassemble the Software
+   except where applicable law expressly permits it; remove or alter any
+   proprietary notices; share, sell, sublicense, or publish your license
+   key; or use the Software to build a competing product.
+
+3. THIRD-PARTY MEDIA DOWNLOADS
+   The Software includes an optional media-download feature (available to
+   Pro/VIP license holders) built on the open-source yt-dlp project. This
+   feature only interacts with services you point it at. You are solely
+   responsible for ensuring your use of this feature complies with the
+   terms of service of any third-party site, and with applicable
+   copyright law, in your jurisdiction. The Publisher does not host,
+   distribute, or have any involvement in the media you choose to
+   download, and grants no rights to any third-party copyrighted content.
+
+4. PRIVACY
+   The Software performs all image, audio, and video processing locally
+   on your device. It does not upload your files anywhere, and does not
+   collect telemetry or analytics.
+
+5. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+   NON-INFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+   IN NO EVENT SHALL THE PUBLISHER BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE, INCLUDING LOSS
+   OF DATA OR FILES PROCESSED WITH THE SOFTWARE.
+
+7. REFUNDS
+   Refund requests are handled according to the policy published on the
+   store page where you purchased your license.
+
+8. TERMINATION
+   This license terminates automatically if you violate its terms.
+   Upon termination you must uninstall the Software and destroy your
+   license key.
+
+9. CONTACT
+   For support or licensing questions, contact the address listed on the
+   product's purchase page.

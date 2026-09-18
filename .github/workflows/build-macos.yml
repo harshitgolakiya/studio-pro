@@ -1,0 +1,72 @@
+name: Build macOS App
+
+# Manual runs any time, plus automatic runs when a version tag is pushed
+# (e.g. `git tag v2.0.0 && git push --tags`) so tagged releases always have
+# a matching macOS build attached.
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14   # Apple Silicon (arm64)
+            arch_label: apple-silicon
+          - runner: macos-13   # Intel (x86_64)
+            arch_label: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install FFmpeg via Homebrew
+        run: brew install ffmpeg
+
+      - name: Stage bundled FFmpeg binaries
+        run: |
+          mkdir -p vendor/ffmpeg-mac
+          cp "$(command -v ffmpeg)" vendor/ffmpeg-mac/ffmpeg
+          cp "$(command -v ffprobe)" vendor/ffmpeg-mac/ffprobe
+          chmod +x vendor/ffmpeg-mac/ffmpeg vendor/ffmpeg-mac/ffprobe
+
+      - name: Run automated tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Build Shadow.app with PyInstaller
+        run: python -m PyInstaller --clean Shadow-mac.spec
+
+      - name: Package DMG
+        run: |
+          set -euo pipefail
+          mkdir -p installer dmg_staging
+          cp -R "dist/Shadow.app" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "Shadow Media Studio Pro" \
+            -srcfolder dmg_staging \
+            -ov -format UDZO \
+            "installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shadow-macOS-${{ matrix.arch_label }}
+          path: installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg
+
+      - name: Attach DMG to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg

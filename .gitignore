@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+installer/*.exe
+installer/*.dmg
+
+# Shadow.spec and Shadow-mac.spec are hand-written and required by CI --
+# keep them tracked. Ignore only stray auto-generated specs, if any.
+/*.spec
+!/Shadow.spec
+!/Shadow-mac.spec
+
+# Seller-only: license signing key & sales records. Never distribute.
+keygen_tool.py
+sales_log.csv
+
+# Vendored FFmpeg binaries fetched at build time (Windows via fetch_ffmpeg.ps1,
+# macOS via Homebrew in CI) -- not committed, ~100-200MB.
+vendor/ffmpeg/*.exe
+vendor/ffmpeg-mac/*

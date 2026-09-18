@@ -1,0 +1,2801 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+import os
+from pathlib import Path
+import queue
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+try:
+    import customtkinter as ctk
+except ImportError as exc:
+    raise SystemExit(
+        "Missing required dependency: customtkinter. Please run: python -m pip install -r requirements.txt"
+    ) from exc
+
+from app_bootstrap import ensure_runtime_dependencies_noisy
+
+# No-op in a packaged build (see app_bootstrap.py) -- only auto-installs
+# missing pip packages for a source/dev run. Must stay that way: in a frozen
+# exe, sys.executable IS the app itself, so "installing" a package by
+# shelling out to it would just relaunch the whole GUI as a subprocess.
+try:
+    ensure_runtime_dependencies_noisy()
+except RuntimeError as exc:
+    message = str(exc)
+    print(message, file=sys.stderr)
+    raise SystemExit(message) from exc
+
+from font_loader import DISPLAY_FONT, load_bundled_fonts
+
+# Must happen before any CTkFont()/widget is created -- font family
+# resolution happens at creation time, not lazily.
+load_bundled_fonts()
+
+try:
+    from drag_drop import hook_dropfiles, unhook_dropfiles
+
+    HAS_DRAG_DROP = True
+except ImportError:
+    HAS_DRAG_DROP = False
+
+from converter import (
+    SUPPORTED_EXTENSIONS,
+    ConversionResult,
+    combine_images_to_pdf,
+    convert_image,
+)
+from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
+from license_dialog import LicenseDialog
+from licensing import FREE_BATCH_LIMIT, is_pro_activated, is_vip_activated
+from media_engine import (
+    SUPPORTED_AUDIO_EXTENSIONS,
+    SUPPORTED_VIDEO_EXTENSIONS,
+    convert_media_file,
+    get_ffmpeg_path,
+)
+from preview_modal import ImagePreviewDialog
+from settings import load_settings, update_setting
+from url_downloader_dialog import URLDownloaderDialog
+from video_trimmer_dialog import VideoTrimmerDialog
+from watch_folder_dialog import WatchFolderDialog
+from utils import (
+    build_destination_filename,
+    copy_image_file_to_clipboard,
+    copy_text_to_clipboard,
+    export_results_to_csv,
+    format_file_size,
+    next_available_output_path,
+    open_file_or_folder,
+    play_completion_sound,
+    reveal_in_file_manager,
+    scan_directory_for_images,
+    slugify_filename,
+)
+
+ALL_MEDIA_EXTENSIONS = (
+    SUPPORTED_EXTENSIONS
+    | SUPPORTED_VIDEO_EXTENSIONS
+    | SUPPORTED_AUDIO_EXTENSIONS
+    | SUPPORTED_DOCUMENT_EXTENSIONS
+)
+
+APP_BACKGROUND = "#0D0F12"
+APP_SURFACE = "#15171C"
+APP_ELEVATED = "#1E2129"
+APP_ACCENT = "#12877A"
+APP_ACCENT_DARK = "#1E2129"
+APP_ACCENT_SOFT = "#D8F3EF"
+APP_ACCENT_TINT = "#17A594"
+APP_SECONDARY = "#4DD0C4"
+APP_TEXT = "#EDEFF2"
+APP_MUTED = "#9AA3AC"
+APP_CTA = "#D4A03C"
+APP_CTA_STRONG = "#E8B750"
+APP_BORDER = "#262A33"
+
+
+class WebPCompressorApp(ctk.CTk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.settings = load_settings()
+
+        self.title("Shadow Media Studio Pro")
+        self.geometry("1060x820")
+        self.minsize(920, 680)
+        self._apply_window_icon()
+        self._show_setup_status_if_needed()
+        self.after(200, self._show_missing_runtime_warning_if_needed)
+
+        self.selected_files: list[Path] = []
+        self.output_directory = tk.StringVar(
+            value=self.settings.get("last_output_directory", "")
+        )
+        self.save_in_source_folder = tk.BooleanVar(
+            value=self.settings.get("save_in_source_folder", False)
+        )
+        self.target_format = tk.StringVar(
+            value=self.settings.get("default_format", "WEBP")
+        )
+        self.quality = tk.IntVar(
+            value=self.settings.get("default_quality", 80)
+        )
+        self.quality_text = tk.StringVar(value=str(self.quality.get()))
+        self.overwrite = tk.BooleanVar(value=False)
+        self.lossless = tk.BooleanVar(value=False)
+        self.preserve_metadata = tk.BooleanVar(value=False)
+        self.strip_metadata = tk.BooleanVar(
+            value=self.settings.get("strip_metadata", False)
+        )
+        self.play_sound = tk.BooleanVar(
+            value=self.settings.get("play_sound", True)
+        )
+        self.slugify_names = tk.BooleanVar(value=False)
+
+        # Smart Sizer (Target Size)
+        self.enable_target_size = tk.BooleanVar(value=False)
+        self.target_size_val = tk.StringVar(value="200")
+        self.target_size_unit = tk.StringVar(value="KB")
+
+        # Resizing
+        self.enable_resize = tk.BooleanVar(
+            value=self.settings.get("enable_resize", False)
+        )
+        self.max_dimension_text = tk.StringVar(
+            value=self.settings.get("max_dimension", "1920")
+        )
+        self.scale_percent_text = tk.StringVar(
+            value=self.settings.get("scale_percent", "75")
+        )
+
+        # Transformations & Enhancements
+        self.rotate_angle = tk.StringVar(value="0°")
+        self.flip_h = tk.BooleanVar(value=False)
+        self.flip_v = tk.BooleanVar(value=False)
+        self.aspect_ratio = tk.StringVar(value="Original")
+        self.enable_rounded = tk.BooleanVar(value=False)
+        self.corner_radius = tk.StringVar(value="20")
+        self.grayscale = tk.BooleanVar(value=False)
+        self.normalize_audio = tk.BooleanVar(value=False)
+
+        # Batch Renaming
+        self.filename_prefix = tk.StringVar(value="")
+        self.filename_suffix = tk.StringVar(value="")
+
+        # Preset Optimization Profile
+        self.preset_profile = tk.StringVar(value="Manual / Custom")
+        self._current_smart_category: str | None = None
+
+        # Search & Filter
+        self.search_filter = tk.StringVar(value="")
+
+        # Sorting
+        self.sort_column = "filename"
+        self.sort_desc = False
+
+        # Watermarking
+        self.enable_watermark = tk.BooleanVar(
+            value=self.settings.get("enable_watermark", False)
+        )
+        self.watermark_text = tk.StringVar(
+            value=self.settings.get("watermark_text", "")
+        )
+        self.watermark_type = tk.StringVar(
+            value=self.settings.get("watermark_type", "Text")
+        )
+        self.watermark_logo_path = tk.StringVar(
+            value=self.settings.get("watermark_logo_path", "")
+        )
+        self.watermark_position = tk.StringVar(
+            value=self.settings.get("watermark_position", "bottom-right")
+        )
+
+        self.status_text = tk.StringVar(value="Ready to convert")
+        self.progress_value = tk.DoubleVar(value=0)
+        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.conversion_running = False
+        self.cancel_event = threading.Event()
+        self.row_ids: dict[Path, str] = {}
+        self.row_results: dict[Path, ConversionResult] = {}
+        self.last_results: list[ConversionResult] = []
+        self.image_count_text = tk.StringVar(value="0 items")
+        self.total_size_text = tk.StringVar(value="")
+        self.active_watcher: object | None = None
+
+        self._build_interface()
+        self._setup_drag_and_drop()
+        self._setup_context_menu()
+        self._bind_shortcuts()
+        self.after(100, self._process_events)
+        self._load_cli_arguments()
+        self.protocol("WM_DELETE_WINDOW", self._on_app_close)
+
+        # A fast/large resize (dragging the window edge, or restoring from
+        # maximized) can outrun Tk's redraw, leaving stale widgets from the
+        # old layout visibly overlapping the new one until something forces
+        # a repaint. Debounced so this doesn't fire on every pixel of a drag.
+        self._resize_redraw_job: str | None = None
+        self.bind("<Configure>", self._on_window_configure)
+
+    def _on_window_configure(self, _event: tk.Event) -> None:
+        if self._resize_redraw_job is not None:
+            self.after_cancel(self._resize_redraw_job)
+        self._resize_redraw_job = self.after(120, self._force_redraw_after_resize)
+
+    def _force_redraw_after_resize(self) -> None:
+        self._resize_redraw_job = None
+        try:
+            # update_idletasks() alone recomputes widget geometry but does not
+            # reliably force CTk's canvas-drawn rounded-corner frames to
+            # repaint stale pixels left over from the pre-resize layout.
+            # update() also flushes pending expose/redraw events.
+            self.update()
+        except Exception:
+            pass
+
+    def _load_cli_arguments(self) -> None:
+        if len(sys.argv) > 1:
+            cli_paths: list[Path] = []
+            for arg in sys.argv[1:]:
+                p = Path(arg).resolve()
+                if p.is_dir():
+                    cli_paths.extend(
+                        scan_directory_for_images(
+                            p, ALL_MEDIA_EXTENSIONS, recursive=True
+                        )
+                    )
+                elif p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+                    cli_paths.append(p)
+            if cli_paths:
+                self.after(200, lambda: self._ingest_image_paths(cli_paths))
+
+    def _bind_shortcuts(self) -> None:
+        self.bind("<Control-a>", lambda _e: self._select_all_rows())
+        self.bind("<Control-A>", lambda _e: self._select_all_rows())
+        self.bind("<Delete>", lambda _e: self._remove_selected())
+        self.bind("<Control-o>", lambda _e: self._add_files())
+        self.bind("<Control-O>", lambda _e: self._add_files())
+        self.bind("<Alt-Up>", lambda _e: self._move_selected_up())
+        self.bind("<Alt-Down>", lambda _e: self._move_selected_down())
+
+    @staticmethod
+    def _resource_path(relative_path: str) -> Path:
+        base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        return base_path / relative_path
+
+    def _apply_window_icon(self) -> None:
+        icon_path = self._resource_path("assets/icon.ico")
+        if icon_path.exists():
+            try:
+                self.iconbitmap(icon_path)
+            except Exception:
+                pass
+
+    def _show_setup_status_if_needed(self) -> None:
+        try:
+            from app_bootstrap import get_setup_guidance_message
+            guidance = get_setup_guidance_message()
+            if "Everything looks ready" not in guidance:
+                self.status_text = tk.StringVar(value=guidance)
+        except Exception:
+            pass
+
+    def _show_missing_runtime_warning_if_needed(self) -> None:
+        try:
+            from app_bootstrap import get_setup_guidance_message
+            guidance = get_setup_guidance_message()
+            if "Everything looks ready" in guidance:
+                return
+            messagebox.showwarning(
+                "Setup required",
+                guidance + "\n\nThis is needed for video/audio conversion and URL download features.",
+            )
+        except Exception:
+            pass
+
+    def _build_interface(self) -> None:
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+        self.configure(fg_color=APP_BACKGROUND)
+
+        # Top navigation shell
+        header = ctk.CTkFrame(self, fg_color=APP_BACKGROUND, corner_radius=0, height=64)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(1, weight=1)
+
+        brand = ctk.CTkFrame(header, fg_color="transparent")
+        brand.grid(row=0, column=0, padx=(20, 12), pady=12, sticky="w")
+
+        logo_badge = ctk.CTkLabel(
+            brand,
+            text="S",
+            width=30,
+            height=30,
+            corner_radius=9,
+            fg_color=APP_ACCENT_DARK,
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        )
+        logo_badge.pack(side="left")
+
+        ctk.CTkLabel(
+            brand,
+            text="Shadow Media Studio Pro",
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=19, weight="bold"),
+            text_color=APP_TEXT,
+        ).pack(side="left", padx=(10, 0))
+
+        # Header Right Actions
+        header_right = ctk.CTkFrame(header, fg_color="transparent")
+        header_right.grid(row=0, column=2, padx=(0, 18), sticky="e")
+
+        is_vip = is_vip_activated()
+        is_pro = is_pro_activated()
+        if is_vip:
+            badge_text = "VIP MASTER"
+            badge_color = APP_CTA
+            badge_text_color = "#171308"
+        elif is_pro:
+            badge_text = "PRO LIFETIME"
+            badge_color = "#16a34a"
+            badge_text_color = "#ffffff"
+        else:
+            badge_text = "FREE TRIAL"
+            badge_color = "#eab308"
+            badge_text_color = "#171308"
+
+        self.license_badge = ctk.CTkButton(
+            header_right,
+            text=badge_text,
+            width=96,
+            height=24,
+            corner_radius=6,
+            fg_color=badge_color,
+            hover_color=badge_color,
+            text_color=badge_text_color,
+            font=ctk.CTkFont(size=9, weight="bold"),
+            command=self._open_license_manager,
+        )
+        self.license_badge.pack(side="left", padx=(0, 10))
+
+        self.license_btn_header = ctk.CTkButton(
+            header_right,
+            text="VIP Key" if is_vip else ("License" if is_pro else "Upgrade to Pro"),
+            command=self._open_license_manager,
+            width=105 if is_pro else 120,
+            height=30,
+            corner_radius=7,
+            fg_color=APP_ACCENT if not is_pro else "transparent",
+            border_width=0 if not is_pro else 1,
+            border_color=APP_BORDER,
+            text_color=APP_TEXT if not is_pro else APP_MUTED,
+            font=ctk.CTkFont(weight="bold" if not is_pro else "normal"),
+        )
+        self.license_btn_header.pack(side="left", padx=(0, 10))
+
+        self.theme_menu = ctk.CTkOptionMenu(
+            header_right,
+            values=["System", "Dark", "Light"],
+            command=self._change_appearance_mode,
+            width=90,
+            height=30,
+            corner_radius=7,
+        )
+        self.theme_menu.set(self.settings.get("theme", "System"))
+        self.theme_menu.pack(side="left")
+
+        # Content shell: caps the main content at a comfortable reading/working
+        # width instead of letting every card stretch edge-to-edge (and its
+        # clustered controls trail off into empty space) on a maximized or
+        # ultrawide window. Left-aligned, matching the header above it --
+        # only a single spacer column on the right absorbs extra width, so
+        # this doesn't float as a centered island misaligned with the header
+        # at normal window sizes.
+        content_shell = ctk.CTkFrame(self, fg_color="transparent")
+        content_shell.grid(row=1, column=0, sticky="nsew")
+        content_shell.grid_rowconfigure(0, weight=1)
+        # weight=0 (vs. weight=1 on the trailing spacer column) is what caps
+        # this column: it never claims leftover window width, only what its
+        # content naturally needs -- no explicit minsize, since that would
+        # override the window's own minsize(920, ...) and force the window
+        # wider than intended at small sizes.
+        content_shell.grid_columnconfigure(0, weight=0)
+        content_shell.grid_columnconfigure(1, weight=1)
+
+        content_inner = ctk.CTkFrame(content_shell, fg_color="transparent")
+        content_inner.grid(row=0, column=0, sticky="nsew")
+        content_inner.grid_rowconfigure(0, weight=1)
+        content_inner.grid_columnconfigure(0, weight=1)
+
+        # Workspace Container
+        workspace = ctk.CTkFrame(content_inner, fg_color="transparent")
+        workspace.grid(row=0, column=0, padx=28, pady=(16, 8), sticky="nsew")
+        workspace.grid_rowconfigure(1, weight=1)
+        workspace.grid_columnconfigure(0, weight=1)
+
+        # List Header / Action Bar
+        list_header = ctk.CTkFrame(workspace, fg_color=APP_SURFACE, corner_radius=12, border_width=1, border_color=APP_BORDER)
+        list_header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        list_header.grid_columnconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            list_header,
+            text="Queue",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color=APP_TEXT,
+        ).grid(row=0, column=0, padx=(14, 0), pady=(12, 6), sticky="w")
+
+        info_box = ctk.CTkFrame(list_header, fg_color="transparent")
+        info_box.grid(row=0, column=1, padx=(10, 0), pady=(12, 6), sticky="w")
+        ctk.CTkLabel(
+            info_box,
+            textvariable=self.image_count_text,
+            text_color=APP_MUTED,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            info_box,
+            textvariable=self.total_size_text,
+            text_color=APP_MUTED,
+            font=ctk.CTkFont(size=12),
+        ).pack(side="left", padx=(4, 0))
+
+        # Filter entry centered/right
+        self.filter_entry = ctk.CTkEntry(
+            list_header,
+            textvariable=self.search_filter,
+            placeholder_text="🔍 Filter queue...",
+            width=150,
+            height=28,
+            corner_radius=7,
+        )
+        self.filter_entry.grid(row=0, column=3, padx=(0, 8), pady=(12, 6), sticky="e")
+        self.filter_entry.bind("<KeyRelease>", self._apply_filter)
+
+        actions = ctk.CTkFrame(list_header, fg_color="transparent")
+        actions.grid(row=1, column=0, columnspan=5, padx=(0, 12), pady=(8, 10), sticky="e")
+
+        self.move_up_button = ctk.CTkButton(
+            actions,
+            text="▲",
+            command=self._move_selected_up,
+            width=28,
+            height=28,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            state="disabled",
+        )
+        self.move_up_button.pack(side="left", padx=(0, 2))
+
+        self.move_down_button = ctk.CTkButton(
+            actions,
+            text="▼",
+            command=self._move_selected_down,
+            width=28,
+            height=28,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            state="disabled",
+        )
+        self.move_down_button.pack(side="left", padx=(0, 6))
+
+        self.preview_button = ctk.CTkButton(
+            actions,
+            text="Preview",
+            command=self._open_selected_preview,
+            width=68,
+            height=28,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            state="disabled",
+        )
+        self.preview_button.pack(side="left", padx=(0, 4))
+
+        self.remove_button = ctk.CTkButton(
+            actions,
+            text="Remove",
+            command=self._remove_selected,
+            width=68,
+            height=28,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            state="disabled",
+        )
+        self.remove_button.pack(side="left", padx=(0, 4))
+
+        self.clear_button = ctk.CTkButton(
+            actions,
+            text="Clear",
+            command=self._clear_all,
+            width=58,
+            height=28,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            state="disabled",
+        )
+        self.clear_button.pack(side="left", padx=(0, 8))
+
+        self.watch_folder_button = ctk.CTkButton(
+            actions,
+            text="📁 Auto-Watch",
+            command=self._open_watch_folder_dialog,
+            width=96,
+            height=28,
+            corner_radius=7,
+            fg_color=APP_ELEVATED,
+            hover_color=APP_ACCENT,
+            text_color=APP_TEXT,
+        )
+        self.watch_folder_button.pack(side="left", padx=(0, 4))
+
+        self.vip_downloader_button = ctk.CTkButton(
+            actions,
+            text="⚡ Download URL" if is_vip else "🔒 Download URL",
+            command=self._open_url_downloader,
+            width=120,
+            height=28,
+            corner_radius=7,
+            fg_color=APP_CTA if is_vip else APP_ELEVATED,
+            hover_color=APP_CTA_STRONG if is_vip else APP_ACCENT,
+            text_color=APP_TEXT,
+            font=ctk.CTkFont(weight="bold" if is_vip else "normal"),
+        )
+        self.vip_downloader_button.pack(side="left", padx=(0, 4))
+
+        self.add_folder_button = ctk.CTkButton(
+            actions,
+            text="📁 Add Folder",
+            command=self._add_folder,
+            width=92,
+            height=28,
+            corner_radius=7,
+            fg_color=APP_ELEVATED,
+            hover_color=APP_ACCENT,
+            text_color=APP_TEXT,
+        )
+        self.add_folder_button.pack(side="left", padx=(0, 4))
+
+        self.add_button = ctk.CTkButton(
+            actions,
+            text="+ Add Media",
+            command=self._add_files,
+            width=96,
+            height=28,
+            corner_radius=7,
+            fg_color=APP_ACCENT,
+            hover_color=APP_ACCENT_DARK,
+            text_color=APP_TEXT,
+            font=ctk.CTkFont(weight="bold"),
+        )
+        self.add_button.pack(side="left")
+
+        # Empty State
+        self.empty_state = ctk.CTkFrame(
+            workspace,
+            corner_radius=18,
+            border_width=1,
+            border_color=APP_BORDER,
+            fg_color=APP_SURFACE,
+        )
+        self.empty_state.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        self.empty_state.grid_columnconfigure(0, weight=1)
+        self.empty_state.grid_rowconfigure(0, weight=1)
+
+        empty_content = ctk.CTkFrame(self.empty_state, fg_color="transparent")
+        empty_content.grid(row=0, column=0)
+
+        ctk.CTkLabel(
+            empty_content,
+            text="✦",
+            width=60,
+            height=60,
+            corner_radius=30,
+            fg_color=(APP_ACCENT_SOFT, "#1e293b"),
+            text_color=(APP_ACCENT, APP_ACCENT_TINT),
+            font=ctk.CTkFont(size=28, weight="bold"),
+        ).pack(pady=(18, 10))
+
+        ctk.CTkLabel(
+            empty_content,
+            text="Drop files or folders here to begin",
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=20, weight="bold"),
+            text_color=APP_TEXT,
+        ).pack(pady=(0, 6))
+
+        ctk.CTkLabel(
+            empty_content,
+            text="Images (JPG, PNG, WebP, AVIF)  •  Videos (MP4, WebM, MOV, GIF)  •  Audio (MP3, WAV, AAC)  •  Docs (DOCX, PDF, HTML, TXT, MD)",
+            text_color=APP_MUTED,
+            font=ctk.CTkFont(size=12),
+        ).pack(pady=(0, 18))
+
+        empty_buttons = ctk.CTkFrame(empty_content, fg_color="transparent")
+        empty_buttons.pack(pady=(0, 22))
+        ctk.CTkButton(
+            empty_buttons,
+            text="Browse Files",
+            command=self._add_files,
+            width=135,
+            height=34,
+            corner_radius=8,
+            fg_color=APP_ACCENT,
+            hover_color=APP_ACCENT_DARK,
+            text_color="white",
+            font=ctk.CTkFont(weight="bold"),
+        ).pack(side="left", padx=5)
+        ctk.CTkButton(
+            empty_buttons,
+            text="Browse Folder",
+            command=self._add_folder,
+            width=135,
+            height=34,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+            text_color=("#334155", "#f1f5f9"),
+        ).pack(side="left", padx=5)
+
+        # Table Frame
+        self.table_frame = ctk.CTkFrame(
+            workspace,
+            corner_radius=16,
+            fg_color=APP_SURFACE,
+            border_width=1,
+            border_color=APP_BORDER,
+        )
+        self.table_frame.grid_columnconfigure(0, weight=1)
+        self.table_frame.grid_rowconfigure(0, weight=1)
+
+        self.table_style = ttk.Style(self)
+        self.table_style.theme_use("clam")
+        self._apply_table_theme()
+
+        columns = ("filename", "original", "output", "saved", "status")
+        self.table = ttk.Treeview(
+            self.table_frame, columns=columns, show="headings", selectmode="extended"
+        )
+        headings = {
+            "filename": "Filename",
+            "original": "Original Size",
+            "output": "Output Size",
+            "saved": "Saved",
+            "status": "Status",
+        }
+        widths = {
+            "filename": 0,
+            "original": 125,
+            "output": 125,
+            "saved": 105,
+            "status": 145,
+        }
+        for column in columns:
+            self.table.heading(
+                column,
+                text=headings[column],
+                command=lambda c=column: self._sort_table_by_column(c),
+            )
+            self.table.column(
+                column,
+                width=widths[column],
+                minwidth=90 if column != "filename" else 180,
+                stretch=column == "filename",
+                anchor="w",
+            )
+        self.table.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        scrollbar = ttk.Scrollbar(
+            self.table_frame, orient="vertical", command=self.table.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=10)
+        self.table.configure(yscrollcommand=scrollbar.set)
+        self.table.bind(
+            "<<TreeviewSelect>>", lambda _event: self._update_button_states()
+        )
+        self.table.bind("<Double-1>", self._on_double_click_row)
+        self.table_frame.grid_remove()
+
+        # Studio Settings Tabview (Modern Segmented Creative Suite Controls)
+        self.settings_tabview = ctk.CTkTabview(
+            content_inner,
+            corner_radius=12,
+            fg_color=APP_SURFACE,
+            border_width=1,
+            border_color=APP_BORDER,
+            segmented_button_fg_color=APP_SURFACE,
+            segmented_button_selected_color=APP_ACCENT,
+            segmented_button_selected_hover_color=APP_ACCENT_TINT,
+            segmented_button_unselected_color=APP_ELEVATED,
+            segmented_button_unselected_hover_color="#2A2E38",
+            text_color=APP_TEXT,
+            height=38,
+        )
+        self.settings_tabview.grid(row=1, column=0, padx=28, pady=(0, 6), sticky="ew")
+
+        tab_format = self.settings_tabview.add("Format & Presets")
+        tab_transform = self.settings_tabview.add("Edit & Transform")
+        tab_naming = self.settings_tabview.add("Renaming & Safety")
+        tab_watermark = self.settings_tabview.add("Watermark")
+
+        # ==========================================
+        # TAB 1: FORMAT & PRESETS
+        # ==========================================
+        self.smart_header_frame = ctk.CTkFrame(tab_format, fg_color="transparent")
+        self.smart_header_frame.pack(fill="x", pady=(2, 6))
+
+        self.smart_badge = ctk.CTkLabel(
+            self.smart_header_frame,
+            text="✨ Smart Settings: Auto-Detect Ready",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#e2e8f0", "#1e293b"),
+            text_color=("#334155", "#94a3b8"),
+            corner_radius=6,
+            height=26,
+            padx=10,
+        )
+        self.smart_badge.pack(side="left")
+
+        self.smart_info_label = ctk.CTkLabel(
+            self.smart_header_frame,
+            text="Select or drop media to auto-tune options",
+            font=ctk.CTkFont(size=11),
+            text_color=("#64748b", "#94a3b8"),
+        )
+        self.smart_info_label.pack(side="left", padx=(8, 0))
+
+        self.smart_trim_btn = ctk.CTkButton(
+            self.smart_header_frame,
+            text="✂️ Cut / Trim Clip",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            height=26,
+            width=116,
+            fg_color=APP_ACCENT,
+            hover_color=APP_ACCENT_DARK,
+            command=self._open_selected_trimmer,
+        )
+
+        fmt_row0 = ctk.CTkFrame(tab_format, fg_color="transparent")
+        fmt_row0.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(
+            fmt_row0,
+            text="Target Format:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#0f172a", "#f8fafc"),
+        ).pack(side="left", padx=(0, 6))
+
+        format_options = [
+            "WEBP",
+            "AVIF",
+            "JPEG",
+            "PNG",
+            "ICO",
+            "PDF (Combined)",
+            "Video: WebM",
+            "Video: MP4",
+            "Video -> Animated WebP",
+            "Video -> GIF",
+            "Video -> Audio (MP3)",
+            "Audio: MP3",
+            "Audio: AAC",
+            "Audio: Opus",
+        ]
+        self.format_menu = ctk.CTkOptionMenu(
+            fmt_row0,
+            values=format_options,
+            variable=self.target_format,
+            command=self._format_changed,
+            width=165,
+            height=28,
+            corner_radius=6,
+        )
+        self.format_menu.pack(side="left", padx=(0, 16))
+
+        ctk.CTkLabel(
+            fmt_row0,
+            text="Profile:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#0f172a", "#f8fafc"),
+        ).pack(side="left", padx=(0, 6))
+
+        preset_profiles = [
+            "Manual / Custom",
+            "🌐 Next-Gen AVIF (75%)",
+            "⚡ Web Banner (1920px 80%)",
+            "🛍️ E-Commerce (1000px 85%)",
+            "📱 Avatar 1:1 (PNG)",
+            "💬 Discord 24MB Video",
+            "📧 Email Doc (≤5MB)",
+            "📄 PDF Binder",
+        ]
+        self.preset_menu = ctk.CTkOptionMenu(
+            fmt_row0,
+            values=preset_profiles,
+            variable=self.preset_profile,
+            command=self._apply_preset_profile,
+            width=175,
+            height=28,
+            corner_radius=6,
+        )
+        self.preset_menu.pack(side="left", padx=(0, 12))
+
+        for name, q_val in (
+            ("Balanced", 80),
+            ("High", 90),
+            ("Compact", 60),
+            ("Lossless", 80),
+        ):
+            ctk.CTkButton(
+                fmt_row0,
+                text=name,
+                width=65,
+                height=26,
+                corner_radius=6,
+                font=ctk.CTkFont(size=11),
+                fg_color=("gray92", "#22262d"),
+                hover_color=("gray85", "#2c313a"),
+                text_color=("#334155", "#f1f5f9"),
+                command=lambda q=q_val, l=(name == "Lossless"): self._apply_preset(
+                    q, l
+                ),
+            ).pack(side="left", padx=2)
+
+        # Quality Row
+        self.quality_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        self.quality_row.pack(fill="x", pady=(2, 4))
+        self.quality_row.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            self.quality_row,
+            text="Quality (1-100):",
+            text_color=APP_MUTED,
+            font=ctk.CTkFont(size=12),
+            width=100,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        self.quality_slider = ctk.CTkSlider(
+            self.quality_row,
+            from_=1,
+            to=100,
+            number_of_steps=99,
+            variable=self.quality,
+            command=self._slider_changed,
+        )
+        self.quality_slider.grid(row=0, column=1, sticky="ew", padx=(4, 10))
+
+        self.quality_entry = ctk.CTkEntry(
+            self.quality_row,
+            width=54,
+            height=26,
+            textvariable=self.quality_text,
+            justify="center",
+            corner_radius=6,
+        )
+        self.quality_entry.grid(row=0, column=2, sticky="e")
+        self.quality_entry.bind(
+            "<FocusOut>", lambda _event: self._sync_quality_from_entry()
+        )
+        self.quality_entry.bind(
+            "<Return>", lambda _event: self._sync_quality_from_entry()
+        )
+
+        # Sizing / Constraints Row
+        size_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        size_row.pack(fill="x", pady=(2, 2))
+
+        ctk.CTkCheckBox(
+            size_row,
+            text="Target size solver:",
+            variable=self.enable_target_size,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+        self.target_size_entry = ctk.CTkEntry(
+            size_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
+        )
+        self.target_size_entry.pack(side="left", padx=4)
+        ctk.CTkOptionMenu(
+            size_row,
+            values=["KB", "MB"],
+            variable=self.target_size_unit,
+            width=62,
+            height=24,
+            corner_radius=5,
+        ).pack(side="left", padx=(0, 20))
+
+        ctk.CTkCheckBox(
+            size_row,
+            text="Resize max px:",
+            variable=self.enable_resize,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+        self.max_dim_entry = ctk.CTkEntry(
+            size_row, width=56, height=24, textvariable=self.max_dimension_text, justify="center"
+        )
+        self.max_dim_entry.pack(side="left", padx=(4, 12))
+
+        ctk.CTkLabel(
+            size_row,
+            text="Scale %:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.scale_entry = ctk.CTkEntry(
+            size_row, width=48, height=24, textvariable=self.scale_percent_text, justify="center"
+        )
+        self.scale_entry.pack(side="left")
+
+        # ==========================================
+        # TAB 2: EDIT & TRANSFORM
+        # ==========================================
+        tr_row0 = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        tr_row0.pack(fill="x", pady=(4, 6))
+
+        ctk.CTkLabel(
+            tr_row0,
+            text="Rotate:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 6))
+        self.rotate_menu = ctk.CTkOptionMenu(
+            tr_row0,
+            values=["0°", "90° CW", "180°", "270° CW"],
+            variable=self.rotate_angle,
+            width=88,
+            height=26,
+            corner_radius=6,
+        )
+        self.rotate_menu.pack(side="left", padx=(0, 16))
+
+        ctk.CTkCheckBox(tr_row0, text="Flip Horizontal", variable=self.flip_h, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 12))
+        ctk.CTkCheckBox(tr_row0, text="Flip Vertical", variable=self.flip_v, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 16))
+
+        ctk.CTkLabel(
+            tr_row0,
+            text="Aspect Ratio Crop:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 6))
+        self.aspect_menu = ctk.CTkOptionMenu(
+            tr_row0,
+            values=["Original", "1:1", "16:9", "4:3", "9:16"],
+            variable=self.aspect_ratio,
+            width=96,
+            height=26,
+            corner_radius=6,
+        )
+        self.aspect_menu.pack(side="left")
+
+        tr_row1 = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        tr_row1.pack(fill="x", pady=(4, 2))
+
+        ctk.CTkCheckBox(tr_row1, text="Rounded Corners:", variable=self.enable_rounded, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 4))
+        self.corner_entry = ctk.CTkEntry(tr_row1, width=44, height=24, textvariable=self.corner_radius, justify="center")
+        self.corner_entry.pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(tr_row1, text="px radius", font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=(0, 18))
+
+        ctk.CTkCheckBox(tr_row1, text="Grayscale (Monochrome B&W)", variable=self.grayscale, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 18))
+        ctk.CTkCheckBox(tr_row1, text="Broadcast Audio Loudnorm (EBU R128)", variable=self.normalize_audio, font=ctk.CTkFont(size=11)).pack(side="left")
+
+        # ==========================================
+        # TAB 3: RENAMING & SAFETY
+        # ==========================================
+        nm_row0 = ctk.CTkFrame(tab_naming, fg_color="transparent")
+        nm_row0.pack(fill="x", pady=(4, 6))
+
+        ctk.CTkLabel(
+            nm_row0,
+            text="Filename Pattern:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkLabel(nm_row0, text="Prefix:", font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=(0, 4))
+        self.prefix_entry = ctk.CTkEntry(nm_row0, width=70, height=26, textvariable=self.filename_prefix, placeholder_text="web_")
+        self.prefix_entry.pack(side="left", padx=(0, 8))
+
+        ctk.CTkLabel(
+            nm_row0,
+            text="[filename]",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=(APP_ACCENT, APP_ACCENT_TINT),
+        ).pack(side="left", padx=(0, 8))
+
+        ctk.CTkLabel(nm_row0, text="Suffix:", font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=(0, 4))
+        self.suffix_entry = ctk.CTkEntry(nm_row0, width=70, height=26, textvariable=self.filename_suffix, placeholder_text="_opt")
+        self.suffix_entry.pack(side="left", padx=(0, 16))
+
+        nm_row1 = ctk.CTkFrame(tab_naming, fg_color="transparent")
+        nm_row1.pack(fill="x", pady=(4, 2))
+
+        ctk.CTkCheckBox(
+            nm_row1,
+            text="SEO Slugify Names (e.g. my-clean-product.webp)",
+            variable=self.slugify_names,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkCheckBox(
+            nm_row1,
+            text="Overwrite existing files",
+            variable=self.overwrite,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkCheckBox(
+            nm_row1,
+            text="Strip EXIF & Camera GPS Metadata",
+            variable=self.strip_metadata,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+
+        # ==========================================
+        # TAB 4: WATERMARK
+        # ==========================================
+        wm_row0 = ctk.CTkFrame(tab_watermark, fg_color="transparent")
+        wm_row0.pack(fill="x", pady=(6, 4))
+
+        ctk.CTkCheckBox(
+            wm_row0,
+            text="Enable Watermark",
+            variable=self.enable_watermark,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(side="left", padx=(0, 12))
+
+        self.watermark_type_menu = ctk.CTkOptionMenu(
+            wm_row0,
+            values=["Text", "Logo PNG"],
+            variable=self.watermark_type,
+            width=100,
+            height=26,
+            command=self._on_watermark_type_changed,
+        )
+        self.watermark_type_menu.pack(side="left", padx=(0, 8))
+
+        self.watermark_entry = ctk.CTkEntry(
+            wm_row0,
+            width=160,
+            height=26,
+            textvariable=self.watermark_text,
+            placeholder_text="© Copyright Text",
+        )
+        self.browse_logo_btn = ctk.CTkButton(
+            wm_row0,
+            text="Browse Logo...",
+            width=110,
+            height=26,
+            command=self._browse_logo,
+        )
+        if self.watermark_type.get() == "Logo PNG":
+            self.browse_logo_btn.pack(side="left", padx=(0, 12))
+        else:
+            self.watermark_entry.pack(side="left", padx=(0, 12))
+
+        ctk.CTkLabel(
+            wm_row0,
+            text="Position:",
+            font=ctk.CTkFont(size=11),
+            text_color=("#64748b", "#94a3b8"),
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkOptionMenu(
+            wm_row0,
+            values=["bottom-right", "bottom-left", "top-right", "top-left", "center"],
+            variable=self.watermark_position,
+            width=125,
+            height=26,
+        ).pack(side="left")
+
+        # Output Folder Selector Frame
+        output = ctk.CTkFrame(content_inner, fg_color=APP_SURFACE, corner_radius=12, border_width=1, border_color=APP_BORDER)
+        output.grid(row=2, column=0, padx=28, pady=(0, 10), sticky="ew")
+        output.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            output,
+            text="Destination:",
+            text_color=APP_MUTED,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=0, padx=(14, 10), pady=14, sticky="w")
+
+        self.output_entry = ctk.CTkEntry(
+            output,
+            textvariable=self.output_directory,
+            height=32,
+            placeholder_text="Choose destination folder",
+            corner_radius=7,
+        )
+        self.output_entry.grid(row=0, column=1, pady=14, sticky="ew")
+
+        self.browse_button = ctk.CTkButton(
+            output,
+            text="Browse...",
+            command=self._choose_output_directory,
+            width=88,
+            height=32,
+            corner_radius=7,
+            fg_color=APP_ELEVATED,
+            hover_color=APP_ACCENT,
+            text_color=APP_TEXT,
+        )
+        self.browse_button.grid(row=0, column=2, padx=(8, 14), pady=14)
+
+        self.same_folder_checkbox = ctk.CTkCheckBox(
+            output,
+            text="Save in original file's parent folder",
+            variable=self.save_in_source_folder,
+            command=self._save_in_source_folder_toggled,
+            font=ctk.CTkFont(size=11),
+        )
+        self.same_folder_checkbox.grid(
+            row=1, column=1, columnspan=2, sticky="w", pady=(4, 14)
+        )
+
+        # Footer Frame
+        footer = ctk.CTkFrame(content_inner, fg_color="transparent")
+        footer.grid(row=3, column=0, padx=28, pady=(0, 18), sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
+
+        self.progress = ctk.CTkProgressBar(footer, variable=self.progress_value, height=6)
+        self.progress.grid(
+            row=0, column=0, columnspan=5, sticky="ew", pady=(0, 6)
+        )
+
+        ctk.CTkLabel(
+            footer,
+            textvariable=self.status_text,
+            anchor="w",
+            text_color=APP_MUTED,
+            font=ctk.CTkFont(size=12),
+        ).grid(row=1, column=0, columnspan=5, sticky="w", pady=(0, 8))
+
+        # Footer Buttons
+        self.export_csv_button = ctk.CTkButton(
+            footer,
+            text="Export CSV Report",
+            command=self._export_csv_report,
+            width=135,
+            height=34,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+            text_color=("#334155", "#f1f5f9"),
+            state="disabled",
+        )
+        self.export_csv_button.grid(row=2, column=0, sticky="w")
+
+        self.open_button = ctk.CTkButton(
+            footer,
+            text="Open Folder",
+            command=self._open_output_folder,
+            width=120,
+            height=34,
+            corner_radius=7,
+            fg_color="transparent",
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+            text_color=("#334155", "#f1f5f9"),
+            state="disabled",
+        )
+        self.open_button.grid(row=2, column=2, padx=(0, 8))
+
+        self.cancel_button = ctk.CTkButton(
+            footer,
+            text="Cancel",
+            command=self._cancel_conversion,
+            width=86,
+            height=34,
+            corner_radius=7,
+            state="disabled",
+        )
+
+        self.convert_button = ctk.CTkButton(
+            footer,
+            text="Convert to WebP",
+            command=self._start_conversion,
+            width=175,
+            height=36,
+            corner_radius=8,
+            fg_color=APP_ACCENT,
+            hover_color=APP_ACCENT_DARK,
+            font=ctk.CTkFont(weight="bold", size=13),
+        )
+        self.convert_button.grid(row=2, column=4)
+
+        self._update_image_summary()
+        self._lossless_changed()
+
+    def _open_license_manager(self) -> None:
+        existing = getattr(self, "_license_dialog", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus()
+            return
+        self._license_dialog = LicenseDialog(self, on_status_changed=self._refresh_license_status)
+        self._license_dialog.focus()
+
+    def _refresh_license_status(self) -> None:
+        is_vip = is_vip_activated()
+        is_pro = is_pro_activated()
+        if is_vip:
+            badge_text = "VIP MASTER"
+            badge_color = APP_CTA
+            badge_text_color = "#171308"
+            self.vip_downloader_button.configure(
+                text="⚡ Download URL",
+                fg_color=APP_CTA,
+                hover_color=APP_CTA_STRONG,
+                text_color="#171308",
+                font=ctk.CTkFont(weight="bold"),
+            )
+        elif is_pro:
+            badge_text = "PRO LIFETIME"
+            badge_color = "#16a34a"
+            badge_text_color = "#ffffff"
+            self.vip_downloader_button.configure(
+                text="🔒 Download URL",
+                fg_color=("gray88", "gray25"),
+                hover_color=("gray80", "gray32"),
+                text_color=("#344054", "#f2f4f7"),
+                font=ctk.CTkFont(weight="normal"),
+            )
+        else:
+            badge_text = "FREE TRIAL"
+            badge_color = "#eab308"
+            badge_text_color = "#171308"
+            self.vip_downloader_button.configure(
+                text="🔒 Download URL",
+                fg_color=("gray88", "gray25"),
+                hover_color=("gray80", "gray32"),
+                text_color=("#344054", "#f2f4f7"),
+                font=ctk.CTkFont(weight="normal"),
+            )
+        self.license_badge.configure(
+            text=badge_text, fg_color=badge_color, hover_color=badge_color, text_color=badge_text_color
+        )
+        if hasattr(self, "license_btn_header"):
+            btn_txt = "VIP Key" if is_vip else ("License" if is_pro else "Upgrade to Pro")
+            self.license_btn_header.configure(text=btn_txt)
+
+    def _open_url_downloader(self) -> None:
+        if not is_vip_activated():
+            res = messagebox.askyesno(
+                "VIP Power Feature",
+                "Media Stream URL Downloading (YouTube, Vimeo, etc.) is a VIP Power Feature.\n\n"
+                "Would you like to open the License Manager to enter your VIP Master Key?"
+            )
+            if res:
+                self._open_license_manager()
+            return
+
+        out_dir = None
+        if self.output_directory.get().strip():
+            p = Path(self.output_directory.get().strip())
+            if p.is_dir():
+                out_dir = p
+
+        existing = getattr(self, "_url_downloader_dialog", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus()
+            return
+
+        self._url_downloader_dialog = URLDownloaderDialog(
+            parent=self,
+            default_output_dir=out_dir,
+            on_download_complete=self._on_download_completed_file,
+        )
+        self._url_downloader_dialog.focus()
+
+    def _on_download_completed_file(self, file_path: Path) -> None:
+        self._ingest_image_paths([file_path])
+
+    def _open_watch_folder_dialog(self) -> None:
+        existing = getattr(self, "_watch_folder_dialog", None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus()
+            return
+
+        self._watch_folder_dialog = WatchFolderDialog(
+            parent=self,
+            watcher=self.active_watcher,
+            on_watcher_changed=self._on_watcher_changed,
+        )
+        self._watch_folder_dialog.focus()
+
+    def _on_watcher_changed(self, watcher: object | None) -> None:
+        self.active_watcher = watcher
+        is_running = bool(watcher and getattr(watcher, "is_running", False))
+        if is_running:
+            self.watch_folder_button.configure(
+                text="🟢 Watching...",
+                fg_color="#059669",
+                hover_color="#047857",
+                text_color="#ffffff",
+            )
+        else:
+            self.watch_folder_button.configure(
+                text="📁 Auto-Watch",
+                fg_color=("gray88", "gray25"),
+                hover_color=("gray80", "gray32"),
+                text_color=("#344054", "#f2f4f7"),
+            )
+
+    def _on_app_close(self) -> None:
+        if HAS_DRAG_DROP:
+            try:
+                unhook_dropfiles(self)
+            except Exception:
+                pass
+        if self.active_watcher and hasattr(self.active_watcher, "stop"):
+            try:
+                self.active_watcher.stop()
+            except Exception:
+                pass
+        self.destroy()
+
+
+    def _format_changed(self, new_format: str) -> None:
+        fmt = new_format.upper()
+        if "ANIMATED WEBP" in fmt:
+            self.convert_button.configure(text="Convert to Animated WebP")
+            self.quality_row.pack(fill="x", pady=(2, 4))
+        elif "WEBP" in fmt:
+            self.convert_button.configure(text="Convert to WebP")
+            self.quality_row.pack(fill="x", pady=(2, 4))
+        elif "AVIF" in fmt:
+            self.convert_button.configure(text="Convert to AVIF")
+            self.quality_row.pack(fill="x", pady=(2, 4))
+        elif "DOCUMENT: MD" in fmt:
+            self.convert_button.configure(text="Convert to Markdown")
+            self.quality_row.pack_forget()
+        elif "DOCUMENT: DOCX" in fmt:
+            self.convert_button.configure(text="Convert to Word (.docx)")
+            self.quality_row.pack_forget()
+        elif "DOCUMENT: PDF" in fmt:
+            self.convert_button.configure(text="Convert to PDF")
+            self.quality_row.pack_forget()
+        elif "DOCUMENT: HTML" in fmt:
+            self.convert_button.configure(text="Convert to HTML")
+            self.quality_row.pack_forget()
+        elif "DOCUMENT: TXT" in fmt:
+            self.convert_button.configure(text="Convert to Plain Text")
+            self.quality_row.pack_forget()
+        elif fmt == "PDF (COMBINED)":
+            self.convert_button.configure(text="Combine into PDF")
+            self.quality_row.pack_forget()
+        elif "PDF" in fmt:
+            self.convert_button.configure(text="Combine into PDF")
+            self.quality_row.pack_forget()
+        elif "VIDEO: MP4" in fmt or fmt == "MP4":
+            self.convert_button.configure(text="Compress Video (MP4)")
+            self.quality_row.pack_forget()
+        elif "VIDEO: WEBM" in fmt or fmt == "WEBM":
+            self.convert_button.configure(text="Compress Video (WebM)")
+            self.quality_row.pack_forget()
+        elif "GIF" in fmt:
+            self.convert_button.configure(text="Convert to GIF")
+            self.quality_row.pack_forget()
+        elif "MP3" in fmt:
+            self.convert_button.configure(text="Convert to MP3 Audio")
+            self.quality_row.pack_forget()
+        elif "AAC" in fmt:
+            self.convert_button.configure(text="Convert to AAC Audio")
+            self.quality_row.pack_forget()
+        elif "OPUS" in fmt:
+            self.convert_button.configure(text="Convert to Opus Audio")
+            self.quality_row.pack_forget()
+        elif "WAV" in fmt:
+            self.convert_button.configure(text="Convert to WAV Audio")
+            self.quality_row.pack_forget()
+        elif "PNG" in fmt:
+            self.convert_button.configure(text="Convert to PNG")
+            self.quality_row.pack_forget()
+        elif "JPEG" in fmt or "JPG" in fmt:
+            self.convert_button.configure(text="Convert to JPEG")
+            self.quality_row.pack(fill="x", pady=(2, 4))
+        elif "ICO" in fmt:
+            self.convert_button.configure(text="Convert to ICO")
+            self.quality_row.pack_forget()
+        elif "VIDEO" in fmt:
+            self.convert_button.configure(text="Process Video")
+            self.quality_row.pack_forget()
+        elif "AUDIO" in fmt:
+            self.convert_button.configure(text="Convert Audio")
+            self.quality_row.pack_forget()
+        else:
+            self.convert_button.configure(text=f"Convert to {fmt}")
+            self.quality_row.pack(fill="x", pady=(2, 4))
+
+    def _adapt_settings_to_selection(self) -> None:
+        """Dynamically adapt UI format menus, presets, and conversion controls based on current selection or queue contents."""
+        target_path: Path | None = None
+        sel = self.table.selection()
+        if sel:
+            item_id = sel[0]
+            target_path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+        elif self.selected_files:
+            target_path = self.selected_files[0]
+
+        if target_path is None:
+            category = "ready"
+        else:
+            ext = target_path.suffix.lower()
+            if ext == ".gif":
+                category = "gif"
+            elif ext in SUPPORTED_VIDEO_EXTENSIONS:
+                category = "video"
+            elif ext in SUPPORTED_AUDIO_EXTENSIONS:
+                category = "audio"
+            elif ext in SUPPORTED_DOCUMENT_EXTENSIONS:
+                category = "document"
+            elif ext in SUPPORTED_EXTENSIONS:
+                category = "image"
+            else:
+                category = "image"
+
+        # Update info text
+        if target_path and target_path.exists():
+            size_str = format_file_size(target_path.stat().st_size)
+            if sel and len(sel) > 1:
+                self.smart_info_label.configure(
+                    text=f"{len(sel)} items selected (active: {target_path.name})"
+                )
+            else:
+                self.smart_info_label.configure(
+                    text=f"Selected: {target_path.name} ({size_str})"
+                )
+        elif target_path:
+            self.smart_info_label.configure(text=f"Selected: {target_path.name}")
+        else:
+            self.smart_info_label.configure(text="Select or drop media to auto-tune options")
+
+        if category == self._current_smart_category:
+            return
+
+        self._current_smart_category = category
+
+        if category == "video":
+            self.smart_badge.configure(
+                text="🎬 Smart Video Mode (Hardware GPU Accelerated)",
+                fg_color=("#dbeafe", "#1e3a5f"),
+                text_color=("#1d4ed8", "#93c5fd"),
+            )
+            self.smart_trim_btn.pack(side="right", padx=(0, 4))
+            video_formats = [
+                "Video: MP4",
+                "Video: WebM",
+                "Video -> Animated WebP",
+                "Video -> GIF",
+                "Extract Audio: MP3",
+                "Extract Audio: AAC",
+                "Extract Audio: Opus",
+                "Extract Audio: WAV",
+            ]
+            self.format_menu.configure(values=video_formats)
+            if self.target_format.get() not in video_formats:
+                self.target_format.set("Video: MP4")
+
+            video_presets = [
+                "Manual / Custom",
+                "💬 Discord 24MB Video",
+                "📱 Mobile 720p Optimized",
+                "⚡ Fast Web Streaming (WebM)",
+                "🎞️ Short Clip -> Animated WebP",
+                "🎵 Extract Studio Audio (320k MP3)",
+            ]
+            self.preset_menu.configure(values=video_presets)
+            self.preset_profile.set("Manual / Custom")
+            self.target_size_unit.set("MB")
+
+        elif category == "audio":
+            self.smart_badge.configure(
+                text="🎵 Smart Audio Mode",
+                fg_color=("#ecfdf5", "#064e3b"),
+                text_color=("#047857", "#6ee7b7"),
+            )
+            self.smart_trim_btn.pack_forget()
+            audio_formats = [
+                "Audio: MP3",
+                "Audio: AAC",
+                "Audio: Opus",
+                "Audio: WAV",
+            ]
+            self.format_menu.configure(values=audio_formats)
+            if self.target_format.get() not in audio_formats:
+                self.target_format.set("Audio: MP3")
+
+            audio_presets = [
+                "Manual / Custom",
+                "🎙️ Studio Master (320 kbps)",
+                "📻 High Fidelity (192 kbps)",
+                "📱 Standard Audio (128 kbps)",
+                "💬 Voice Note (64 kbps Opus)",
+            ]
+            self.preset_menu.configure(values=audio_presets)
+            self.preset_profile.set("Manual / Custom")
+            self.target_size_unit.set("MB")
+
+        elif category == "gif":
+            self.smart_badge.configure(
+                text="🎞️ Smart Animated GIF Mode (80-90% Reduction)",
+                fg_color=("#fef3c7", "#78350f"),
+                text_color=("#b45309", "#fde68a"),
+            )
+            self.smart_trim_btn.pack_forget()
+            gif_formats = [
+                "Video -> Animated WebP",
+                "WEBP",
+                "Video -> GIF",
+                "PNG",
+                "JPEG",
+            ]
+            self.format_menu.configure(values=gif_formats)
+            if self.target_format.get() not in gif_formats:
+                self.target_format.set("Video -> Animated WebP")
+
+            gif_presets = [
+                "Manual / Custom",
+                "⚡ Lightweight Animated WebP",
+                "🌐 High Quality Animated WebP (90%)",
+                "💬 Discord Sticker (<8MB)",
+            ]
+            self.preset_menu.configure(values=gif_presets)
+            self.preset_profile.set("Manual / Custom")
+            self.target_size_unit.set("KB")
+
+        elif category == "document":
+            self.smart_badge.configure(
+                text="📝 Smart Document Mode (Markdown Converter)",
+                fg_color=("#e0f2fe", "#0c4a6e"),
+                text_color=("#0369a1", "#7dd3fc"),
+            )
+            self.smart_trim_btn.pack_forget()
+            document_formats = [
+                "Document: MD",
+                "Document: DOCX",
+                "Document: PDF",
+                "Document: HTML",
+                "Document: TXT",
+            ]
+            self.format_menu.configure(values=document_formats)
+            if self.target_format.get() not in document_formats:
+                self.target_format.set("Document: MD")
+
+            document_presets = [
+                "Manual / Custom",
+                "📝 Extract to Markdown",
+                "📄 Markdown -> Word (.docx)",
+                "🌐 Markdown -> HTML",
+            ]
+            self.preset_menu.configure(values=document_presets)
+            self.preset_profile.set("Manual / Custom")
+
+        elif category == "image":
+            self.smart_badge.configure(
+                text="🖼️ Smart Image Mode",
+                fg_color=(APP_ACCENT_SOFT, "#123A36"),
+                text_color=(APP_ACCENT, APP_ACCENT_TINT),
+            )
+            self.smart_trim_btn.pack_forget()
+            image_formats = [
+                "WEBP",
+                "AVIF",
+                "JPEG",
+                "PNG",
+                "ICO",
+                "PDF (Combined)",
+            ]
+            self.format_menu.configure(values=image_formats)
+            if self.target_format.get() not in image_formats:
+                self.target_format.set("WEBP")
+
+            image_presets = [
+                "Manual / Custom",
+                "🌐 Next-Gen AVIF (75%)",
+                "⚡ Web Banner (1920px 80%)",
+                "🛍️ E-Commerce (1000px 85%)",
+                "📱 Avatar 1:1 (PNG)",
+                "📧 Email Doc (≤5MB)",
+                "📄 PDF Binder",
+            ]
+            self.preset_menu.configure(values=image_presets)
+            self.preset_profile.set("Manual / Custom")
+            self.target_size_unit.set("KB")
+
+        else:  # ready / empty queue
+            self.smart_badge.configure(
+                text="✨ Smart Settings: Auto-Detect Ready",
+                fg_color=("#e2e8f0", "#1e293b"),
+                text_color=("#334155", "#94a3b8"),
+            )
+            self.smart_trim_btn.pack_forget()
+            all_formats = [
+                "WEBP",
+                "AVIF",
+                "JPEG",
+                "PNG",
+                "ICO",
+                "PDF (Combined)",
+                "Video: WebM",
+                "Video: MP4",
+                "Video -> Animated WebP",
+                "Video -> GIF",
+                "Audio: MP3",
+                "Audio: AAC",
+                "Audio: Opus",
+                "Document: MD",
+                "Document: DOCX",
+                "Document: PDF",
+                "Document: HTML",
+                "Document: TXT",
+            ]
+            self.format_menu.configure(values=all_formats)
+            self.target_format.set("WEBP")
+            self.preset_menu.configure(
+                values=[
+                    "Manual / Custom",
+                    "🌐 Next-Gen AVIF (75%)",
+                    "⚡ Web Banner (1920px 80%)",
+                    "🛍️ E-Commerce (1000px 85%)",
+                    "📱 Avatar 1:1 (PNG)",
+                    "💬 Discord 24MB Video",
+                    "📧 Email Doc (≤5MB)",
+                    "📄 PDF Binder",
+                ]
+            )
+            self.preset_profile.set("Manual / Custom")
+            self.target_size_unit.set("KB")
+
+        self._format_changed(self.target_format.get())
+
+    def _on_watermark_type_changed(self, new_type: str) -> None:
+        update_setting("watermark_type", new_type)
+        if new_type == "Logo PNG":
+            self.watermark_entry.pack_forget()
+            self.browse_logo_btn.pack(side="left", padx=(2, 10))
+        else:
+            self.browse_logo_btn.pack_forget()
+            self.watermark_entry.pack(side="left", padx=(2, 10))
+
+    def _browse_logo(self) -> None:
+        file_selected = filedialog.askopenfilename(
+            title="Select Logo Image",
+            filetypes=[("PNG / WebP Images", "*.png *.webp *.jpg *.jpeg"), ("All Files", "*.*")],
+        )
+        if file_selected:
+            self.watermark_logo_path.set(file_selected)
+            update_setting("watermark_logo_path", file_selected)
+            self.status_text.set(f"Logo selected: {Path(file_selected).name}")
+
+    def _apply_table_theme(self) -> None:
+        dark_mode = ctk.get_appearance_mode() == "Dark"
+        table_bg = "#191c20" if dark_mode else "#ffffff"
+        head_bg = "#252a31" if dark_mode else "#f2f4f7"
+        fg = "#f2f4f7" if dark_mode else "#344054"
+        sel_bg = "#123B36" if dark_mode else "#CFF4EE"
+        sel_fg = "#ffffff" if dark_mode else "#0B3B35"
+
+        self.table_style.configure(
+            "Treeview",
+            rowheight=34,
+            font=("Poppins", 10),
+            borderwidth=0,
+            background=table_bg,
+            fieldbackground=table_bg,
+            foreground=fg,
+        )
+        self.table_style.configure(
+            "Treeview.Heading",
+            font=("Poppins", 10, "bold"),
+            relief="flat",
+            background=head_bg,
+            foreground=fg,
+        )
+        self.table_style.map(
+            "Treeview.Heading",
+            background=[("active", head_bg)],
+        )
+        self.table_style.map(
+            "Treeview",
+            background=[("selected", sel_bg)],
+            foreground=[("selected", sel_fg)],
+        )
+
+    def _change_appearance_mode(self, new_mode: str) -> None:
+        ctk.set_appearance_mode(new_mode)
+        update_setting("theme", new_mode)
+        self.after(50, self._apply_table_theme)
+
+    def _apply_preset(self, quality: int, is_lossless: bool) -> None:
+        if self.conversion_running:
+            return
+        self.lossless.set(is_lossless)
+        self._lossless_changed()
+        if not is_lossless:
+            self.quality.set(quality)
+            self.quality_text.set(str(quality))
+
+    def _setup_drag_and_drop(self) -> None:
+        if not HAS_DRAG_DROP:
+            return
+        try:
+            hook_dropfiles(self, on_drop_files=self._on_drop_files)
+        except Exception:
+            pass
+
+    def _on_drop_files(self, dropped_files: list[str | bytes]) -> None:
+        if self.conversion_running:
+            return
+        new_paths: list[Path] = []
+        for raw in dropped_files:
+            try:
+                if isinstance(raw, bytes):
+                    try:
+                        str_path = raw.decode("utf-8")
+                    except UnicodeDecodeError:
+                        str_path = raw.decode("mbcs", errors="ignore")
+                else:
+                    str_path = str(raw)
+                p = Path(str_path).resolve()
+                if p.is_dir():
+                    new_paths.extend(
+                        scan_directory_for_images(
+                            p, ALL_MEDIA_EXTENSIONS, recursive=True
+                        )
+                    )
+                elif p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
+                    new_paths.append(p)
+            except Exception:
+                continue
+        if new_paths:
+            self._ingest_image_paths(new_paths)
+        else:
+            self.status_text.set("No supported image or media files found in dropped items")
+
+    def _setup_context_menu(self) -> None:
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(
+            label="Preview & Compare", command=self._open_selected_preview
+        )
+        self.context_menu.add_separator()
+        self.context_menu.add_command(
+            label="Open Converted Output", command=self._ctx_open_converted
+        )
+        self.context_menu.add_command(
+            label="Reveal in File Explorer", command=self._ctx_reveal_file
+        )
+        self.context_menu.add_command(
+            label="Open Original File", command=self._ctx_open_original
+        )
+        self.context_menu.add_command(
+            label="Cut / Trim Video Clip", command=self._open_selected_trimmer
+        )
+        self.context_menu.add_separator()
+        self.context_menu.add_command(
+            label="Copy File to Clipboard", command=self._ctx_copy_image
+        )
+        self.context_menu.add_command(
+            label="Copy File Path", command=self._ctx_copy_path
+        )
+        self.context_menu.add_separator()
+        self.context_menu.add_command(
+            label="Remove from List", command=self._remove_selected
+        )
+
+        def show_menu(event: tk.Event) -> None:
+            item_id = self.table.identify_row(event.y)
+            if item_id:
+                if item_id not in self.table.selection():
+                    self.table.selection_set(item_id)
+                self._update_button_states()
+                path = next(
+                    (p for p, r in self.row_ids.items() if r == item_id), None
+                )
+                res = self.row_results.get(path) if path else None
+                can_open_converted = bool(
+                    res
+                    and res.status == "Completed"
+                    and res.output_path
+                    and res.output_path.exists()
+                )
+                is_video = bool(path and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS)
+                self.context_menu.entryconfigure(
+                    2, state="normal" if can_open_converted else "disabled"
+                )
+                self.context_menu.entryconfigure(
+                    5, state="normal" if is_video else "disabled"
+                )
+                self.context_menu.entryconfigure(
+                    7, state="normal" if can_open_converted else "disabled"
+                )
+                self.context_menu.tk_popup(event.x_root, event.y_root)
+
+        self.table.bind("<Button-3>", show_menu)
+        self.table.bind("<Button-2>", show_menu)
+
+    def _on_double_click_row(self, event: tk.Event) -> None:
+        item_id = self.table.identify_row(event.y)
+        if item_id:
+            path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+            if path:
+                self._show_preview_dialog(path)
+
+    def _open_selected_preview(self) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+        if path:
+            self._show_preview_dialog(path)
+
+    def _open_selected_trimmer(self) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+        if path and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+            dialog = VideoTrimmerDialog(
+                self, path, on_trim_complete=lambda p: self._ingest_image_paths([p])
+            )
+            dialog.focus()
+        else:
+            messagebox.showinfo("Video Trimmer", "Please select a video file (MP4, MKV, MOV, WebM, etc.) to trim.")
+
+    def _show_preview_dialog(self, path: Path) -> None:
+        result = self.row_results.get(path)
+        dialog = ImagePreviewDialog(self, path, result)
+        dialog.focus()
+
+    def _ctx_open_converted(self) -> None:
+        for item_id in self.table.selection():
+            path = next(
+                (p for p, r in self.row_ids.items() if r == item_id), None
+            )
+            if path and path in self.row_results:
+                out = self.row_results[path].output_path
+                if out and out.exists():
+                    open_file_or_folder(out)
+
+    def _ctx_reveal_file(self) -> None:
+        for item_id in self.table.selection():
+            path = next(
+                (p for p, r in self.row_ids.items() if r == item_id), None
+            )
+            if path:
+                out = (
+                    self.row_results[path].output_path
+                    if path in self.row_results
+                    else None
+                )
+                target = out if (out and out.exists()) else path
+                reveal_in_file_manager(target)
+
+    def _ctx_open_original(self) -> None:
+        for item_id in self.table.selection():
+            path = next(
+                (p for p, r in self.row_ids.items() if r == item_id), None
+            )
+            if path and path.exists():
+                open_file_or_folder(path)
+
+    def _ctx_copy_image(self) -> None:
+        for item_id in self.table.selection():
+            path = next(
+                (p for p, r in self.row_ids.items() if r == item_id), None
+            )
+            if path and path in self.row_results:
+                out = self.row_results[path].output_path
+                if out and out.exists():
+                    if copy_image_file_to_clipboard(out):
+                        self.status_text.set(f"Copied {out.name} to clipboard")
+
+    def _ctx_copy_path(self) -> None:
+        for item_id in self.table.selection():
+            path = next(
+                (p for p, r in self.row_ids.items() if r == item_id), None
+            )
+            if path:
+                out = (
+                    self.row_results[path].output_path
+                    if path in self.row_results
+                    else None
+                )
+                target = out if (out and out.exists()) else path
+                copy_text_to_clipboard(str(target.resolve()))
+                self.status_text.set(f"Copied path to clipboard: {target.name}")
+
+    def _save_in_source_folder_toggled(self) -> None:
+        use_source = self.save_in_source_folder.get()
+        update_setting("save_in_source_folder", use_source)
+        if use_source:
+            self.output_entry.configure(state="disabled")
+            self.browse_button.configure(state="disabled")
+        else:
+            self.output_entry.configure(state="normal")
+            self.browse_button.configure(state="normal")
+
+    def _add_files(self) -> None:
+        paths = filedialog.askopenfilenames(
+            title="Select media files",
+            filetypes=[
+                ("All Supported Media", " ".join(f"*{ext}" for ext in ALL_MEDIA_EXTENSIONS)),
+                ("Images", " ".join(f"*{ext}" for ext in SUPPORTED_EXTENSIONS)),
+                ("Videos", " ".join(f"*{ext}" for ext in SUPPORTED_VIDEO_EXTENSIONS)),
+                ("Audios", " ".join(f"*{ext}" for ext in SUPPORTED_AUDIO_EXTENSIONS)),
+                ("All files", "*.*"),
+            ],
+        )
+        self._ingest_image_paths([Path(p) for p in paths])
+
+    def _add_folder(self) -> None:
+        folder = filedialog.askdirectory(title="Choose media folder to import")
+        if not folder:
+            return
+        dir_path = Path(folder).resolve()
+        found = scan_directory_for_images(
+            dir_path, ALL_MEDIA_EXTENSIONS, recursive=True
+        )
+        if not found:
+            messagebox.showinfo(
+                "No supported media",
+                f"No supported images or media files were found in:\n{dir_path}",
+            )
+            return
+        self._ingest_image_paths(found)
+
+    def _ingest_image_paths(self, paths: list[Path]) -> None:
+        for raw_path in paths:
+            path = raw_path.resolve()
+            if (
+                path not in self.selected_files
+                and path.suffix.lower() in ALL_MEDIA_EXTENSIONS
+            ):
+                self.selected_files.append(path)
+                self.row_ids[path] = self.table.insert(
+                    "",
+                    "end",
+                    values=(
+                        path.name,
+                        (
+                            format_file_size(path.stat().st_size)
+                            if path.exists()
+                            else "-"
+                        ),
+                        "-",
+                        "-",
+                        "Ready",
+                    ),
+                )
+
+        if not self.output_directory.get().strip() and self.selected_files:
+            self.output_directory.set(str(self.selected_files[0].parent))
+
+        if self.selected_files:
+            self.empty_state.grid_remove()
+            self.table_frame.grid()
+        else:
+            self.empty_state.grid()
+            self.table_frame.grid_remove()
+
+        self._update_image_summary()
+        self._update_button_states()
+
+    def _remove_selected(self) -> None:
+        for item_id in self.table.selection():
+            path = next(
+                (p for p, r in self.row_ids.items() if r == item_id), None
+            )
+            if path is not None:
+                self.selected_files.remove(path)
+                del self.row_ids[path]
+                self.row_results.pop(path, None)
+            self.table.delete(item_id)
+        if not self.selected_files:
+            self.empty_state.grid()
+            self.table_frame.grid_remove()
+        self._update_image_summary()
+        self._update_button_states()
+
+    def _clear_all(self) -> None:
+        self.selected_files.clear()
+        self.row_ids.clear()
+        self.row_results.clear()
+        self.table.delete(*self.table.get_children())
+        self.empty_state.grid()
+        self.table_frame.grid_remove()
+        self._update_image_summary()
+        self._update_button_states()
+
+    def _select_all_rows(self) -> None:
+        children = self.table.get_children()
+        if children:
+            self.table.selection_set(children)
+            self._update_button_states()
+
+    def _move_selected_up(self) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        for item_id in sel:
+            idx = self.table.index(item_id)
+            if idx > 0:
+                self.table.move(item_id, "", idx - 1)
+                path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+                if path and path in self.selected_files:
+                    p_idx = self.selected_files.index(path)
+                    if p_idx > 0:
+                        self.selected_files[p_idx], self.selected_files[p_idx - 1] = (
+                            self.selected_files[p_idx - 1],
+                            self.selected_files[p_idx],
+                        )
+
+    def _move_selected_down(self) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        children = self.table.get_children()
+        for item_id in reversed(sel):
+            idx = self.table.index(item_id)
+            if idx < len(children) - 1:
+                self.table.move(item_id, "", idx + 1)
+                path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+                if path and path in self.selected_files:
+                    p_idx = self.selected_files.index(path)
+                    if p_idx < len(self.selected_files) - 1:
+                        self.selected_files[p_idx], self.selected_files[p_idx + 1] = (
+                            self.selected_files[p_idx + 1],
+                            self.selected_files[p_idx],
+                        )
+
+    def _apply_filter(self, _event: object = None) -> None:
+        query = self.search_filter.get().strip().lower()
+        for path in self.selected_files:
+            row_id = self.row_ids.get(path)
+            if not row_id:
+                continue
+            res = self.row_results.get(path)
+            status_text = res.status.lower() if res else "ready"
+            if not query or query in path.name.lower() or query in path.suffix.lower() or query in status_text:
+                self.table.move(row_id, "", "end")
+            else:
+                self.table.detach(row_id)
+
+    def _sort_table_by_column(self, col: str) -> None:
+        if self.sort_column == col:
+            self.sort_desc = not self.sort_desc
+        else:
+            self.sort_column = col
+            self.sort_desc = False
+
+        def get_sort_val(p: Path):
+            res = self.row_results.get(p)
+            if col == "filename":
+                return p.name.lower()
+            elif col == "original":
+                return p.stat().st_size if p.exists() else 0
+            elif col == "output":
+                return (res.output_size or 0) if res else 0
+            elif col == "saved":
+                if not res or not res.saved or res.saved == "-":
+                    return -999.0
+                try:
+                    return float(res.saved.replace("%", "").replace(" larger", "").strip())
+                except Exception:
+                    return 0.0
+            elif col == "status":
+                return res.status if res else "Ready"
+            return p.name.lower()
+
+        self.selected_files.sort(key=get_sort_val, reverse=self.sort_desc)
+        for path in self.selected_files:
+            row_id = self.row_ids.get(path)
+            if row_id:
+                self.table.move(row_id, "", "end")
+
+        headings = {
+            "filename": "Filename",
+            "original": "Original Size",
+            "output": "Output Size",
+            "saved": "Saved",
+            "status": "Status",
+        }
+        indicator = " ▼" if self.sort_desc else " ▲"
+        for c, label in headings.items():
+            text = f"{label}{indicator}" if c == col else label
+            self.table.heading(c, text=text)
+
+    def _apply_preset_profile(self, profile_name: str) -> None:
+        if profile_name == "🌐 Next-Gen AVIF (75%)":
+            self.target_format.set("AVIF")
+            self.quality.set(75)
+            self.quality_text.set("75")
+            self.enable_resize.set(False)
+            self.enable_target_size.set(False)
+            self.aspect_ratio.set("Original")
+        elif profile_name == "⚡ Web Banner (1920px 80%)":
+            self.target_format.set("WEBP")
+            self.quality.set(80)
+            self.quality_text.set("80")
+            self.enable_resize.set(True)
+            self.max_dimension_text.set("1920")
+            self.enable_target_size.set(False)
+            self.aspect_ratio.set("16:9")
+        elif profile_name == "🛍️ E-Commerce (1000px 85%)":
+            self.target_format.set("WEBP")
+            self.quality.set(85)
+            self.quality_text.set("85")
+            self.enable_resize.set(True)
+            self.max_dimension_text.set("1000")
+            self.aspect_ratio.set("1:1")
+        elif profile_name == "📱 Avatar 1:1 (PNG)":
+            self.target_format.set("PNG")
+            self.enable_resize.set(True)
+            self.max_dimension_text.set("500")
+            self.aspect_ratio.set("1:1")
+            self.enable_rounded.set(True)
+            self.corner_radius.set("50")
+        elif profile_name == "💬 Discord 24MB Video":
+            self.target_format.set("Video: MP4")
+            self.enable_target_size.set(True)
+            self.target_size_val.set("24")
+            self.target_size_unit.set("MB")
+        elif profile_name == "📱 Mobile 720p Optimized":
+            self.target_format.set("Video: MP4")
+            self.enable_resize.set(True)
+            self.max_dimension_text.set("1280")
+            self.enable_target_size.set(False)
+        elif profile_name == "⚡ Fast Web Streaming (WebM)":
+            self.target_format.set("Video: WebM")
+            self.enable_resize.set(False)
+            self.enable_target_size.set(False)
+        elif profile_name == "🎞️ Short Clip -> Animated WebP":
+            self.target_format.set("Video -> Animated WebP")
+            self.quality.set(80)
+            self.quality_text.set("80")
+            self.enable_target_size.set(False)
+        elif profile_name == "🎵 Extract Studio Audio (320k MP3)":
+            self.target_format.set("Extract Audio: MP3")
+            self.enable_target_size.set(False)
+        elif profile_name == "⚡ Lightweight Animated WebP":
+            self.target_format.set("Video -> Animated WebP")
+            self.quality.set(70)
+            self.quality_text.set("70")
+            self.enable_target_size.set(False)
+        elif profile_name == "🌐 High Quality Animated WebP (90%)":
+            self.target_format.set("Video -> Animated WebP")
+            self.quality.set(90)
+            self.quality_text.set("90")
+            self.enable_target_size.set(False)
+        elif profile_name == "💬 Discord Sticker (<8MB)":
+            self.target_format.set("Video -> Animated WebP")
+            self.enable_target_size.set(True)
+            self.target_size_val.set("8")
+            self.target_size_unit.set("MB")
+        elif profile_name == "🎙️ Studio Master (320 kbps)":
+            self.target_format.set("Audio: MP3")
+            self.enable_target_size.set(False)
+        elif profile_name == "📻 High Fidelity (192 kbps)":
+            self.target_format.set("Audio: MP3")
+            self.enable_target_size.set(False)
+        elif profile_name == "📱 Standard Audio (128 kbps)":
+            self.target_format.set("Audio: MP3")
+            self.enable_target_size.set(False)
+        elif profile_name == "💬 Voice Note (64 kbps Opus)":
+            self.target_format.set("Audio: Opus")
+            self.enable_target_size.set(False)
+        elif profile_name == "📧 Email Doc (≤5MB)":
+            self.target_format.set("WEBP")
+            self.enable_target_size.set(True)
+            self.target_size_val.set("5")
+            self.target_size_unit.set("MB")
+        elif profile_name == "📄 PDF Binder":
+            self.target_format.set("PDF (Combined)")
+            self.enable_target_size.set(False)
+
+        self._format_changed(self.target_format.get())
+        self._lossless_changed()
+
+    def _choose_output_directory(self) -> None:
+        directory = filedialog.askdirectory(title="Choose output folder")
+        if directory:
+            self.output_directory.set(directory)
+            update_setting("last_output_directory", directory)
+
+    def _slider_changed(self, value: float) -> None:
+        self.quality_text.set(str(round(value)))
+
+    def _lossless_changed(self) -> None:
+        if not self.conversion_running:
+            quality_state = "disabled" if self.lossless.get() else "normal"
+            self.quality_slider.configure(state=quality_state)
+            self.quality_entry.configure(state=quality_state)
+
+    def _update_image_summary(self) -> None:
+        count = len(self.selected_files)
+        self.image_count_text.set(
+            f"{count} item" if count == 1 else f"{count} items"
+        )
+        total_size = sum(
+            path.stat().st_size for path in self.selected_files if path.exists()
+        )
+        self.total_size_text.set(
+            f"• {format_file_size(total_size)}" if total_size else ""
+        )
+
+    def _sync_quality_from_entry(self) -> bool:
+        try:
+            value = int(self.quality_text.get())
+            if not 1 <= value <= 100:
+                raise ValueError
+        except ValueError:
+            self.quality_entry.configure(border_color="#d92d20")
+            self.status_text.set("Quality must be a whole number from 1 to 100")
+            return False
+        self.quality_entry.configure(
+            border_color=ctk.ThemeManager.theme["CTkEntry"]["border_color"]
+        )
+        self.quality.set(value)
+        self.quality_text.set(str(value))
+        return True
+
+    def _start_conversion(self) -> None:
+        if self.conversion_running or not self.selected_files:
+            self.status_text.set("Add at least one item to convert")
+            return
+        if not self._sync_quality_from_entry():
+            return
+
+        # Check Free Evaluation Limit
+        is_pro = is_pro_activated()
+        if not is_pro and len(self.selected_files) > FREE_BATCH_LIMIT:
+            msg = (
+                f"Free Evaluation Mode processes up to {FREE_BATCH_LIMIT} items per batch.\n\n"
+                f"You have {len(self.selected_files)} items selected.\n"
+                "Would you like to upgrade to Pro for unlimited batch conversions?"
+            )
+            if messagebox.askyesno("Upgrade to Pro", msg):
+                self._open_license_manager()
+                return
+
+        use_source_folder = self.save_in_source_folder.get()
+        out_dir_str = self.output_directory.get().strip()
+        if not use_source_folder and not out_dir_str:
+            self.status_text.set("Choose an output folder first")
+            return
+
+        output = Path(out_dir_str) if not use_source_folder else None
+
+        # Resolve sizing & limits. A field left blank simply disables that
+        # constraint, but text that fails to parse is a typo the user should
+        # be told about -- silently dropping the constraint would run the
+        # whole batch without it and nobody would notice why.
+        max_dim = None
+        scale_pct = None
+        if self.enable_resize.get():
+            max_dim_str = self.max_dimension_text.get().strip()
+            if max_dim_str:
+                try:
+                    max_dim = int(max_dim_str)
+                    if max_dim <= 0:
+                        raise ValueError
+                except ValueError:
+                    self.status_text.set("Max Dimension must be a whole number greater than 0")
+                    return
+            scale_str = self.scale_percent_text.get().strip()
+            if scale_str:
+                try:
+                    scale_pct = float(scale_str)
+                    if not 0 < scale_pct < 100:
+                        raise ValueError
+                except ValueError:
+                    self.status_text.set("Scale % must be a number between 0 and 100")
+                    return
+
+        target_kb = None
+        target_mb = None
+        if self.enable_target_size.get():
+            target_size_str = self.target_size_val.get().strip()
+            try:
+                val = float(target_size_str)
+                if val <= 0:
+                    raise ValueError
+                if self.target_size_unit.get() == "KB":
+                    target_kb = int(val)
+                else:
+                    target_mb = val
+                    target_kb = int(val * 1024)
+            except ValueError:
+                self.status_text.set("Target Size must be a number greater than 0")
+                return
+
+        corner_rad = 0
+        if self.enable_rounded.get():
+            corner_rad_str = self.corner_radius.get().strip()
+            try:
+                corner_rad = int(corner_rad_str) if corner_rad_str else 0
+                if corner_rad < 0:
+                    raise ValueError
+            except ValueError:
+                self.status_text.set("Corner Radius must be a whole number of 0 or more")
+                return
+
+        selected_batch = (
+            self.selected_files
+            if is_pro
+            else self.selected_files[:FREE_BATCH_LIMIT]
+        )
+
+        self.conversion_running = True
+        self.cancel_event.clear()
+        self._set_controls_enabled(False)
+        self.progress_value.set(0)
+
+        wm_text = (
+            self.watermark_text.get().strip()
+            if (self.enable_watermark.get() and self.watermark_type.get() == "Text")
+            else ""
+        )
+        wm_logo = (
+            self.watermark_logo_path.get().strip()
+            if (self.enable_watermark.get() and self.watermark_type.get() == "Logo PNG")
+            else ""
+        )
+
+        # Transformations and Batch Renaming
+        rot_str = self.rotate_angle.get().replace("°", "").strip()
+        try:
+            rotate_angle = int(rot_str)
+        except ValueError:
+            rotate_angle = 0
+        flip_h = self.flip_h.get()
+        flip_v = self.flip_v.get()
+        aspect_ratio = self.aspect_ratio.get() if self.aspect_ratio.get() != "Original" else None
+        
+        grayscale = self.grayscale.get()
+        filename_prefix = self.filename_prefix.get()
+        filename_suffix = self.filename_suffix.get()
+        normalize_audio = self.normalize_audio.get()
+
+        threading.Thread(
+            target=self._convert_batch_pool,
+            args=(
+                tuple(selected_batch),
+                output,
+                self.target_format.get(),
+                self.quality.get(),
+                self.overwrite.get(),
+                self.lossless.get(),
+                self.preserve_metadata.get(),
+                use_source_folder,
+                max_dim,
+                scale_pct,
+                target_kb,
+                target_mb,
+                wm_text,
+                wm_logo,
+                self.watermark_position.get(),
+                self.strip_metadata.get(),
+                self.slugify_names.get(),
+                rotate_angle,
+                flip_h,
+                flip_v,
+                aspect_ratio,
+                corner_rad,
+                grayscale,
+                filename_prefix,
+                filename_suffix,
+                normalize_audio,
+            ),
+            daemon=True,
+        ).start()
+
+    def _convert_batch_pool(
+        self,
+        files_snapshot: tuple[Path, ...],
+        output: Path | None,
+        target_format_raw: str,
+        quality: int,
+        overwrite: bool,
+        lossless: bool,
+        preserve_metadata: bool,
+        use_source_folder: bool,
+        max_dim: int | None,
+        scale_pct: float | None,
+        target_kb: int | None,
+        target_mb: float | None,
+        watermark_text: str,
+        watermark_logo_path: str,
+        watermark_position: str,
+        strip_metadata: bool,
+        slugify_names: bool,
+        rotate_angle: int = 0,
+        flip_h: bool = False,
+        flip_v: bool = False,
+        aspect_ratio: str | None = None,
+        corner_radius: int = 0,
+        grayscale: bool = False,
+        filename_prefix: str = "",
+        filename_suffix: str = "",
+        normalize_audio: bool = False,
+    ) -> None:
+        total = len(files_snapshot)
+        results: list[ConversionResult] = []
+        reserved_paths: set[Path] = set()
+        reserved_lock = threading.Lock()
+        counter_lock = threading.Lock()
+        completed_count = 0
+        start_time = time.perf_counter()
+
+        # Handle special Case: Combine images into PDF. Matched exactly (not
+        # a substring check) so it doesn't also catch "Document: PDF", which
+        # renders each Markdown file to its own PDF instead of combining them.
+        if target_format_raw.upper() == "PDF (COMBINED)" and total > 1:
+            try:
+                dest_dir = files_snapshot[0].parent if use_source_folder else output
+                assert dest_dir is not None
+                dest_name = build_destination_filename(
+                    "combined_document",
+                    ".pdf",
+                    slugify=slugify_names,
+                    prefix=filename_prefix,
+                    suffix=filename_suffix,
+                )
+                pdf_path = next_available_output_path(
+                    dest_dir / dest_name,
+                    overwrite=overwrite,
+                )
+                combine_images_to_pdf(list(files_snapshot), pdf_path)
+                res = ConversionResult(
+                    files_snapshot[0],
+                    pdf_path,
+                    sum(p.stat().st_size for p in files_snapshot),
+                    pdf_path.stat().st_size,
+                    "Saved",
+                    "Completed",
+                )
+                self.events.put(("result", res))
+                self.events.put(("complete", ([res], False, time.perf_counter() - start_time)))
+                return
+            except Exception as e:
+                self.events.put(("error", str(e)))
+                self.events.put(("complete", ([], False, 0)))
+                return
+
+        def process_single(source_p: Path) -> ConversionResult:
+            nonlocal completed_count
+            if self.cancel_event.is_set():
+                return ConversionResult(
+                    source_p, None, None, None, "-", "Cancelled", "Operation cancelled"
+                )
+
+            target_dir = source_p.parent if use_source_folder else output
+            assert target_dir is not None
+
+            is_video = source_p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+            is_audio = source_p.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+            is_document = source_p.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
+            is_gif_anim = source_p.suffix.lower() == ".gif" and (
+                "ANIMATED" in target_format_raw.upper()
+                or "GIF" in target_format_raw.upper()
+                or "VIDEO" in target_format_raw.upper()
+                or "MP4" in target_format_raw.upper()
+                or "WEBM" in target_format_raw.upper()
+            )
+
+            with reserved_lock:
+                if is_document:
+                    # Document/Markdown engine conversion
+                    doc_fmt_key = "MD"
+                    if "DOCX" in target_format_raw.upper():
+                        doc_fmt_key = "DOCX"
+                    elif "HTML" in target_format_raw.upper():
+                        doc_fmt_key = "HTML"
+                    elif "TXT" in target_format_raw.upper():
+                        doc_fmt_key = "TXT"
+                    elif "PDF" in target_format_raw.upper():
+                        doc_fmt_key = "PDF"
+                    elif "MD" in target_format_raw.upper() or "MARKDOWN" in target_format_raw.upper():
+                        doc_fmt_key = "MD"
+
+                    res = convert_document(
+                        source_p,
+                        target_dir,
+                        target_format=doc_fmt_key,
+                        overwrite=overwrite,
+                        reserved_paths=reserved_paths,
+                        slugify_names=slugify_names,
+                        filename_prefix=filename_prefix,
+                        filename_suffix=filename_suffix,
+                    )
+                elif is_video or is_audio or is_gif_anim:
+                    # Video/Audio engine conversion
+                    fmt_key = "mp4"
+                    if "WEBM" in target_format_raw.upper():
+                        fmt_key = "webm"
+                    elif "ANIMATED WEBP" in target_format_raw.upper() or "ANIMATED" in target_format_raw.upper():
+                        fmt_key = "animated_webp"
+                    elif "GIF" in target_format_raw.upper():
+                        fmt_key = "gif"
+                    elif "AUDIO (MP3)" in target_format_raw.upper() or "MP3" in target_format_raw.upper():
+                        fmt_key = "mp3"
+                    elif "AAC" in target_format_raw.upper():
+                        fmt_key = "aac"
+                    elif "OPUS" in target_format_raw.upper():
+                        fmt_key = "opus"
+                    elif "WAV" in target_format_raw.upper():
+                        fmt_key = "wav"
+
+                    res = convert_media_file(
+                        source_p,
+                        target_dir,
+                        target_format=fmt_key,
+                        target_mb=target_mb,
+                        overwrite=overwrite,
+                        reserved_paths=reserved_paths,
+                        slugify_names=slugify_names,
+                        filename_prefix=filename_prefix,
+                        filename_suffix=filename_suffix,
+                        normalize_audio=normalize_audio,
+                    )
+                else:
+                    # Image engine conversion
+                    fmt_key = "WEBP"
+                    if "AVIF" in target_format_raw.upper():
+                        fmt_key = "AVIF"
+                    elif "JPEG" in target_format_raw.upper() or "JPG" in target_format_raw.upper():
+                        fmt_key = "JPEG"
+                    elif "PNG" in target_format_raw.upper():
+                        fmt_key = "PNG"
+                    elif "ICO" in target_format_raw.upper():
+                        fmt_key = "ICO"
+                    elif "PDF" in target_format_raw.upper():
+                        fmt_key = "PDF"
+
+                    res = convert_image(
+                        source_p,
+                        target_dir,
+                        quality=quality,
+                        overwrite=overwrite,
+                        reserved_paths=reserved_paths,
+                        lossless=lossless,
+                        preserve_metadata=preserve_metadata,
+                        max_width=max_dim,
+                        max_height=max_dim,
+                        scale_percent=scale_pct,
+                        target_format=fmt_key,
+                        target_kb=target_kb,
+                        watermark_text=watermark_text,
+                        watermark_logo_path=watermark_logo_path,
+                        watermark_position=watermark_position,
+                        strip_metadata=strip_metadata,
+                        slugify_names=slugify_names,
+                        filename_prefix=filename_prefix,
+                        filename_suffix=filename_suffix,
+                        rotate_angle=rotate_angle,
+                        flip_h=flip_h,
+                        flip_v=flip_v,
+                        aspect_ratio=aspect_ratio,
+                        corner_radius=corner_radius,
+                        grayscale=grayscale,
+                    )
+
+            with counter_lock:
+                completed_count += 1
+                current = completed_count
+
+            self.events.put(("result", res))
+            self.events.put(
+                (
+                    "progress",
+                    (
+                        current / total,
+                        f"Processing {min(current + 1, total)} of {total}...",
+                    ),
+                )
+            )
+            return res
+
+        workers = min(4, max(1, os.cpu_count() or 4))
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [executor.submit(process_single, p) for p in files_snapshot]
+                for f in futures:
+                    results.append(f.result())
+        except Exception as error:
+            self.events.put(("error", str(error)))
+
+        elapsed = time.perf_counter() - start_time
+        self.events.put(
+            ("complete", (results, self.cancel_event.is_set(), elapsed))
+        )
+
+    def _process_events(self) -> None:
+        try:
+            while True:
+                event, payload = self.events.get_nowait()
+                if event == "progress":
+                    value, message = payload
+                    self.progress_value.set(value)
+                    self.status_text.set(message)
+                elif event == "result":
+                    self._display_result(payload)
+                elif event == "error":
+                    self.status_text.set(f"Process error: {payload}")
+                else:
+                    results, cancelled, elapsed = payload
+                    self.last_results = list(results)
+                    self.progress_value.set(1)
+                    failed = sum(result.status == "Failed" for result in results)
+                    completed = sum(
+                        result.status == "Completed" for result in results
+                    )
+                    original_total = sum(
+                        result.original_size or 0 for result in results
+                    )
+                    output_total = sum(
+                        result.output_size or 0 for result in results
+                    )
+                    saved_bytes = max(0, original_total - output_total)
+                    saved_pct = (
+                        ((original_total - output_total) / original_total * 100)
+                        if original_total > 0
+                        else 0.0
+                    )
+
+                    time_text = (
+                        f"{elapsed:.1f}s" if elapsed >= 1 else f"{elapsed:.2f}s"
+                    )
+                    summary = (
+                        f"Finished {completed} of {len(results)} in {time_text} "
+                        f"| Total saved: {format_file_size(saved_bytes)} ({saved_pct:.1f}%)"
+                    )
+                    if failed > 0:
+                        summary += f" • {failed} failed"
+
+                    self.status_text.set(
+                        f"Cancelled: {summary}" if cancelled else summary
+                    )
+                    self.conversion_running = False
+                    self._set_controls_enabled(True)
+                    self.open_button.configure(state="normal")
+                    self.export_csv_button.configure(state="normal")
+
+                    if self.play_sound.get() and not cancelled:
+                        play_completion_sound()
+        except queue.Empty:
+            pass
+        self.after(100, self._process_events)
+
+    def _display_result(self, result: ConversionResult) -> None:
+        self.row_results[result.source_path] = result
+        row_id = self.row_ids.get(result.source_path)
+        if row_id:
+            status = (
+                result.status
+                if result.status in ("Completed", "Cancelled")
+                else f"Failed: {result.error or 'Error'}"
+            )
+            self.table.item(
+                row_id,
+                values=(
+                    result.source_path.name,
+                    result.original_size_text,
+                    result.output_size_text,
+                    result.saved,
+                    status,
+                ),
+            )
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        self.add_button.configure(state=state)
+        self.add_folder_button.configure(state=state)
+        self.convert_button.configure(state=state)
+        self.preview_button.configure(
+            state=state if self.table.selection() else "disabled"
+        )
+        self.remove_button.configure(
+            state=state if self.table.selection() else "disabled"
+        )
+        self.clear_button.configure(state=state)
+        self.quality_slider.configure(state=state)
+        self.quality_entry.configure(state=state)
+        self.format_menu.configure(state=state)
+        self.same_folder_checkbox.configure(state=state)
+        if hasattr(self, "move_up_button") and hasattr(self, "move_down_button"):
+            self.move_up_button.configure(state=state if self.table.selection() else "disabled")
+            self.move_down_button.configure(state=state if self.table.selection() else "disabled")
+
+        if not self.save_in_source_folder.get():
+            self.output_entry.configure(state=state)
+            self.browse_button.configure(state=state)
+
+        self.cancel_button.configure(state="disabled" if enabled else "normal")
+        if enabled:
+            self.cancel_button.grid_remove()
+        else:
+            self.cancel_button.grid(row=2, column=3, padx=(0, 8))
+        self._lossless_changed()
+
+    def _cancel_conversion(self) -> None:
+        if self.conversion_running:
+            self.cancel_event.set()
+            self.cancel_button.configure(state="disabled")
+            self.status_text.set("Cancelling remaining items...")
+
+    def _update_button_states(self) -> None:
+        if not self.conversion_running:
+            has_sel = bool(self.table.selection())
+            self.preview_button.configure(state="normal" if has_sel else "disabled")
+            self.remove_button.configure(state="normal" if has_sel else "disabled")
+            self.clear_button.configure(
+                state="normal" if self.selected_files else "disabled"
+            )
+            if hasattr(self, "move_up_button") and hasattr(self, "move_down_button"):
+                self.move_up_button.configure(state="normal" if has_sel else "disabled")
+                self.move_down_button.configure(state="normal" if has_sel else "disabled")
+            self._adapt_settings_to_selection()
+
+    def _open_output_folder(self) -> None:
+        use_source = self.save_in_source_folder.get()
+        if use_source and self.selected_files:
+            folder = self.selected_files[0].parent
+        else:
+            folder = Path(self.output_directory.get().strip())
+        if not folder.is_dir():
+            messagebox.showerror(
+                "Output folder", "The output folder does not exist."
+            )
+            return
+        open_file_or_folder(folder)
+
+    def _export_csv_report(self) -> None:
+        if not self.last_results:
+            messagebox.showinfo("Export Report", "No conversion results to export.")
+            return
+        save_path = filedialog.asksaveasfilename(
+            title="Save Conversion Report",
+            defaultextension=".csv",
+            filetypes=[("CSV Spreadsheet", "*.csv"), ("All Files", "*.*")],
+            initialfile="shadow_report.csv",
+        )
+        if not save_path:
+            return
+        try:
+            export_results_to_csv(self.last_results, Path(save_path))
+            self.status_text.set(f"Report saved: {Path(save_path).name}")
+            messagebox.showinfo(
+                "Export Complete", f"Conversion report exported to:\n{save_path}"
+            )
+        except Exception as err:
+            messagebox.showerror("Export Failed", f"Could not save CSV:\n{err}")
+
+
+if __name__ == "__main__":
+    ctk.set_appearance_mode("Dark")
+    ctk.set_default_color_theme(str(Path(__file__).resolve().parent / "assets" / "theme.json"))
+    WebPCompressorApp().mainloop()
