@@ -9,7 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PIL import Image, ImageDraw
 
-from converter import convert_image, SUPPORTED_EXTENSIONS, apply_image_transformations
+from converter import (
+    IMAGE_OUTPUT_FORMATS,
+    IMAGE_FORMAT_CAPABILITIES,
+    SUPPORTED_EXTENSIONS,
+    apply_image_transformations,
+    convert_image,
+    estimate_image_output_size,
+)
 from utils import (
     export_results_to_csv,
     format_saved_percentage,
@@ -20,6 +27,13 @@ from utils import (
 
 
 class ConverterTests(unittest.TestCase):
+    def test_every_output_format_has_capability_metadata(self) -> None:
+        self.assertEqual(set(IMAGE_OUTPUT_FORMATS), set(IMAGE_FORMAT_CAPABILITIES))
+        for format_name, metadata in IMAGE_FORMAT_CAPABILITIES.items():
+            self.assertTrue(metadata["category"], format_name)
+            self.assertTrue(metadata["description"], format_name)
+            self.assertTrue(metadata["badges"], format_name)
+
     def test_preserves_grayscale_alpha(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -105,19 +119,119 @@ class ConverterTests(unittest.TestCase):
                 self.assertEqual(converted.getexif().get(315), "WebP Compressor Test")
 
     def test_all_supported_input_formats(self) -> None:
-        """Test converting each format: .jpg, .jpeg, .png, .bmp, .tiff, .tif"""
+        """Test representative files from every supported image family."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "output"
-            for ext in (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"):
+            cases = {
+                ".jpg": "JPEG",
+                ".jfif": "JPEG",
+                ".png": "PNG",
+                ".bmp": "BMP",
+                ".tiff": "TIFF",
+                ".webp": "WEBP",
+                ".avif": "AVIF",
+                ".heic": "HEIF",
+                ".gif": "GIF",
+                ".jp2": "JPEG2000",
+                ".dds": "DDS",
+                ".tga": "TGA",
+                ".qoi": "QOI",
+                ".pcx": "PCX",
+                ".ppm": "PPM",
+                ".sgi": "SGI",
+                ".xbm": "XBM",
+                ".im": "IM",
+                ".msp": "MSP",
+                ".ico": "ICO",
+                ".icns": "ICNS",
+            }
+            for ext, source_format in cases.items():
                 source = root / f"sample{ext}"
-                Image.new("RGB", (32, 32), (100, 150, 200)).save(source)
+                image = Image.new("RGB", (32, 32), (100, 150, 200))
+                if source_format in ("XBM", "MSP"):
+                    image = image.convert("1")
+                image.save(source, format=source_format)
                 result = convert_image(source, output, 80)
                 self.assertEqual(result.status, "Completed", f"Failed for format {ext}: {result.error}")
                 self.assertTrue(result.output_path.exists())
                 self.assertEqual(result.output_path.suffix.lower(), ".webp")
                 with Image.open(result.output_path) as converted:
-                    self.assertEqual(converted.size, (32, 32))
+                    expected_size = (1024, 1024) if source_format == "ICNS" else (32, 32)
+                    self.assertEqual(converted.size, expected_size)
+
+    def test_all_supported_output_formats(self) -> None:
+        """Every output choice should create a file using its advertised encoder."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.png"
+            Image.new("RGBA", (300, 200), (100, 150, 200, 128)).save(source)
+
+            for target_format, (expected_ext, _encoder) in IMAGE_OUTPUT_FORMATS.items():
+                result = convert_image(
+                    source,
+                    root / target_format.replace(" ", "_"),
+                    quality=80,
+                    target_format=target_format,
+                )
+                self.assertEqual(
+                    result.status,
+                    "Completed",
+                    f"Failed for output {target_format}: {result.error}",
+                )
+                self.assertIsNotNone(result.output_path)
+                self.assertEqual(result.output_path.suffix.lower(), expected_ext)
+                self.assertTrue(result.output_path.is_file())
+                self.assertGreater(result.output_path.stat().st_size, 0)
+
+    def test_output_size_estimate_matches_real_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.png"
+            Image.new("RGB", (96, 64), (50, 100, 150)).save(source)
+
+            estimated = estimate_image_output_size(
+                source,
+                quality=73,
+                target_format="WEBP",
+                max_width=48,
+                max_height=48,
+            )
+            actual = convert_image(
+                source,
+                root / "actual",
+                quality=73,
+                target_format="WEBP",
+                max_width=48,
+                max_height=48,
+            )
+
+            self.assertEqual(actual.status, "Completed", actual.error)
+            self.assertEqual(estimated, actual.output_size)
+
+    def test_animated_input_to_gif_preserves_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "animated.webp"
+            frames = [
+                Image.new("RGBA", (24, 16), "red"),
+                Image.new("RGBA", (24, 16), "blue"),
+            ]
+            frames[0].save(
+                source,
+                format="WEBP",
+                save_all=True,
+                append_images=frames[1:],
+                duration=[100, 200],
+                loop=0,
+            )
+
+            result = convert_image(source, root / "out", target_format="GIF")
+
+            self.assertEqual(result.status, "Completed", result.error)
+            with Image.open(result.output_path) as converted:
+                self.assertTrue(converted.is_animated)
+                self.assertEqual(converted.n_frames, 2)
 
     def test_png_transparency(self) -> None:
         """Verify RGBA transparency and palette transparency are preserved."""
@@ -444,4 +558,3 @@ class ConverterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

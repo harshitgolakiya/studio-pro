@@ -31,7 +31,7 @@ except RuntimeError as exc:
     print(message, file=sys.stderr)
     raise SystemExit(message) from exc
 
-from font_loader import DISPLAY_FONT, load_bundled_fonts
+from font_loader import BODY_FONT, DISPLAY_FONT, load_bundled_fonts
 
 # Must happen before any CTkFont()/widget is created -- font family
 # resolution happens at creation time, not lazily.
@@ -45,10 +45,15 @@ except ImportError:
     HAS_DRAG_DROP = False
 
 from converter import (
+    IMAGE_FORMAT_CAPABILITIES,
+    IMAGE_OUTPUT_FORMATS,
+    LOSSY_IMAGE_FORMATS,
     SUPPORTED_EXTENSIONS,
     ConversionResult,
     combine_images_to_pdf,
     convert_image,
+    estimate_image_output_size,
+    normalize_output_format,
 )
 from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
 from license_dialog import LicenseDialog
@@ -84,20 +89,24 @@ ALL_MEDIA_EXTENSIONS = (
     | SUPPORTED_AUDIO_EXTENSIONS
     | SUPPORTED_DOCUMENT_EXTENSIONS
 )
+IMAGE_FORMAT_OPTIONS = [
+    "PDF (Combined)" if fmt == "PDF" else fmt
+    for fmt in IMAGE_OUTPUT_FORMATS
+]
 
-APP_BACKGROUND = "#0D0F12"
-APP_SURFACE = "#15171C"
-APP_ELEVATED = "#1E2129"
-APP_ACCENT = "#12877A"
-APP_ACCENT_DARK = "#1E2129"
+APP_BACKGROUND = ("#F3F6F8", "#090C10")
+APP_SURFACE = ("#FFFFFF", "#11161D")
+APP_ELEVATED = ("#E9EEF3", "#1A2029")
+APP_ACCENT = "#16A394"
+APP_ACCENT_DARK = "#0E756B"
 APP_ACCENT_SOFT = "#D8F3EF"
-APP_ACCENT_TINT = "#17A594"
-APP_SECONDARY = "#4DD0C4"
-APP_TEXT = "#EDEFF2"
-APP_MUTED = "#9AA3AC"
+APP_ACCENT_TINT = "#4DD9C8"
+APP_SECONDARY = "#70E1D4"
+APP_TEXT = ("#14212B", "#F4F7FA")
+APP_MUTED = ("#607181", "#91A0AE")
 APP_CTA = "#D4A03C"
 APP_CTA_STRONG = "#E8B750"
-APP_BORDER = "#262A33"
+APP_BORDER = ("#D6DFE7", "#27303B")
 
 
 class WebPCompressorApp(ctk.CTk):
@@ -106,8 +115,8 @@ class WebPCompressorApp(ctk.CTk):
         self.settings = load_settings()
 
         self.title("Shadow Media Studio Pro")
-        self.geometry("1060x820")
-        self.minsize(920, 680)
+        self.geometry("1180x860")
+        self.minsize(980, 720)
         self._apply_window_icon()
         self._show_setup_status_if_needed()
         self.after(200, self._show_missing_runtime_warning_if_needed)
@@ -196,6 +205,7 @@ class WebPCompressorApp(ctk.CTk):
         )
 
         self.status_text = tk.StringVar(value="Ready to convert")
+        self.estimate_text = tk.StringVar(value="Add an image to estimate output size")
         self.progress_value = tk.DoubleVar(value=0)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.conversion_running = False
@@ -206,8 +216,11 @@ class WebPCompressorApp(ctk.CTk):
         self.image_count_text = tk.StringVar(value="0 items")
         self.total_size_text = tk.StringVar(value="")
         self.active_watcher: object | None = None
+        self._estimate_after_id: str | None = None
+        self._estimate_generation = 0
 
         self._build_interface()
+        self._setup_estimate_traces()
         self._setup_drag_and_drop()
         self._setup_context_menu()
         self._bind_shortcuts()
@@ -262,6 +275,7 @@ class WebPCompressorApp(ctk.CTk):
         self.bind("<Control-O>", lambda _e: self._add_files())
         self.bind("<Alt-Up>", lambda _e: self._move_selected_up())
         self.bind("<Alt-Down>", lambda _e: self._move_selected_down())
+        self.bind("<Control-Return>", lambda _e: self._start_conversion())
 
     @staticmethod
     def _resource_path(relative_path: str) -> Path:
@@ -304,35 +318,45 @@ class WebPCompressorApp(ctk.CTk):
         self.configure(fg_color=APP_BACKGROUND)
 
         # Top navigation shell
-        header = ctk.CTkFrame(self, fg_color=APP_BACKGROUND, corner_radius=0, height=64)
+        header = ctk.CTkFrame(self, fg_color=APP_BACKGROUND, corner_radius=0, height=72)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
 
         brand = ctk.CTkFrame(header, fg_color="transparent")
-        brand.grid(row=0, column=0, padx=(20, 12), pady=12, sticky="w")
+        brand.grid(row=0, column=0, padx=(28, 12), pady=14, sticky="w")
 
         logo_badge = ctk.CTkLabel(
             brand,
             text="S",
-            width=30,
-            height=30,
-            corner_radius=9,
-            fg_color=APP_ACCENT_DARK,
+            width=36,
+            height=36,
+            corner_radius=11,
+            fg_color=APP_ACCENT,
             text_color="#ffffff",
             font=ctk.CTkFont(size=15, weight="bold"),
         )
         logo_badge.pack(side="left")
 
+        brand_copy = ctk.CTkFrame(brand, fg_color="transparent")
+        brand_copy.pack(side="left", padx=(11, 0))
         ctk.CTkLabel(
-            brand,
+            brand_copy,
             text="Shadow Media Studio Pro",
             font=ctk.CTkFont(family=DISPLAY_FONT, size=19, weight="bold"),
             text_color=APP_TEXT,
-        ).pack(side="left", padx=(10, 0))
+            anchor="w",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            brand_copy,
+            text="Convert · optimize · automate",
+            font=ctk.CTkFont(size=10),
+            text_color=APP_MUTED,
+            anchor="w",
+        ).pack(anchor="w", pady=(0, 1))
 
         # Header Right Actions
         header_right = ctk.CTkFrame(header, fg_color="transparent")
-        header_right.grid(row=0, column=2, padx=(0, 18), sticky="e")
+        header_right.grid(row=0, column=2, padx=(0, 28), sticky="e")
 
         is_vip = is_vip_activated()
         is_pro = is_pro_activated()
@@ -389,23 +413,16 @@ class WebPCompressorApp(ctk.CTk):
         self.theme_menu.set(self.settings.get("theme", "System"))
         self.theme_menu.pack(side="left")
 
-        # Content shell: caps the main content at a comfortable reading/working
-        # width instead of letting every card stretch edge-to-edge (and its
-        # clustered controls trail off into empty space) on a maximized or
-        # ultrawide window. Left-aligned, matching the header above it --
-        # only a single spacer column on the right absorbs extra width, so
-        # this doesn't float as a centered island misaligned with the header
-        # at normal window sizes.
+        ctk.CTkFrame(self, fg_color=APP_BORDER, height=1, corner_radius=0).grid(
+            row=0, column=0, sticky="sew"
+        )
+
+        # Use the entire working canvas. The old layout intentionally pinned
+        # every card to a narrow left column and left a large dead zone.
         content_shell = ctk.CTkFrame(self, fg_color="transparent")
         content_shell.grid(row=1, column=0, sticky="nsew")
         content_shell.grid_rowconfigure(0, weight=1)
-        # weight=0 (vs. weight=1 on the trailing spacer column) is what caps
-        # this column: it never claims leftover window width, only what its
-        # content naturally needs -- no explicit minsize, since that would
-        # override the window's own minsize(920, ...) and force the window
-        # wider than intended at small sizes.
-        content_shell.grid_columnconfigure(0, weight=0)
-        content_shell.grid_columnconfigure(1, weight=1)
+        content_shell.grid_columnconfigure(0, weight=1)
 
         content_inner = ctk.CTkFrame(content_shell, fg_color="transparent")
         content_inner.grid(row=0, column=0, sticky="nsew")
@@ -414,7 +431,7 @@ class WebPCompressorApp(ctk.CTk):
 
         # Workspace Container
         workspace = ctk.CTkFrame(content_inner, fg_color="transparent")
-        workspace.grid(row=0, column=0, padx=28, pady=(16, 8), sticky="nsew")
+        workspace.grid(row=0, column=0, padx=32, pady=(18, 10), sticky="nsew")
         workspace.grid_rowconfigure(1, weight=1)
         workspace.grid_columnconfigure(0, weight=1)
 
@@ -425,8 +442,8 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.CTkLabel(
             list_header,
-            text="Queue",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            text="Media Queue",
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=16, weight="bold"),
             text_color=APP_TEXT,
         ).grid(row=0, column=0, padx=(14, 0), pady=(12, 6), sticky="w")
 
@@ -449,16 +466,16 @@ class WebPCompressorApp(ctk.CTk):
         self.filter_entry = ctk.CTkEntry(
             list_header,
             textvariable=self.search_filter,
-            placeholder_text="🔍 Filter queue...",
-            width=150,
-            height=28,
-            corner_radius=7,
+            placeholder_text="Filter by filename…",
+            width=210,
+            height=32,
+            corner_radius=8,
         )
         self.filter_entry.grid(row=0, column=3, padx=(0, 8), pady=(12, 6), sticky="e")
         self.filter_entry.bind("<KeyRelease>", self._apply_filter)
 
         actions = ctk.CTkFrame(list_header, fg_color="transparent")
-        actions.grid(row=1, column=0, columnspan=5, padx=(0, 12), pady=(8, 10), sticky="e")
+        actions.grid(row=1, column=0, columnspan=5, padx=14, pady=(6, 12), sticky="e")
 
         self.move_up_button = ctk.CTkButton(
             actions,
@@ -606,10 +623,10 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.CTkLabel(
             empty_content,
-            text="✦",
-            width=60,
-            height=60,
-            corner_radius=30,
+            text="＋",
+            width=64,
+            height=64,
+            corner_radius=20,
             fg_color=(APP_ACCENT_SOFT, "#1e293b"),
             text_color=(APP_ACCENT, APP_ACCENT_TINT),
             font=ctk.CTkFont(size=28, weight="bold"),
@@ -617,27 +634,28 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.CTkLabel(
             empty_content,
-            text="Drop files or folders here to begin",
-            font=ctk.CTkFont(family=DISPLAY_FONT, size=20, weight="bold"),
+            text="Build your conversion queue",
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=22, weight="bold"),
             text_color=APP_TEXT,
         ).pack(pady=(0, 6))
 
         ctk.CTkLabel(
             empty_content,
-            text="Images (JPG, PNG, WebP, AVIF)  •  Videos (MP4, WebM, MOV, GIF)  •  Audio (MP3, WAV, AAC)  •  Docs (DOCX, PDF, HTML, TXT, MD)",
+            text="Drop files or folders anywhere · 48 image extensions · video, audio and documents",
             text_color=APP_MUTED,
             font=ctk.CTkFont(size=12),
+            wraplength=820,
         ).pack(pady=(0, 18))
 
         empty_buttons = ctk.CTkFrame(empty_content, fg_color="transparent")
         empty_buttons.pack(pady=(0, 22))
         ctk.CTkButton(
             empty_buttons,
-            text="Browse Files",
+            text="＋ Add files",
             command=self._add_files,
             width=135,
-            height=34,
-            corner_radius=8,
+            height=38,
+            corner_radius=9,
             fg_color=APP_ACCENT,
             hover_color=APP_ACCENT_DARK,
             text_color="white",
@@ -645,11 +663,11 @@ class WebPCompressorApp(ctk.CTk):
         ).pack(side="left", padx=5)
         ctk.CTkButton(
             empty_buttons,
-            text="Browse Folder",
+            text="Add folder",
             command=self._add_folder,
             width=135,
-            height=34,
-            corner_radius=8,
+            height=38,
+            corner_radius=9,
             fg_color="transparent",
             border_width=1,
             border_color=("#cbd5e1", "#334155"),
@@ -730,7 +748,7 @@ class WebPCompressorApp(ctk.CTk):
             text_color=APP_TEXT,
             height=38,
         )
-        self.settings_tabview.grid(row=1, column=0, padx=28, pady=(0, 6), sticky="ew")
+        self.settings_tabview.grid(row=1, column=0, padx=32, pady=(0, 8), sticky="ew")
 
         tab_format = self.settings_tabview.add("Format & Presets")
         tab_transform = self.settings_tabview.add("Edit & Transform")
@@ -763,6 +781,14 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.smart_info_label.pack(side="left", padx=(8, 0))
 
+        self.estimate_label = ctk.CTkLabel(
+            self.smart_header_frame,
+            textvariable=self.estimate_text,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("#0E756B", "#70E1D4"),
+        )
+        self.estimate_label.pack(side="right", padx=(10, 0))
+
         self.smart_trim_btn = ctk.CTkButton(
             self.smart_header_frame,
             text="✂️ Cut / Trim Clip",
@@ -785,12 +811,7 @@ class WebPCompressorApp(ctk.CTk):
         ).pack(side="left", padx=(0, 6))
 
         format_options = [
-            "WEBP",
-            "AVIF",
-            "JPEG",
-            "PNG",
-            "ICO",
-            "PDF (Combined)",
+            *IMAGE_FORMAT_OPTIONS,
             "Video: WebM",
             "Video: MP4",
             "Video -> Animated WebP",
@@ -859,6 +880,10 @@ class WebPCompressorApp(ctk.CTk):
                     q, l
                 ),
             ).pack(side="left", padx=2)
+
+        self.format_capability_frame = ctk.CTkFrame(tab_format, fg_color="transparent")
+        self.format_capability_frame.pack(fill="x", pady=(0, 5))
+        self._update_format_capabilities(self.target_format.get())
 
         # Quality Row
         self.quality_row = ctk.CTkFrame(tab_format, fg_color="transparent")
@@ -1107,12 +1132,12 @@ class WebPCompressorApp(ctk.CTk):
 
         # Output Folder Selector Frame
         output = ctk.CTkFrame(content_inner, fg_color=APP_SURFACE, corner_radius=12, border_width=1, border_color=APP_BORDER)
-        output.grid(row=2, column=0, padx=28, pady=(0, 10), sticky="ew")
+        output.grid(row=2, column=0, padx=32, pady=(0, 12), sticky="ew")
         output.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
             output,
-            text="Destination:",
+            text="Output destination",
             text_color=APP_MUTED,
             font=ctk.CTkFont(size=12, weight="bold"),
         ).grid(row=0, column=0, padx=(14, 10), pady=14, sticky="w")
@@ -1152,7 +1177,7 @@ class WebPCompressorApp(ctk.CTk):
 
         # Footer Frame
         footer = ctk.CTkFrame(content_inner, fg_color="transparent")
-        footer.grid(row=3, column=0, padx=28, pady=(0, 18), sticky="ew")
+        footer.grid(row=3, column=0, padx=32, pady=(0, 20), sticky="ew")
         footer.grid_columnconfigure(0, weight=1)
 
         self.progress = ctk.CTkProgressBar(footer, variable=self.progress_value, height=6)
@@ -1171,11 +1196,11 @@ class WebPCompressorApp(ctk.CTk):
         # Footer Buttons
         self.export_csv_button = ctk.CTkButton(
             footer,
-            text="Export CSV Report",
+            text="Export report",
             command=self._export_csv_report,
             width=135,
-            height=34,
-            corner_radius=7,
+            height=38,
+            corner_radius=9,
             fg_color="transparent",
             border_width=1,
             border_color=("#cbd5e1", "#334155"),
@@ -1189,8 +1214,8 @@ class WebPCompressorApp(ctk.CTk):
             text="Open Folder",
             command=self._open_output_folder,
             width=120,
-            height=34,
-            corner_radius=7,
+            height=38,
+            corner_radius=9,
             fg_color="transparent",
             border_width=1,
             border_color=("#cbd5e1", "#334155"),
@@ -1213,12 +1238,12 @@ class WebPCompressorApp(ctk.CTk):
             footer,
             text="Convert to WebP",
             command=self._start_conversion,
-            width=175,
-            height=36,
-            corner_radius=8,
+            width=220,
+            height=44,
+            corner_radius=10,
             fg_color=APP_ACCENT,
             hover_color=APP_ACCENT_DARK,
-            font=ctk.CTkFont(weight="bold", size=13),
+            font=ctk.CTkFont(family=DISPLAY_FONT, weight="bold", size=14),
         )
         self.convert_button.grid(row=2, column=4)
 
@@ -1358,6 +1383,7 @@ class WebPCompressorApp(ctk.CTk):
 
     def _format_changed(self, new_format: str) -> None:
         fmt = new_format.upper()
+        self._update_format_capabilities(new_format)
         if "ANIMATED WEBP" in fmt:
             self.convert_button.configure(text="Convert to Animated WebP")
             self.quality_row.pack(fill="x", pady=(2, 4))
@@ -1418,6 +1444,13 @@ class WebPCompressorApp(ctk.CTk):
         elif "ICO" in fmt:
             self.convert_button.configure(text="Convert to ICO")
             self.quality_row.pack_forget()
+        elif normalize_output_format(new_format) in IMAGE_OUTPUT_FORMATS:
+            image_fmt = normalize_output_format(new_format)
+            self.convert_button.configure(text=f"Convert to {image_fmt}")
+            if image_fmt in LOSSY_IMAGE_FORMATS:
+                self.quality_row.pack(fill="x", pady=(2, 4))
+            else:
+                self.quality_row.pack_forget()
         elif "VIDEO" in fmt:
             self.convert_button.configure(text="Process Video")
             self.quality_row.pack_forget()
@@ -1427,6 +1460,42 @@ class WebPCompressorApp(ctk.CTk):
         else:
             self.convert_button.configure(text=f"Convert to {fmt}")
             self.quality_row.pack(fill="x", pady=(2, 4))
+
+    def _update_format_capabilities(self, raw_format: str) -> None:
+        frame = getattr(self, "format_capability_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+
+        fmt = normalize_output_format(raw_format)
+        capability = IMAGE_FORMAT_CAPABILITIES.get(fmt)
+        if not capability:
+            ctk.CTkLabel(
+                frame,
+                text="Media pipeline options adapt automatically to the selected input.",
+                font=ctk.CTkFont(size=10),
+                text_color=APP_MUTED,
+            ).pack(side="left")
+            return
+
+        ctk.CTkLabel(
+            frame,
+            text=f"{capability['category']}  ·  {capability['description']}",
+            font=ctk.CTkFont(size=10),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 10))
+        for badge in capability["badges"]:
+            ctk.CTkLabel(
+                frame,
+                text=str(badge),
+                height=20,
+                corner_radius=5,
+                padx=7,
+                fg_color=("#E8F7F4", "#17312E"),
+                text_color=("#0E756B", "#70E1D4"),
+                font=ctk.CTkFont(size=9, weight="bold"),
+            ).pack(side="left", padx=(0, 4))
 
     def _adapt_settings_to_selection(self) -> None:
         """Dynamically adapt UI format menus, presets, and conversion controls based on current selection or queue contents."""
@@ -1599,14 +1668,7 @@ class WebPCompressorApp(ctk.CTk):
                 text_color=(APP_ACCENT, APP_ACCENT_TINT),
             )
             self.smart_trim_btn.pack_forget()
-            image_formats = [
-                "WEBP",
-                "AVIF",
-                "JPEG",
-                "PNG",
-                "ICO",
-                "PDF (Combined)",
-            ]
+            image_formats = IMAGE_FORMAT_OPTIONS
             self.format_menu.configure(values=image_formats)
             if self.target_format.get() not in image_formats:
                 self.target_format.set("WEBP")
@@ -1632,12 +1694,7 @@ class WebPCompressorApp(ctk.CTk):
             )
             self.smart_trim_btn.pack_forget()
             all_formats = [
-                "WEBP",
-                "AVIF",
-                "JPEG",
-                "PNG",
-                "ICO",
-                "PDF (Combined)",
+                *IMAGE_FORMAT_OPTIONS,
                 "Video: WebM",
                 "Video: MP4",
                 "Video -> Animated WebP",
@@ -1700,7 +1757,7 @@ class WebPCompressorApp(ctk.CTk):
         self.table_style.configure(
             "Treeview",
             rowheight=34,
-            font=("Poppins", 10),
+            font=(BODY_FONT, 10),
             borderwidth=0,
             background=table_bg,
             fieldbackground=table_bg,
@@ -1708,7 +1765,7 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.table_style.configure(
             "Treeview.Heading",
-            font=("Poppins", 10, "bold"),
+            font=(BODY_FONT, 10, "bold"),
             relief="flat",
             background=head_bg,
             foreground=fg,
@@ -2227,12 +2284,14 @@ class WebPCompressorApp(ctk.CTk):
 
     def _slider_changed(self, value: float) -> None:
         self.quality_text.set(str(round(value)))
+        self._schedule_size_estimate()
 
     def _lossless_changed(self) -> None:
         if not self.conversion_running:
             quality_state = "disabled" if self.lossless.get() else "normal"
             self.quality_slider.configure(state=quality_state)
             self.quality_entry.configure(state=quality_state)
+        self._schedule_size_estimate()
 
     def _update_image_summary(self) -> None:
         count = len(self.selected_files)
@@ -2245,6 +2304,169 @@ class WebPCompressorApp(ctk.CTk):
         self.total_size_text.set(
             f"• {format_file_size(total_size)}" if total_size else ""
         )
+        self._schedule_size_estimate()
+
+    def _setup_estimate_traces(self) -> None:
+        variables = (
+            self.target_format,
+            self.quality_text,
+            self.lossless,
+            self.preserve_metadata,
+            self.strip_metadata,
+            self.enable_target_size,
+            self.target_size_val,
+            self.target_size_unit,
+            self.enable_resize,
+            self.max_dimension_text,
+            self.scale_percent_text,
+            self.rotate_angle,
+            self.flip_h,
+            self.flip_v,
+            self.aspect_ratio,
+            self.enable_rounded,
+            self.corner_radius,
+            self.grayscale,
+            self.enable_watermark,
+            self.watermark_type,
+            self.watermark_text,
+            self.watermark_logo_path,
+            self.watermark_position,
+        )
+        for variable in variables:
+            variable.trace_add("write", lambda *_args: self._schedule_size_estimate())
+        self._schedule_size_estimate()
+
+    def _schedule_size_estimate(self) -> None:
+        if not hasattr(self, "estimate_text"):
+            return
+        if self._estimate_after_id is not None:
+            try:
+                self.after_cancel(self._estimate_after_id)
+            except Exception:
+                pass
+        self._estimate_generation += 1
+        generation = self._estimate_generation
+        self._estimate_after_id = self.after(
+            450, lambda: self._start_size_estimate(generation)
+        )
+
+    def _start_size_estimate(self, generation: int) -> None:
+        self._estimate_after_id = None
+        if generation != self._estimate_generation or self.conversion_running:
+            return
+
+        selected_path: Path | None = None
+        selection = self.table.selection() if hasattr(self, "table") else ()
+        if selection:
+            selected_path = next(
+                (path for path, row_id in self.row_ids.items() if row_id == selection[0]),
+                None,
+            )
+        if selected_path is None and self.selected_files:
+            selected_path = self.selected_files[0]
+
+        target_format = normalize_output_format(self.target_format.get())
+        if (
+            selected_path is None
+            or selected_path.suffix.lower() not in SUPPORTED_EXTENSIONS
+            or target_format not in IMAGE_OUTPUT_FORMATS
+        ):
+            self.estimate_text.set("Size estimate available for images")
+            return
+
+        try:
+            quality = int(self.quality_text.get())
+            if not 1 <= quality <= 100:
+                raise ValueError
+
+            max_dim = None
+            scale_pct = None
+            if self.enable_resize.get():
+                max_text = self.max_dimension_text.get().strip()
+                scale_text = self.scale_percent_text.get().strip()
+                max_dim = int(max_text) if max_text else None
+                scale_pct = float(scale_text) if scale_text else None
+
+            target_kb = None
+            if self.enable_target_size.get():
+                target_value = float(self.target_size_val.get())
+                target_kb = int(
+                    target_value
+                    if self.target_size_unit.get() == "KB"
+                    else target_value * 1024
+                )
+
+            corner_radius = (
+                int(self.corner_radius.get().strip() or "0")
+                if self.enable_rounded.get()
+                else 0
+            )
+            rotate_angle = int(self.rotate_angle.get().split("°", 1)[0].strip())
+        except (TypeError, ValueError):
+            self.estimate_text.set("Fix invalid settings to estimate size")
+            return
+
+        watermark_text = (
+            self.watermark_text.get().strip()
+            if self.enable_watermark.get() and self.watermark_type.get() == "Text"
+            else ""
+        )
+        watermark_logo = (
+            self.watermark_logo_path.get().strip()
+            if self.enable_watermark.get() and self.watermark_type.get() == "Logo PNG"
+            else ""
+        )
+        options = {
+            "quality": quality,
+            "lossless": self.lossless.get(),
+            "preserve_metadata": self.preserve_metadata.get(),
+            "strip_metadata": self.strip_metadata.get(),
+            "max_width": max_dim,
+            "max_height": max_dim,
+            "scale_percent": scale_pct,
+            "target_format": target_format,
+            "target_kb": target_kb,
+            "watermark_text": watermark_text,
+            "watermark_logo_path": watermark_logo,
+            "watermark_position": self.watermark_position.get(),
+            "rotate_angle": rotate_angle,
+            "flip_h": self.flip_h.get(),
+            "flip_v": self.flip_v.get(),
+            "aspect_ratio": (
+                None if self.aspect_ratio.get() == "Original" else self.aspect_ratio.get()
+            ),
+            "corner_radius": corner_radius,
+            "grayscale": self.grayscale.get(),
+        }
+        self.estimate_text.set("Estimating output…")
+        threading.Thread(
+            target=self._estimate_size_worker,
+            args=(generation, selected_path, options),
+            daemon=True,
+        ).start()
+
+    def _estimate_size_worker(
+        self,
+        generation: int,
+        source_path: Path,
+        options: dict[str, object],
+    ) -> None:
+        try:
+            estimated_size = estimate_image_output_size(source_path, **options)
+            original_size = source_path.stat().st_size
+            change_pct = (
+                (estimated_size - original_size) / original_size * 100
+                if original_size
+                else 0.0
+            )
+            if change_pct <= 0:
+                change_text = f"{abs(change_pct):.1f}% smaller"
+            else:
+                change_text = f"{change_pct:.1f}% larger"
+            text = f"Estimated {format_file_size(estimated_size)} · {change_text}"
+        except Exception:
+            text = "Estimate unavailable for these settings"
+        self.events.put(("estimate", (generation, text)))
 
     def _sync_quality_from_entry(self) -> bool:
         try:
@@ -2366,7 +2588,7 @@ class WebPCompressorApp(ctk.CTk):
         )
 
         # Transformations and Batch Renaming
-        rot_str = self.rotate_angle.get().replace("°", "").strip()
+        rot_str = self.rotate_angle.get().split("°", 1)[0].strip()
         try:
             rotate_angle = int(rot_str)
         except ValueError:
@@ -2563,17 +2785,7 @@ class WebPCompressorApp(ctk.CTk):
                     )
                 else:
                     # Image engine conversion
-                    fmt_key = "WEBP"
-                    if "AVIF" in target_format_raw.upper():
-                        fmt_key = "AVIF"
-                    elif "JPEG" in target_format_raw.upper() or "JPG" in target_format_raw.upper():
-                        fmt_key = "JPEG"
-                    elif "PNG" in target_format_raw.upper():
-                        fmt_key = "PNG"
-                    elif "ICO" in target_format_raw.upper():
-                        fmt_key = "ICO"
-                    elif "PDF" in target_format_raw.upper():
-                        fmt_key = "PDF"
+                    fmt_key = normalize_output_format(target_format_raw)
 
                     res = convert_image(
                         source_p,
@@ -2645,6 +2857,10 @@ class WebPCompressorApp(ctk.CTk):
                     self._display_result(payload)
                 elif event == "error":
                     self.status_text.set(f"Process error: {payload}")
+                elif event == "estimate":
+                    generation, text = payload
+                    if generation == self._estimate_generation:
+                        self.estimate_text.set(text)
                 else:
                     results, cancelled, elapsed = payload
                     self.last_results = list(results)

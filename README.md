@@ -15,11 +15,16 @@ A commercial-grade, native CustomTkinter desktop media conversion and compressio
 ## 🚀 Key Features
 
 ### 1. Multi-Format Image Studio
-- **Input Formats**: PNG, JPG, JPEG, BMP, TIFF, TIF, ICO, WEBP.
+- **Input Formats**: JPG/JPEG/JFIF, PNG/APNG, WebP, AVIF, HEIC/HEIF, GIF,
+  BMP/DIB, TIFF, ICO/ICNS/CUR, PSD, JPEG 2000, DDS, TGA, QOI, PCX/DCX,
+  PPM/PGM/PBM/PNM/PFM, SGI, XBM/XPM, IM, and MSP.
 - **Output Formats**:
   - **WEBP**: High-efficiency lossy and lossless compression with alpha channel preservation.
+  - **AVIF / HEIC**: Modern high-efficiency image output with quality control.
   - **JPG / JPEG**: Optimized progressive JPEGs with fine-tuned quality control.
   - **PNG**: Lossless image compression with RGBA transparency.
+  - **GIF, BMP, TIFF, JPEG 2000, TGA, DDS, QOI, PPM, PCX, ICNS, SGI, XBM**:
+    Broad compatibility for web, print, icon, texture, and legacy workflows.
   - **ICO**: Multi-resolution Windows application & website favicon generation (16x16, 32x32, 48x48, 64x64, 128x128, 256x256).
   - **PDF Binder**: Convert single images or merge an entire batch of images into a single multi-page PDF document.
 

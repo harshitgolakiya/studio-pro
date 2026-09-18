@@ -7,6 +7,7 @@ import sys
 
 REQUIRED_PACKAGES: tuple[str, ...] = (
     "Pillow",
+    "pillow-heif",
     "customtkinter",
     "yt-dlp",
 )

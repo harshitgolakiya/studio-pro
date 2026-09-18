@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import tkinter as tk
 
@@ -8,6 +9,51 @@ from PIL import ExifTags, Image, ImageChops, ImageDraw, ImageTk
 
 from converter import ConversionResult
 from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
+
+
+def calculate_comparison_metrics(
+    original: Image.Image,
+    converted: Image.Image,
+    max_pixels: int = 2_000_000,
+) -> dict[str, float | bool]:
+    """Calculate fast, deterministic visual-difference metrics.
+
+    Very large images are sampled to avoid freezing the UI. Both images are
+    aligned to the original canvas and compared as RGBA so alpha changes are
+    included instead of silently ignored.
+    """
+    width, height = original.size
+    pixel_count = max(1, width * height)
+    scale = min(1.0, math.sqrt(max_pixels / pixel_count))
+    sample_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+
+    original_rgba = original.convert("RGBA")
+    converted_rgba = converted.convert("RGBA")
+    if original_rgba.size != sample_size:
+        original_rgba = original_rgba.resize(sample_size, Image.Resampling.LANCZOS)
+    if converted_rgba.size != sample_size:
+        converted_rgba = converted_rgba.resize(sample_size, Image.Resampling.LANCZOS)
+
+    difference = ImageChops.difference(original_rgba, converted_rgba)
+    histogram = difference.histogram()
+    sample_values = sample_size[0] * sample_size[1] * len(difference.getbands())
+    squared_error = sum((index % 256) ** 2 * count for index, count in enumerate(histogram))
+    absolute_error = sum((index % 256) * count for index, count in enumerate(histogram))
+    mse = squared_error / max(1, sample_values)
+    mae = absolute_error / max(1, sample_values)
+    rmse = math.sqrt(mse)
+    psnr = math.inf if mse == 0 else 20 * math.log10(255.0 / rmse)
+    similarity = max(0.0, min(100.0, (1.0 - rmse / 255.0) * 100.0))
+
+    return {
+        "psnr": psnr,
+        "mae": mae,
+        "similarity": similarity,
+        "sampled": scale < 1.0,
+    }
 
 
 class ImagePreviewDialog(ctk.CTkToplevel):
@@ -19,8 +65,8 @@ class ImagePreviewDialog(ctk.CTkToplevel):
     ) -> None:
         super().__init__(parent)
         self.title(f"Image Inspection & Diff - {source_path.name}")
-        self.geometry("860x640")
-        self.minsize(740, 520)
+        self.geometry("1060x720")
+        self.minsize(880, 580)
         self.transient(parent)
 
         self.source_path = source_path
@@ -91,6 +137,31 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=12),
             text_color=("#667085", "#98a2b3"),
         ).pack(anchor="w")
+
+        if self.orig_pil is not None and self.conv_pil is not None:
+            metrics = calculate_comparison_metrics(self.orig_pil, self.conv_pil)
+            psnr = metrics["psnr"]
+            psnr_text = "∞ dB" if math.isinf(float(psnr)) else f"{float(psnr):.1f} dB"
+            sample_note = " · sampled" if metrics["sampled"] else ""
+            metrics_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
+            metrics_frame.pack(anchor="w", pady=(6, 0))
+            for label, value in (
+                ("PSNR", psnr_text),
+                ("Similarity", f"{float(metrics['similarity']):.1f}%"),
+                ("Mean error", f"{float(metrics['mae']):.2f}{sample_note}"),
+            ):
+                chip = ctk.CTkFrame(
+                    metrics_frame,
+                    fg_color=("#E8F7F4", "#17312E"),
+                    corner_radius=6,
+                )
+                chip.pack(side="left", padx=(0, 6))
+                ctk.CTkLabel(
+                    chip,
+                    text=f"{label}  {value}",
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    text_color=("#0E756B", "#70E1D4"),
+                ).pack(padx=8, pady=4)
 
         modes = ["Split Slider", "Side-by-Side", "Difference Map", "EXIF & Details"] if self.output_path else ["Side-by-Side", "EXIF & Details"]
         mode_selector = ctk.CTkSegmentedButton(

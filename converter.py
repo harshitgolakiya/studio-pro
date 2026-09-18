@@ -8,6 +8,15 @@ import tempfile
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageSequence
 
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:
+    # The dependency is included in release builds. Keeping imports resilient
+    # gives source users a useful error only when they actually select HEIF.
+    pass
+
 from utils import (
     build_destination_filename,
     format_file_size,
@@ -17,17 +26,85 @@ from utils import (
 from watermark import apply_image_watermark, apply_text_watermark
 
 SUPPORTED_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".bmp",
-    ".tiff",
-    ".tif",
-    ".webp",
-    ".avif",
-    ".ico",
-    ".gif",
+    # Common web and camera formats
+    ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".apng", ".webp",
+    ".avif", ".avifs", ".heic", ".heif", ".hif", ".gif",
+    # Bitmaps, icons, and layered artwork
+    ".bmp", ".dib", ".tiff", ".tif", ".ico", ".icns", ".cur", ".psd",
+    # JPEG 2000 family
+    ".jp2", ".j2k", ".j2c", ".jpc", ".jpf", ".jpx",
+    # Texture and interchange formats
+    ".dds", ".tga", ".icb", ".vda", ".vst", ".qoi", ".pcx", ".dcx",
+    # Portable anymap and workstation formats
+    ".ppm", ".pgm", ".pbm", ".pnm", ".pfm",
+    ".sgi", ".rgb", ".rgba", ".bw", ".xbm", ".xpm", ".im", ".msp",
 }
+
+# User-facing name -> (file extension, Pillow encoder name). These are the
+# general-purpose Pillow encoders that can reliably accept ordinary photos or
+# artwork on Windows and macOS. Read-only/scientific plugins are input-only.
+IMAGE_OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
+    "WEBP": (".webp", "WEBP"),
+    "AVIF": (".avif", "AVIF"),
+    "HEIC": (".heic", "HEIF"),
+    "JPEG": (".jpg", "JPEG"),
+    "PNG": (".png", "PNG"),
+    "GIF": (".gif", "GIF"),
+    "BMP": (".bmp", "BMP"),
+    "TIFF": (".tiff", "TIFF"),
+    "JPEG 2000": (".jp2", "JPEG2000"),
+    "TGA": (".tga", "TGA"),
+    "DDS": (".dds", "DDS"),
+    "QOI": (".qoi", "QOI"),
+    "PPM": (".ppm", "PPM"),
+    "PCX": (".pcx", "PCX"),
+    "ICO": (".ico", "ICO"),
+    "ICNS": (".icns", "ICNS"),
+    "SGI": (".sgi", "SGI"),
+    "XBM": (".xbm", "XBM"),
+    "PDF": (".pdf", "PDF"),
+}
+
+IMAGE_FORMAT_CAPABILITIES: dict[str, dict[str, object]] = {
+    "WEBP": {"category": "Modern web", "description": "Excellent web compression with transparency and animation.", "badges": ("Alpha", "Animation", "Lossy", "Lossless", "Metadata")},
+    "AVIF": {"category": "Modern web", "description": "Very small modern files for photos and web delivery.", "badges": ("Alpha", "Animation", "High efficiency")},
+    "HEIC": {"category": "Photography", "description": "High-efficiency Apple and mobile photography format.", "badges": ("Alpha", "Metadata", "High efficiency")},
+    "JPEG": {"category": "Web & photo", "description": "Universal photographic output with progressive encoding.", "badges": ("Universal", "Lossy", "Metadata")},
+    "PNG": {"category": "Web & design", "description": "Lossless artwork, screenshots, and transparent graphics.", "badges": ("Alpha", "Lossless", "Web")},
+    "GIF": {"category": "Animation", "description": "Widely compatible indexed-color animation.", "badges": ("Animation", "Transparency", "Indexed")},
+    "BMP": {"category": "Legacy", "description": "Uncompressed Windows bitmap for maximum compatibility.", "badges": ("Lossless", "Windows", "Large files")},
+    "TIFF": {"category": "Professional", "description": "Lossless archival, print, scanning, and publishing output.", "badges": ("Alpha", "Lossless", "Print")},
+    "JPEG 2000": {"category": "Professional", "description": "Wavelet-based archival and specialist imaging format.", "badges": ("Alpha", "Lossless", "Wavelet")},
+    "TGA": {"category": "Texture & game", "description": "Simple alpha-capable texture and interchange format.", "badges": ("Alpha", "Lossless", "Texture")},
+    "DDS": {"category": "Texture & game", "description": "GPU texture container used by games and 3D tools.", "badges": ("Alpha", "GPU texture", "Game")},
+    "QOI": {"category": "Modern lossless", "description": "Fast, simple lossless image format with alpha support.", "badges": ("Alpha", "Lossless", "Fast")},
+    "PPM": {"category": "Technical", "description": "Portable uncompressed RGB interchange format.", "badges": ("Lossless", "Uncompressed", "Technical")},
+    "PCX": {"category": "Legacy", "description": "Legacy paint and publishing bitmap format.", "badges": ("Lossless", "Legacy")},
+    "ICO": {"category": "Icons", "description": "Multi-resolution Windows icons and favicons.", "badges": ("Alpha", "Multi-size", "Windows")},
+    "ICNS": {"category": "Icons", "description": "Multi-resolution macOS application icon format.", "badges": ("Alpha", "Multi-size", "macOS")},
+    "SGI": {"category": "Technical", "description": "Silicon Graphics workstation and texture format.", "badges": ("Alpha", "Lossless", "Legacy")},
+    "XBM": {"category": "Legacy", "description": "Monochrome X11 bitmap source format.", "badges": ("Monochrome", "X11", "Legacy")},
+    "PDF": {"category": "Document", "description": "Package one image or a complete batch as a document.", "badges": ("Document", "Multi-page", "Portable")},
+}
+
+LOSSY_IMAGE_FORMATS = {"WEBP", "AVIF", "HEIC", "JPEG"}
+
+
+def normalize_output_format(value: str) -> str:
+    """Return a canonical IMAGE_OUTPUT_FORMATS key for a UI/API value."""
+    fmt = value.upper().strip()
+    aliases = {
+        "JPG": "JPEG",
+        "JPE": "JPEG",
+        "JFIF": "JPEG",
+        "HEIF": "HEIC",
+        "HIF": "HEIC",
+        "JP2": "JPEG 2000",
+        "JPEG2000": "JPEG 2000",
+        "TIF": "TIFF",
+        "PDF (COMBINED)": "PDF",
+    }
+    return aliases.get(fmt, fmt)
 
 
 @dataclass
@@ -276,17 +353,10 @@ def convert_image(
         original_size = source_path.stat().st_size
         output_directory.mkdir(parents=True, exist_ok=True)
 
-        fmt = target_format.upper().strip()
-        ext_map = {
-            "WEBP": ".webp",
-            "AVIF": ".avif",
-            "JPEG": ".jpg",
-            "JPG": ".jpg",
-            "PNG": ".png",
-            "ICO": ".ico",
-            "PDF": ".pdf",
-        }
-        dest_ext = ext_map.get(fmt, ".webp")
+        fmt = normalize_output_format(target_format)
+        if fmt not in IMAGE_OUTPUT_FORMATS:
+            raise ValueError(f"Unsupported output image format: {target_format}")
+        dest_ext, pillow_format = IMAGE_OUTPUT_FORMATS[fmt]
 
         dest_filename = build_destination_filename(
             stem=source_path.stem,
@@ -321,7 +391,7 @@ def convert_image(
                 new_h = max(1, int(round(orig_h * ratio)))
                 target_dims = (new_w, new_h)
 
-            if is_animated and fmt == "WEBP":
+            if is_animated and fmt in ("WEBP", "GIF"):
                 frames: list[Image.Image] = []
                 durations: list[int] = []
                 loop = image.info.get("loop", 0)
@@ -353,17 +423,35 @@ def convert_image(
                     ) as temporary_file:
                         temporary_path = Path(temporary_file.name)
 
-                    save_options = {
-                        "format": "WEBP",
-                        "save_all": True,
-                        "append_images": frames[1:],
-                        "duration": durations,
-                        "loop": loop,
-                        "quality": quality,
-                        "method": 6,
-                        "lossless": lossless,
-                    }
-                    frames[0].save(temporary_path, **save_options)
+                    if fmt == "WEBP":
+                        save_options = {
+                            "format": "WEBP",
+                            "save_all": True,
+                            "append_images": frames[1:],
+                            "duration": durations,
+                            "loop": loop,
+                            "quality": quality,
+                            "method": 6,
+                            "lossless": lossless,
+                        }
+                        frames[0].save(temporary_path, **save_options)
+                    else:
+                        gif_frames = [
+                            frame.convert("RGBA").convert(
+                                "P", palette=Image.Palette.ADAPTIVE
+                            )
+                            for frame in frames
+                        ]
+                        gif_frames[0].save(
+                            temporary_path,
+                            format="GIF",
+                            save_all=True,
+                            append_images=gif_frames[1:],
+                            duration=durations,
+                            loop=loop,
+                            optimize=True,
+                            disposal=2,
+                        )
                     os.replace(temporary_path, output_path)
                 finally:
                     if temporary_path and temporary_path.exists():
@@ -439,7 +527,7 @@ def convert_image(
             if fmt in ("JPEG", "JPG"):
                 if image.mode != "RGB":
                     image = flatten_to_rgb(image)
-            elif fmt in ("WEBP", "AVIF"):
+            elif fmt in ("WEBP", "AVIF", "HEIC", "JPEG 2000", "TGA", "DDS", "QOI", "ICNS", "SGI"):
                 if image.mode not in ("RGB", "RGBA"):
                     has_trans = (
                         "A" in image.getbands() or "transparency" in image.info
@@ -450,13 +538,20 @@ def convert_image(
                     image = image.convert("RGBA")
             elif fmt == "ICO":
                 image = image.convert("RGBA")
+            elif fmt == "GIF":
+                image = image.convert("RGBA").convert("P", palette=Image.Palette.ADAPTIVE)
+            elif fmt in ("BMP", "PPM", "PCX"):
+                image = flatten_to_rgb(image)
+            elif fmt == "XBM":
+                image = image.convert("1")
 
             # Smart target file size solver
             chosen_quality = quality
-            if target_kb and target_kb > 0 and fmt in ("WEBP", "JPEG", "JPG", "AVIF"):
+            if target_kb and target_kb > 0 and fmt in ("WEBP", "JPEG", "AVIF", "HEIC"):
                 target_bytes = target_kb * 1024
                 fmt_target = (
-                    "WEBP" if fmt == "WEBP" else ("AVIF" if fmt == "AVIF" else "JPEG")
+                    "WEBP" if fmt == "WEBP" else
+                    ("AVIF" if fmt == "AVIF" else ("HEIF" if fmt == "HEIC" else "JPEG"))
                 )
                 chosen_quality = solve_target_size_quality(
                     image,
@@ -496,6 +591,17 @@ def convert_image(
                         save_options["icc_profile"] = icc_profile
                     image.save(temporary_path, **save_options)
 
+                elif fmt == "HEIC":
+                    save_options = {
+                        "format": "HEIF",
+                        "quality": chosen_quality,
+                    }
+                    if exif_data:
+                        save_options["exif"] = exif_data
+                    if icc_profile:
+                        save_options["icc_profile"] = icc_profile
+                    image.save(temporary_path, **save_options)
+
                 elif fmt in ("JPEG", "JPG"):
                     save_options = {
                         "format": "JPEG",
@@ -527,9 +633,15 @@ def convert_image(
                         sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
                     )
 
+                elif fmt == "TIFF":
+                    image.save(temporary_path, format="TIFF", compression="tiff_deflate")
+
                 elif fmt == "PDF":
                     pdf_img = flatten_to_rgb(image)
                     pdf_img.save(temporary_path, format="PDF", resolution=100.0)
+
+                else:
+                    image.save(temporary_path, format=pillow_format)
 
                 os.replace(temporary_path, output_path)
             finally:
@@ -551,6 +663,31 @@ def convert_image(
         return ConversionResult(
             source_path, None, original_size, None, "-", "Failed", str(error)
         )
+
+
+def estimate_image_output_size(
+    source_path: Path,
+    **conversion_options: object,
+) -> int:
+    """Run an exact conversion in an isolated temporary directory and return bytes.
+
+    This deliberately reuses ``convert_image`` rather than maintaining a
+    second approximation pipeline that can drift from real output behavior.
+    Callers should debounce it and run it outside the UI thread.
+    """
+    options = dict(conversion_options)
+    options.pop("overwrite", None)
+    options.pop("reserved_paths", None)
+    with tempfile.TemporaryDirectory(prefix="shadow-estimate-") as directory:
+        result = convert_image(
+            source_path,
+            Path(directory),
+            overwrite=True,
+            **options,
+        )
+        if result.status != "Completed" or result.output_size is None:
+            raise ValueError(result.error or "Unable to estimate output size")
+        return result.output_size
 
 
 def combine_images_to_pdf(images: list[Path], output_pdf_path: Path) -> Path:

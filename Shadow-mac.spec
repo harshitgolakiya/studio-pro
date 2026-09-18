@@ -49,6 +49,7 @@ a = Analysis(
         'PIL.ExifTags',
         'PIL.ImageSequence',
         'PIL.AvifImagePlugin',
+        'pillow_heif',
         'customtkinter',
         'drag_drop',
         'converter',
