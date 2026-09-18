@@ -45,7 +45,6 @@ except ImportError:
     HAS_DRAG_DROP = False
 
 from converter import (
-    IMAGE_FORMAT_CAPABILITIES,
     IMAGE_OUTPUT_FORMATS,
     LOSSY_IMAGE_FORMATS,
     SUPPORTED_EXTENSIONS,
@@ -56,6 +55,7 @@ from converter import (
     normalize_output_format,
 )
 from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
+from format_browser import FormatBrowserDialog, describe_format, render_capability_badges
 from license_dialog import LicenseDialog
 from licensing import FREE_BATCH_LIMIT, is_pro_activated, is_vip_activated
 from media_engine import (
@@ -830,7 +830,20 @@ class WebPCompressorApp(ctk.CTk):
             height=28,
             corner_radius=6,
         )
-        self.format_menu.pack(side="left", padx=(0, 16))
+        self.format_menu.pack(side="left", padx=(0, 6))
+        self.format_browse_button = ctk.CTkButton(
+            fmt_row0,
+            text="Browse…",
+            width=78,
+            height=28,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=APP_ELEVATED,
+            hover_color=APP_BORDER,
+            text_color=APP_TEXT,
+            command=self._open_format_browser,
+        )
+        self.format_browse_button.pack(side="left", padx=(0, 16))
 
         ctk.CTkLabel(
             fmt_row0,
@@ -1461,6 +1474,14 @@ class WebPCompressorApp(ctk.CTk):
             self.convert_button.configure(text=f"Convert to {fmt}")
             self.quality_row.pack(fill="x", pady=(2, 4))
 
+    def _open_format_browser(self) -> None:
+        options = list(self.format_menu.cget("values"))
+        FormatBrowserDialog(self, options, self.target_format.get(), self._select_format_from_browser)
+
+    def _select_format_from_browser(self, label: str) -> None:
+        self.target_format.set(label)
+        self._format_changed(label)
+
     def _update_format_capabilities(self, raw_format: str) -> None:
         frame = getattr(self, "format_capability_frame", None)
         if frame is None:
@@ -1468,9 +1489,8 @@ class WebPCompressorApp(ctk.CTk):
         for child in frame.winfo_children():
             child.destroy()
 
-        fmt = normalize_output_format(raw_format)
-        capability = IMAGE_FORMAT_CAPABILITIES.get(fmt)
-        if not capability:
+        entry = describe_format(raw_format)
+        if not entry.badges and not entry.description:
             ctk.CTkLabel(
                 frame,
                 text="Media pipeline options adapt automatically to the selected input.",
@@ -1481,21 +1501,11 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.CTkLabel(
             frame,
-            text=f"{capability['category']}  ·  {capability['description']}",
+            text=f"{entry.category}  ·  {entry.description}",
             font=ctk.CTkFont(size=10),
             text_color=APP_MUTED,
         ).pack(side="left", padx=(0, 10))
-        for badge in capability["badges"]:
-            ctk.CTkLabel(
-                frame,
-                text=str(badge),
-                height=20,
-                corner_radius=5,
-                padx=7,
-                fg_color=("#E8F7F4", "#17312E"),
-                text_color=("#0E756B", "#70E1D4"),
-                font=ctk.CTkFont(size=9, weight="bold"),
-            ).pack(side="left", padx=(0, 4))
+        render_capability_badges(frame, entry.badges)
 
     def _adapt_settings_to_selection(self) -> None:
         """Dynamically adapt UI format menus, presets, and conversion controls based on current selection or queue contents."""
@@ -2941,6 +2951,7 @@ class WebPCompressorApp(ctk.CTk):
         self.quality_slider.configure(state=state)
         self.quality_entry.configure(state=state)
         self.format_menu.configure(state=state)
+        self.format_browse_button.configure(state=state)
         self.same_folder_checkbox.configure(state=state)
         if hasattr(self, "move_up_button") and hasattr(self, "move_down_button"):
             self.move_up_button.configure(state=state if self.table.selection() else "disabled")

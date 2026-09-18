@@ -14,8 +14,8 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 - [x] Expand raster input support to 48 extensions.
 - [x] Expand output support to 19 formats, including HEIC/HEIF.
 - [x] Preserve multi-frame animation when exporting GIF and WebP.
-- [ ] Replace the long format dropdown with a searchable, categorized format browser.
-- [ ] Add format capability badges: alpha, animation, HDR, lossless, metadata, and compatibility.
+- [x] Replace the long format dropdown with a searchable, categorized format browser.
+- [x] Add format capability badges: alpha, animation, HDR, lossless, metadata, and compatibility.
 - [ ] Add compact and comfortable density modes.
 - [ ] Add a command palette for every major action.
 
@@ -100,13 +100,19 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Build the searchable format browser and capability badges.
-2. Implement versioned recipe save/load.
-3. Add persistent queue recovery.
-4. Begin the intelligent multi-codec optimizer.
+1. Implement versioned recipe save/load.
+2. Add persistent queue recovery.
+3. Begin the intelligent multi-codec optimizer.
+4. Add compact/comfortable density modes and the command palette.
 
 ## Current verification baseline
 
-- Unit/integration tests: 61 passing after metrics and exact size prediction.
+- Unit/integration tests: 72 passing after the format browser and capability badges
+  (`tests/test_format_browser.py` drives the real window through the Browse button).
 - Layout overflow audit: clean at 980×720, 1180×860, and 1600×900.
 - Windows package build: successful; HEIC native libraries included.
+- macOS builds: Intel and Apple Silicon DMGs build green in GitHub Actions
+  (`.github/workflows/build-macos.yml`); unsigned, see README Gatekeeper notes.
+- Format browser: `format_browser.py` — colour-coded badge families (alpha, animation,
+  HDR/efficiency, lossless, lossy, metadata, compatibility, warnings) shared by the
+  picker dialog and the capability strip under the Target Format row.
