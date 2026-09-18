@@ -45,8 +45,8 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 ## Non-destructive processing recipes
 
 - [ ] Represent operations as a visible, reorderable processing stack.
-- [ ] Save, load, duplicate, import, and export recipe JSON files.
-- [ ] Add versioned recipe migrations.
+- [x] Save, load, duplicate, import, and export recipe JSON files.
+- [x] Add versioned recipe migrations.
 - [ ] Add per-file overrides inside a batch.
 - [ ] Copy/paste processing settings between queued files.
 - [ ] Add undo/redo for recipe and queue edits.
@@ -100,15 +100,18 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Implement versioned recipe save/load.
-2. Add persistent queue recovery.
-3. Begin the intelligent multi-codec optimizer.
-4. Add compact/comfortable density modes and the command palette.
+1. Add persistent queue recovery.
+2. Begin the intelligent multi-codec optimizer.
+3. Add compact/comfortable density modes and the command palette.
+4. Represent operations as a visible processing stack (recipes already carry the data).
 
 ## Current verification baseline
 
-- Unit/integration tests: 72 passing after the format browser and capability badges
-  (`tests/test_format_browser.py` drives the real window through the Browse button).
+- Unit/integration tests: 83 passing after the format browser and versioned recipes
+  (`tests/test_format_browser.py` and `tests/test_recipes.py` drive the real window).
+- Recipes: `recipes.py` (schema v2, v1 flat-file migration, typed coercion, library in
+  `<app data>/recipes/*.shadow-recipe.json`) + `recipe_dialog.py` (Recipes… button next
+  to Profile: apply, save current, duplicate, delete, import, export).
 - Layout overflow audit: clean at 980×720, 1180×860, and 1600×900.
 - Windows package build: successful; HEIC native libraries included.
 - macOS builds: Intel and Apple Silicon DMGs build green in GitHub Actions

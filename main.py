@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
@@ -65,6 +67,8 @@ from media_engine import (
     get_ffmpeg_path,
 )
 from preview_modal import ImagePreviewDialog
+from recipe_dialog import RecipeManagerDialog
+from recipes import RECIPE_FIELDS
 from settings import load_settings, update_setting
 from url_downloader_dialog import URLDownloaderDialog
 from video_trimmer_dialog import VideoTrimmerDialog
@@ -871,7 +875,20 @@ class WebPCompressorApp(ctk.CTk):
             height=28,
             corner_radius=6,
         )
-        self.preset_menu.pack(side="left", padx=(0, 12))
+        self.preset_menu.pack(side="left", padx=(0, 6))
+        self.recipes_button = ctk.CTkButton(
+            fmt_row0,
+            text="Recipes…",
+            width=82,
+            height=28,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=APP_ELEVATED,
+            hover_color=APP_BORDER,
+            text_color=APP_TEXT,
+            command=self._open_recipe_manager,
+        )
+        self.recipes_button.pack(side="left", padx=(0, 12))
 
         for name, q_val in (
             ("Balanced", 80),
@@ -2286,6 +2303,24 @@ class WebPCompressorApp(ctk.CTk):
         self._format_changed(self.target_format.get())
         self._lossless_changed()
 
+    # -- recipes ---------------------------------------------------------
+
+    def _open_recipe_manager(self) -> None:
+        RecipeManagerDialog(self, self._collect_recipe_settings, self._apply_recipe_settings)
+
+    def _collect_recipe_settings(self) -> dict[str, Any]:
+        return {key: getattr(self, key).get() for key in RECIPE_FIELDS}
+
+    def _apply_recipe_settings(self, settings: dict[str, Any]) -> None:
+        for key in RECIPE_FIELDS:
+            if key in settings:
+                getattr(self, key).set(settings[key])
+        self.quality_text.set(str(self.quality.get()))
+        self.preset_profile.set("Manual / Custom")
+        self._format_changed(self.target_format.get())
+        self._lossless_changed()
+        self.status_text.set("Recipe applied")
+
     def _choose_output_directory(self) -> None:
         directory = filedialog.askdirectory(title="Choose output folder")
         if directory:
@@ -2952,6 +2987,7 @@ class WebPCompressorApp(ctk.CTk):
         self.quality_entry.configure(state=state)
         self.format_menu.configure(state=state)
         self.format_browse_button.configure(state=state)
+        self.recipes_button.configure(state=state)
         self.same_folder_checkbox.configure(state=state)
         if hasattr(self, "move_up_button") and hasattr(self, "move_down_button"):
             self.move_up_button.configure(state=state if self.table.selection() else "disabled")
