@@ -180,6 +180,9 @@ GitHub's hosted macOS runners.
 - **Automatic on release**: push a version tag, e.g. `git tag v2.0.0 && git push --tags`,
   which also attaches both DMGs to a GitHub Release.
 - Download the `Shadow-macOS-apple-silicon` or `Shadow-macOS-intel` artifact from the run.
+  The apple-silicon build is arm64 and covers every Apple-chip Mac: the M-series
+  (M1 onward) as well as the A18 Pro-based MacBook Neo. Only pre-2020 Intel Macs
+  need the intel build.
 
 ### Option B: Build locally on a Mac
 ```bash
