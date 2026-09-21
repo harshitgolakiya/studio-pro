@@ -258,8 +258,12 @@ def play_completion_sound() -> None:
             pass
     elif sys.platform == "darwin":
         try:
-            subprocess.run(
-                ["afplay", "/System/Library/Sounds/Glass.aiff"], check=False
+            # Popen, not run: this is called from the UI thread, and waiting on
+            # afplay would freeze the window for the length of the chime.
+            subprocess.Popen(
+                ["afplay", "/System/Library/Sounds/Glass.aiff"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         except Exception:
             pass
