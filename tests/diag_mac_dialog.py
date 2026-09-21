@@ -11,7 +11,8 @@ import sys
 import textwrap
 
 PRELUDE = """
-import sys
+import faulthandler, sys
+faulthandler.dump_traceback_later(20, exit=True, file=sys.stderr)
 sys.path.insert(0, '.')
 import customtkinter as ctk
 from format_browser import FormatBrowserDialog
@@ -145,7 +146,14 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             status = "HUNG (no return from update within 30 s)"
             hung.append(name)
+            out = None
         print(f"  {name:58s} -> {status}")
+        if out is not None and "Timeout (" in (out.stderr or ""):
+            hung.append(name)
+            frames = [ln for ln in out.stderr.splitlines() if ln.strip().startswith("File ")]
+            print("      STALLED at (innermost first):")
+            for ln in frames[:9]:
+                print("        " + ln.strip())
     print(f"\n{len(hung)} scenario(s) hung")
     return 0
 
