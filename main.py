@@ -49,7 +49,10 @@ except ImportError:
 
 from command_palette import CommandPalette, PaletteAction
 from converter import (
+    DEFAULT_OPERATION_ORDER,
     IMAGE_OUTPUT_FORMATS,
+    OPERATION_LABELS,
+    normalize_operation_order,
     LOSSY_IMAGE_FORMATS,
     SUPPORTED_EXTENSIONS,
     ConversionResult,
@@ -186,6 +189,8 @@ class WebPCompressorApp(ctk.CTk):
         self.min_ssim_text = tk.StringVar(value="0.95")
         self.enable_quality_target = tk.BooleanVar(value=False)
         self.target_ssim_text = tk.StringVar(value="0.95")
+        # Processing stack order (comma-separated step names, see converter).
+        self.operation_order = tk.StringVar(value=",".join(DEFAULT_OPERATION_ORDER))
 
         # Resizing
         self.enable_resize = tk.BooleanVar(
@@ -1163,6 +1168,37 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.CTkCheckBox(tr_row1, text="Grayscale (Monochrome B&W)", variable=self.grayscale, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 18))
         ctk.CTkCheckBox(tr_row1, text="Broadcast Audio Loudnorm (EBU R128)", variable=self.normalize_audio, font=ctk.CTkFont(size=11)).pack(side="left")
+
+        stack_header = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        stack_header.pack(fill="x", pady=(6, 0))
+        ctk.CTkLabel(
+            stack_header,
+            text="Processing stack",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(
+            stack_header,
+            text="runs left to right · use ◀ ▶ to reorder · dimmed steps are switched off",
+            font=ctk.CTkFont(size=10),
+            text_color=APP_MUTED,
+        ).pack(side="left")
+        ctk.CTkButton(
+            stack_header,
+            text="Reset order",
+            width=84,
+            height=22,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+            fg_color="transparent",
+            border_width=1,
+            border_color=APP_BORDER,
+            text_color=APP_MUTED,
+            command=self._reset_operation_order,
+        ).pack(side="right")
+        self.stack_frame = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        self.stack_frame.pack(fill="x", pady=(2, 2))
+        self._render_stack()
 
         # ==========================================
         # TAB 3: RENAMING & SAFETY
@@ -2649,6 +2685,77 @@ class WebPCompressorApp(ctk.CTk):
         self._format_changed(self.target_format.get())
         self._lossless_changed()
 
+    # -- processing stack --------------------------------------------------
+
+    def _operation_active(self, name: str) -> bool:
+        """Whether the step currently does anything, given the UI settings."""
+        if name == "rotate":
+            return not self.rotate_angle.get().startswith("0")
+        if name == "flip":
+            return bool(self.flip_h.get() or self.flip_v.get())
+        if name == "crop":
+            return self.aspect_ratio.get() != "Original"
+        if name == "grayscale":
+            return bool(self.grayscale.get())
+        if name == "rounded":
+            return bool(self.enable_rounded.get())
+        if name == "resize":
+            return bool(self.enable_resize.get())
+        if name == "watermark":
+            return bool(self.enable_watermark.get())
+        return False
+
+    def _current_operation_order(self) -> tuple[str, ...]:
+        return normalize_operation_order(self.operation_order.get())
+
+    def _render_stack(self) -> None:
+        frame = getattr(self, "stack_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        order = self._current_operation_order()
+        for index, name in enumerate(order):
+            active = self._operation_active(name)
+            chip = ctk.CTkFrame(
+                frame,
+                corner_radius=7,
+                fg_color=(APP_ACCENT_SOFT, "#123A36") if active else APP_ELEVATED,
+            )
+            chip.pack(side="left", padx=(0, 5))
+            ctk.CTkButton(
+                chip, text="◀", width=18, height=22, corner_radius=5,
+                fg_color="transparent", hover_color=APP_BORDER, text_color=APP_MUTED,
+                font=ctk.CTkFont(size=9),
+                state="normal" if index > 0 else "disabled",
+                command=lambda n=name: self._move_operation(n, -1),
+            ).pack(side="left", padx=(2, 0))
+            ctk.CTkLabel(
+                chip,
+                text=f"{index + 1}. {OPERATION_LABELS[name]}",
+                font=ctk.CTkFont(size=11, weight="bold" if active else "normal"),
+                text_color=(APP_ACCENT_DARK, APP_ACCENT_TINT) if active else APP_MUTED,
+            ).pack(side="left", padx=4, pady=3)
+            ctk.CTkButton(
+                chip, text="▶", width=18, height=22, corner_radius=5,
+                fg_color="transparent", hover_color=APP_BORDER, text_color=APP_MUTED,
+                font=ctk.CTkFont(size=9),
+                state="normal" if index < len(order) - 1 else "disabled",
+                command=lambda n=name: self._move_operation(n, 1),
+            ).pack(side="left", padx=(0, 2))
+
+    def _move_operation(self, name: str, delta: int) -> None:
+        order = list(self._current_operation_order())
+        index = order.index(name)
+        target = index + delta
+        if not 0 <= target < len(order):
+            return
+        order[index], order[target] = order[target], order[index]
+        self.operation_order.set(",".join(order))
+
+    def _reset_operation_order(self) -> None:
+        self.operation_order.set(",".join(DEFAULT_OPERATION_ORDER))
+
     # -- recipes ---------------------------------------------------------
 
     def _open_recipe_manager(self) -> None:
@@ -2726,10 +2833,19 @@ class WebPCompressorApp(ctk.CTk):
             self.min_ssim_text,
             self.enable_quality_target,
             self.target_ssim_text,
+            self.operation_order,
         )
         for variable in variables:
             variable.trace_add("write", lambda *_args: self._schedule_size_estimate())
         self._schedule_size_estimate()
+
+        # The stack panel mirrors which steps are switched on and their order.
+        for variable in (
+            self.operation_order, self.rotate_angle, self.flip_h, self.flip_v,
+            self.aspect_ratio, self.grayscale, self.enable_rounded,
+            self.enable_resize, self.enable_watermark,
+        ):
+            variable.trace_add("write", lambda *_args: self._render_stack())
 
     def _schedule_size_estimate(self) -> None:
         if not hasattr(self, "estimate_text"):
@@ -2835,6 +2951,7 @@ class WebPCompressorApp(ctk.CTk):
             "grayscale": self.grayscale.get(),
             "min_ssim": min_ssim,
             "target_ssim": target_ssim,
+            "operation_order": self.operation_order.get(),
         }
         self.estimate_text.set("Estimating output…")
         threading.Thread(
@@ -3080,6 +3197,7 @@ class WebPCompressorApp(ctk.CTk):
                 normalize_audio,
                 min_ssim,
                 target_ssim,
+                self.operation_order.get(),
             ),
             daemon=True,
         ).start()
@@ -3114,6 +3232,7 @@ class WebPCompressorApp(ctk.CTk):
         normalize_audio: bool = False,
         min_ssim: float | None = None,
         target_ssim: float | None = None,
+        operation_order: str = "",
     ) -> None:
         total = len(files_snapshot)
         results: list[ConversionResult] = []
@@ -3274,6 +3393,7 @@ class WebPCompressorApp(ctk.CTk):
                         grayscale=grayscale,
                         min_ssim=min_ssim,
                         target_ssim=target_ssim,
+                        operation_order=operation_order,
                     )
 
             with counter_lock:

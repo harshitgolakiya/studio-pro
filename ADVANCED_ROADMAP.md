@@ -51,7 +51,7 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Non-destructive processing recipes
 
-- [ ] Represent operations as a visible, reorderable processing stack.
+- [x] Represent operations as a visible, reorderable processing stack.
 - [x] Save, load, duplicate, import, and export recipe JSON files.
 - [x] Add versioned recipe migrations.
 - [ ] Add per-file overrides inside a batch.
@@ -111,10 +111,10 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Represent operations as a visible processing stack (recipes already carry the data).
-2. Pixel inspector and gamut/alpha/metadata-loss warnings in the comparison studio.
-3. Rule-based watched folders with recipes; headless CLI.
-4. CPU/memory/throughput/ETA telemetry and automatic worker tuning.
+1. Pixel inspector and gamut/alpha/metadata-loss warnings in the comparison studio.
+2. Rule-based watched folders with recipes; headless CLI.
+3. CPU/memory/throughput/ETA telemetry and automatic worker tuning.
+4. Per-file overrides, copy/paste settings between rows, undo/redo for queue edits.
 
 ## Current verification baseline
 
@@ -127,6 +127,20 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
   the real window; batch tests run real conversions through pause, resume, cancel and
   retry; env overrides `SHADOW_HISTORY_FILE` / `SHADOW_TEMP_REGISTRY` keep test runs out
   of the real app data).
+- Tests now total 151. `tests/_headless.py` is imported by every test module: it stubs
+  all messagebox/filedialog calls (a modal dialog on a CI runner hangs until GitHub's
+  6-hour limit — this happened once, via the free-tier "Upgrade to Pro?" prompt) and
+  redirects persistent files to temp paths. The macOS workflow also has
+  `timeout-minutes` (30 per job, 12 for tests).
+- Processing stack: `converter.apply_image_transformations(order=...)` runs named steps
+  (`rotate, flip, crop, grayscale, rounded, resize, watermark`) in a user-chosen order;
+  `normalize_operation_order` repairs partial/unknown lists; the order is a recipe field
+  and feeds the live estimate. Panel lives on the Edit & Transform tab (◀ ▶ chips).
+  **Bug fixed in passing:** resize dimensions used to be computed from the untouched
+  source and applied after crop/rotate, so a 1:1 crop + "max 1000px" on a 1600×900 photo
+  produced a stretched 1000×562 image (this hit the E-Commerce and Avatar presets).
+  Resize now derives its size from the image as it reaches that step; regression tests
+  in `tests/test_processing_stack.py`.
 - Preflight & cleanup: `preflight.py` (pessimistic needed-bytes estimate by target
   format + 50 MB headroom vs. `shutil.disk_usage`; blake2b fingerprint of size + first/last
   64 KB for duplicates) and `temp_tracker.py` (converters register every `tmp*.tmp.<ext>`

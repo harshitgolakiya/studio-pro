@@ -216,6 +216,59 @@ def solve_quality_for_ssim(
     return best or highest or (95, 1.0)
 
 
+# The processing stack. Each name is one step; the order is user-reorderable
+# (see the "Processing stack" panel) and stored in recipes.
+DEFAULT_OPERATION_ORDER: tuple[str, ...] = (
+    "rotate", "flip", "crop", "grayscale", "rounded", "resize", "watermark",
+)
+OPERATION_LABELS: dict[str, str] = {
+    "rotate": "Rotate",
+    "flip": "Flip",
+    "crop": "Aspect-ratio crop",
+    "grayscale": "Grayscale",
+    "rounded": "Rounded corners",
+    "resize": "Resize",
+    "watermark": "Watermark",
+}
+
+ResizeSpec = tuple  # (scale_percent | None, max_width | None, max_height | None)
+
+
+def normalize_operation_order(order: object) -> tuple[str, ...]:
+    """Return a complete, valid order: unknown names dropped, duplicates
+    collapsed, anything missing appended in its default position."""
+    if isinstance(order, str):
+        names = [part.strip().lower() for part in order.split(",")]
+    elif order:
+        names = [str(part).strip().lower() for part in order]  # type: ignore[union-attr]
+    else:
+        names = []
+    seen: list[str] = []
+    for name in names:
+        if name in DEFAULT_OPERATION_ORDER and name not in seen:
+            seen.append(name)
+    for name in DEFAULT_OPERATION_ORDER:
+        if name not in seen:
+            seen.append(name)
+    return tuple(seen)
+
+
+def compute_resize_dims(
+    size: tuple[int, int],
+    scale_percent: float | None = None,
+    max_width: int | None = None,
+    max_height: int | None = None,
+) -> tuple[int, int] | None:
+    """Proportional target size for an image of ``size``, or None if no resize is needed."""
+    w, h = size
+    if scale_percent is not None and 1 <= scale_percent < 100:
+        return max(1, int(round(w * scale_percent / 100.0))), max(1, int(round(h * scale_percent / 100.0)))
+    if (max_width and w > max_width) or (max_height and h > max_height):
+        ratio = min((max_width or w) / w, (max_height or h) / h)
+        return max(1, int(round(w * ratio))), max(1, int(round(h * ratio)))
+    return None
+
+
 def apply_image_transformations(
     image: Image.Image,
     rotate_angle: int = 0,
@@ -224,26 +277,39 @@ def apply_image_transformations(
     aspect_ratio: str | None = None,
     corner_radius: int = 0,
     grayscale: bool = False,
+    resize_spec: ResizeSpec | None = None,
+    watermark_fn: object = None,
+    order: object = None,
 ) -> Image.Image:
-    """Apply rotate, flip, aspect ratio crop, rounded corners, and grayscale transformations."""
-    im = image
-    if rotate_angle in (90, 180, 270):
+    """Run the processing stack in ``order`` (default: rotate, flip, crop,
+    grayscale, rounded, resize, watermark).
+
+    Resize dimensions are computed from the image *as it arrives at the
+    resize step*, so a crop or rotation earlier in the stack can never be
+    stretched back to the source's proportions.
+    """
+
+    def step_rotate(im: Image.Image) -> Image.Image:
         if rotate_angle == 90:
-            im = im.transpose(Image.Transpose.ROTATE_270)
-        elif rotate_angle == 180:
-            im = im.transpose(Image.Transpose.ROTATE_180)
-        elif rotate_angle == 270:
-            im = im.transpose(Image.Transpose.ROTATE_90)
-    elif rotate_angle != 0:
-        im = im.rotate(-rotate_angle, expand=True, resample=Image.Resampling.BICUBIC)
+            return im.transpose(Image.Transpose.ROTATE_270)
+        if rotate_angle == 180:
+            return im.transpose(Image.Transpose.ROTATE_180)
+        if rotate_angle == 270:
+            return im.transpose(Image.Transpose.ROTATE_90)
+        if rotate_angle != 0:
+            return im.rotate(-rotate_angle, expand=True, resample=Image.Resampling.BICUBIC)
+        return im
 
-    if flip_h:
-        im = im.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-    if flip_v:
-        im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    def step_flip(im: Image.Image) -> Image.Image:
+        if flip_h:
+            im = im.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if flip_v:
+            im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        return im
 
-    # Aspect ratio center crop
-    if aspect_ratio and ":" in aspect_ratio:
+    def step_crop(im: Image.Image) -> Image.Image:
+        if not (aspect_ratio and ":" in aspect_ratio):
+            return im
         try:
             parts = aspect_ratio.split(":")
             rw, rh = float(parts[0]), float(parts[1])
@@ -254,42 +320,84 @@ def apply_image_transformations(
                 if cur_ratio > target_ratio:
                     new_w = max(1, int(round(cur_h * target_ratio)))
                     left = (cur_w - new_w) // 2
-                    im = im.crop((left, 0, left + new_w, cur_h))
-                elif cur_ratio < target_ratio:
+                    return im.crop((left, 0, left + new_w, cur_h))
+                if cur_ratio < target_ratio:
                     new_h = max(1, int(round(cur_w / target_ratio)))
                     top = (cur_h - new_h) // 2
-                    im = im.crop((0, top, cur_w, top + new_h))
+                    return im.crop((0, top, cur_w, top + new_h))
         except Exception:
             pass
+        return im
 
-    # Grayscale filter
-    if grayscale:
+    def step_grayscale(im: Image.Image) -> Image.Image:
+        if not grayscale:
+            return im
         has_alpha = "A" in im.getbands() or "transparency" in im.info
         if has_alpha:
             rgba = im.convert("RGBA")
             a = rgba.getchannel("A")
             gray = rgba.convert("L")
-            im = Image.merge("RGBA", (gray, gray, gray, a))
-        else:
-            im = im.convert("L").convert("RGB")
+            return Image.merge("RGBA", (gray, gray, gray, a))
+        return im.convert("L").convert("RGB")
 
-    # Rounded corners (creates alpha mask)
-    if corner_radius > 0:
+    def step_rounded(im: Image.Image) -> Image.Image:
+        if corner_radius <= 0:
+            return im
         w, h = im.size
         rad = min(corner_radius, min(w, h) // 2)
-        if rad > 0:
-            im = im.convert("RGBA")
-            mask = Image.new("L", (w, h), 0)
-            draw = ImageDraw.Draw(mask)
-            draw.rounded_rectangle([(0, 0), (w, h)], radius=rad, fill=255)
-            if "A" in im.getbands():
-                orig_alpha = im.getchannel("A")
-                combined_mask = ImageChops.multiply(mask, orig_alpha)
-                im.putalpha(combined_mask)
-            else:
-                im.putalpha(mask)
+        if rad <= 0:
+            return im
+        im = im.convert("RGBA")
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([(0, 0), (w, h)], radius=rad, fill=255)
+        im.putalpha(ImageChops.multiply(mask, im.getchannel("A")))
+        return im
 
+    def step_resize(im: Image.Image) -> Image.Image:
+        if not resize_spec:
+            return im
+        dims = compute_resize_dims(im.size, *resize_spec)
+        return im.resize(dims, Image.Resampling.LANCZOS) if dims else im
+
+    def step_watermark(im: Image.Image) -> Image.Image:
+        return watermark_fn(im) if callable(watermark_fn) else im
+
+    steps = {
+        "rotate": step_rotate,
+        "flip": step_flip,
+        "crop": step_crop,
+        "grayscale": step_grayscale,
+        "rounded": step_rounded,
+        "resize": step_resize,
+        "watermark": step_watermark,
+    }
+    im = image
+    for name in normalize_operation_order(order):
+        im = steps[name](im)
     return im
+
+
+def _make_watermark_fn(
+    watermark_logo_path: str,
+    watermark_text: str,
+    watermark_position: str,
+    watermark_scale_pct: float,
+    watermark_opacity: float,
+):
+    """Closure applying the configured watermark, or None when there isn't one."""
+    if watermark_logo_path and Path(watermark_logo_path).is_file():
+        return lambda im: apply_image_watermark(
+            im,
+            logo_path=watermark_logo_path,
+            position=watermark_position,
+            scale_pct=watermark_scale_pct,
+            opacity=watermark_opacity,
+        )
+    if watermark_text.strip():
+        return lambda im: apply_text_watermark(
+            im, text=watermark_text, position=watermark_position, opacity=watermark_opacity
+        )
+    return None
 
 
 def flatten_to_rgb(image: Image.Image, background: tuple[int, int, int] = (255, 255, 255)) -> Image.Image:
@@ -309,7 +417,7 @@ def flatten_to_rgb(image: Image.Image, background: tuple[int, int, int] = (255, 
 
 def _process_frame_image(
     frame: Image.Image,
-    target_dims: tuple[int, int] | None = None,
+    resize_spec: ResizeSpec | None = None,
     watermark_logo_path: str = "",
     watermark_scale_pct: float = 0.20,
     watermark_position: str = "bottom-right",
@@ -321,35 +429,23 @@ def _process_frame_image(
     aspect_ratio: str | None = None,
     corner_radius: int = 0,
     grayscale: bool = False,
+    operation_order: object = None,
 ) -> Image.Image:
-    f = frame.copy()
-    if rotate_angle or flip_h or flip_v or aspect_ratio or corner_radius or grayscale:
-        f = apply_image_transformations(
-            f,
-            rotate_angle=rotate_angle,
-            flip_h=flip_h,
-            flip_v=flip_v,
-            aspect_ratio=aspect_ratio,
-            corner_radius=corner_radius,
-            grayscale=grayscale,
-        )
-    if target_dims:
-        f = f.resize(target_dims, Image.Resampling.LANCZOS)
-    if watermark_logo_path and Path(watermark_logo_path).is_file():
-        f = apply_image_watermark(
-            f,
-            logo_path=watermark_logo_path,
-            position=watermark_position,
-            scale_pct=watermark_scale_pct,
-            opacity=watermark_opacity,
-        )
-    elif watermark_text.strip():
-        f = apply_text_watermark(
-            f,
-            text=watermark_text,
-            position=watermark_position,
-            opacity=watermark_opacity,
-        )
+    f = apply_image_transformations(
+        frame.copy(),
+        rotate_angle=rotate_angle,
+        flip_h=flip_h,
+        flip_v=flip_v,
+        aspect_ratio=aspect_ratio,
+        corner_radius=corner_radius,
+        grayscale=grayscale,
+        resize_spec=resize_spec,
+        watermark_fn=_make_watermark_fn(
+            watermark_logo_path, watermark_text, watermark_position,
+            watermark_scale_pct, watermark_opacity,
+        ),
+        order=operation_order,
+    )
     if f.mode not in ("RGB", "RGBA"):
         has_trans = "A" in f.getbands() or "transparency" in f.info
         f = f.convert("RGBA" if has_trans else "RGB")
@@ -386,6 +482,7 @@ def convert_image(
     grayscale: bool = False,
     min_ssim: float | None = None,
     target_ssim: float | None = None,
+    operation_order: object = None,
 ) -> ConversionResult:
     """Convert and optimize image with format conversion, resizing, watermarking, and target size solver.
 
@@ -431,22 +528,9 @@ def convert_image(
         with Image.open(source_path) as image:
             is_animated = bool(getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1)
 
-            # Proportional downscaling dimensions
-            target_dims = None
-            orig_w, orig_h = image.size
-            if scale_percent is not None and 1 <= scale_percent < 100:
-                new_w = max(1, int(round(orig_w * (scale_percent / 100.0))))
-                new_h = max(1, int(round(orig_h * (scale_percent / 100.0))))
-                target_dims = (new_w, new_h)
-            elif (max_width and orig_w > max_width) or (
-                max_height and orig_h > max_height
-            ):
-                target_w = max_width or orig_w
-                target_h = max_height or orig_h
-                ratio = min(target_w / orig_w, target_h / orig_h)
-                new_w = max(1, int(round(orig_w * ratio)))
-                new_h = max(1, int(round(orig_h * ratio)))
-                target_dims = (new_w, new_h)
+            # Resize is a stack step: its dimensions are derived from the image
+            # as it reaches that step, not from the untouched source.
+            resize_spec: ResizeSpec = (scale_percent, max_width, max_height)
 
             if is_animated and fmt in ("WEBP", "GIF"):
                 frames: list[Image.Image] = []
@@ -456,7 +540,8 @@ def convert_image(
                 for frame in ImageSequence.Iterator(image):
                     pf = _process_frame_image(
                         frame,
-                        target_dims=target_dims,
+                        resize_spec=resize_spec,
+                        operation_order=operation_order,
                         watermark_logo_path=watermark_logo_path,
                         watermark_scale_pct=watermark_scale_pct,
                         watermark_position=watermark_position,
@@ -534,7 +619,8 @@ def convert_image(
             except Exception:
                 pass
 
-            # Apply user geometric & artistic transformations
+            # Run the processing stack (transforms, resize, watermark) in the
+            # user's chosen order.
             image = apply_image_transformations(
                 image,
                 rotate_angle=rotate_angle,
@@ -543,27 +629,13 @@ def convert_image(
                 aspect_ratio=aspect_ratio,
                 corner_radius=corner_radius,
                 grayscale=grayscale,
+                resize_spec=resize_spec,
+                watermark_fn=_make_watermark_fn(
+                    watermark_logo_path, watermark_text, watermark_position,
+                    watermark_scale_pct, watermark_opacity,
+                ),
+                order=operation_order,
             )
-
-            if target_dims:
-                image = image.resize(target_dims, Image.Resampling.LANCZOS)
-
-            # Watermarking (Logo or Text)
-            if watermark_logo_path and Path(watermark_logo_path).is_file():
-                image = apply_image_watermark(
-                    image,
-                    logo_path=watermark_logo_path,
-                    position=watermark_position,
-                    scale_pct=watermark_scale_pct,
-                    opacity=watermark_opacity,
-                )
-            elif watermark_text.strip():
-                image = apply_text_watermark(
-                    image,
-                    text=watermark_text,
-                    position=watermark_position,
-                    opacity=watermark_opacity,
-                )
 
             width, height = image.size
 

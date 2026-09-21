@@ -56,6 +56,7 @@ RECIPE_FIELDS: dict[str, tuple[type, Any]] = {
     "watermark_text": (str, ""),
     "watermark_logo_path": (str, ""),
     "watermark_position": (str, "bottom-right"),
+    "operation_order": (str, "rotate,flip,crop,grayscale,rounded,resize,watermark"),
 }
 
 
@@ -97,6 +98,10 @@ def coerce_settings(raw: dict[str, Any]) -> dict[str, Any]:
             value = default
         out[key] = value
     out["quality"] = max(1, min(100, out["quality"]))
+    # A hand-edited or older recipe may list unknown/partial steps.
+    from converter import normalize_operation_order
+
+    out["operation_order"] = ",".join(normalize_operation_order(out["operation_order"]))
     return out
 
 
