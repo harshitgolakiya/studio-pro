@@ -11,6 +11,8 @@ os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 # Real conversions run here; keep their history out of the user's real log.
 os.environ.setdefault("SHADOW_HISTORY_FILE", str(Path(tempfile.gettempdir()) / "shadow-test-history.jsonl"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _headless  # noqa: E402,F401 -- stubs modal dialogs so the suite can never hang
 
 from PIL import Image
 
@@ -18,13 +20,20 @@ from PIL import Image
 class BatchControlTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        from main import WebPCompressorApp
+        import main as M
 
-        cls.app = WebPCompressorApp()
+        # These tests exercise queue mechanics, not licensing. Without this a
+        # machine with no licence (every CI runner) caps batches at the free
+        # limit and prompts to upgrade, so results would depend on the host.
+        cls._main = M
+        cls._orig_is_pro = M.is_pro_activated
+        M.is_pro_activated = lambda: True
+        cls.app = M.WebPCompressorApp()
         cls.app.update()
 
     @classmethod
     def tearDownClass(cls) -> None:
+        cls._main.is_pro_activated = cls._orig_is_pro
         try:
             cls.app.destroy()
         except Exception:

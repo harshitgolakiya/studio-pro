@@ -10,6 +10,8 @@ os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 _REG = Path(tempfile.gettempdir()) / "shadow-test-temp-registry.json"
 os.environ.setdefault("SHADOW_TEMP_REGISTRY", str(_REG))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _headless  # noqa: E402,F401 -- stubs modal dialogs so the suite can never hang
 
 from PIL import Image
 

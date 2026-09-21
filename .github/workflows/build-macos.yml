@@ -20,6 +20,9 @@ jobs:
           - runner: macos-15-intel  # Intel (x86_64); macos-13 was retired and never gets a runner
             arch_label: intel
     runs-on: ${{ matrix.runner }}
+    # A healthy build takes 2-5 minutes. Without this, a hung step (e.g. a test
+    # blocked on a modal dialog) runs to GitHub's 6-hour default.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,6 +46,7 @@ jobs:
           chmod +x vendor/ffmpeg-mac/ffmpeg vendor/ffmpeg-mac/ffprobe
 
       - name: Run automated tests
+        timeout-minutes: 12
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
       - name: Build Shadow.app with PyInstaller

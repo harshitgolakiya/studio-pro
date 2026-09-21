@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _headless  # noqa: E402,F401 -- stubs modal dialogs so the suite can never hang
 
 from PIL import Image
 

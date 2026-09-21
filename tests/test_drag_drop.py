@@ -10,6 +10,8 @@ from pathlib import Path
 
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _headless  # noqa: E402,F401 -- stubs modal dialogs so the suite can never hang
 
 from PIL import Image
 
