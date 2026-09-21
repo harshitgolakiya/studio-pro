@@ -9,10 +9,36 @@ never touch the real app data.
 """
 from __future__ import annotations
 
+import faulthandler
 import os
 from pathlib import Path
+import sys
 import tempfile
 from tkinter import filedialog, messagebox
+
+import unittest
+
+# Watchdog: if one test is still running after this long, something is blocked
+# (a Tk call that never returns, a modal we failed to stub). Dump every thread's
+# stack and exit, so CI shows *where* instead of timing out silently. The
+# slowest test takes ~20 s locally. Between tests the timer is re-armed at
+# twice the limit so a stall in setUpClass/tearDownClass is caught too.
+_WATCHDOG_SECONDS = int(os.environ.get("SHADOW_TEST_WATCHDOG_SECONDS", "150"))
+faulthandler.enable()
+
+if not getattr(unittest.TestCase, "_shadow_watchdog", False):
+    _original_run = unittest.TestCase.run
+
+    def _watched_run(self, result=None):
+        faulthandler.dump_traceback_later(_WATCHDOG_SECONDS, exit=True, file=sys.stderr)
+        try:
+            return _original_run(self, result)
+        finally:
+            faulthandler.dump_traceback_later(_WATCHDOG_SECONDS * 2, exit=True, file=sys.stderr)
+
+    unittest.TestCase.run = _watched_run
+    unittest.TestCase._shadow_watchdog = True
+    faulthandler.dump_traceback_later(_WATCHDOG_SECONDS * 2, exit=True, file=sys.stderr)
 
 _TMP = Path(tempfile.gettempdir())
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
