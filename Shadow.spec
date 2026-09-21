@@ -102,6 +102,7 @@ a = Analysis(
         'metrics',
         'preflight',
         'temp_tracker',
+        'loss_audit',
     ],
     hookspath=[],
     hooksconfig={},

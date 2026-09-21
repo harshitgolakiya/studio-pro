@@ -28,8 +28,11 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 - [x] EXIF and technical metadata inspector.
 - [x] Objective comparison metrics (PSNR, mean error, similarity score).
 - [x] Real-time, debounced output-size prediction using the exact conversion pipeline.
-- [ ] Pixel inspector with coordinates and RGBA values.
-- [ ] Gamut clipping, alpha, and metadata-loss warnings.
+- [x] Pixel inspector with coordinates and RGBA values.
+- [-] Gamut clipping, alpha, and metadata-loss warnings (alpha, animation, bit depth,
+      palette, EXIF, retained GPS, dropped colour profile incl. wide-gamut detection,
+      resolution and size growth are reported; true per-pixel gamut *clipping* analysis
+      is not — that needs a colour-managed pipeline).
 - [ ] Multi-variant comparison: compare several codecs/qualities at once.
 
 ## Intelligent optimizer
@@ -111,10 +114,10 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 ## Resume order
 
-1. Pixel inspector and gamut/alpha/metadata-loss warnings in the comparison studio.
-2. Rule-based watched folders with recipes; headless CLI.
-3. CPU/memory/throughput/ETA telemetry and automatic worker tuning.
-4. Per-file overrides, copy/paste settings between rows, undo/redo for queue edits.
+1. Rule-based watched folders with recipes; headless CLI.
+2. CPU/memory/throughput/ETA telemetry and automatic worker tuning.
+3. Per-file overrides, copy/paste settings between rows, undo/redo for queue edits.
+4. Multi-variant comparison in the preview (several codecs/qualities side by side).
 
 ## Current verification baseline
 
@@ -127,7 +130,11 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
   the real window; batch tests run real conversions through pause, resume, cancel and
   retry; env overrides `SHADOW_HISTORY_FILE` / `SHADOW_TEMP_REGISTRY` keep test runs out
   of the real app data).
-- Tests now total 151. `tests/_headless.py` is imported by every test module: it stubs
+- Loss audit & pixel probe: `loss_audit.py` (`gather_facts`/`compare_facts` → severity-
+  ranked `LossWarning`s; `pixel_probe`/`display_to_source`). The preview dialog shows the
+  serious ones under the metric chips, the full list in EXIF & Details, and a live
+  coordinate/RGBA/Δ readout under the split slider.
+- Tests now total 164. `tests/_headless.py` is imported by every test module: it stubs
   all messagebox/filedialog calls (a modal dialog on a CI runner hangs until GitHub's
   6-hour limit — this happened once, via the free-tier "Upgrade to Pro?" prompt) and
   redirects persistent files to temp paths. The macOS workflow also has

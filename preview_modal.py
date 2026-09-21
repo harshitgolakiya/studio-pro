@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import sys
 import tkinter as tk
 
 import customtkinter as ctk
 from PIL import ExifTags, Image, ImageChops, ImageDraw, ImageTk
 
 from converter import ConversionResult
+from loss_audit import LossWarning, audit_conversion, display_to_source, format_probe, pixel_probe
 from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
+
+_SEVERITY_COLOURS = {
+    "high": ("#b91c1c", "#fca5a5"),
+    "medium": ("#b45309", "#fde68a"),
+    "info": ("#667085", "#98a2b3"),
+}
 
 
 def calculate_comparison_metrics(
@@ -91,6 +99,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         self.tk_canvas_img: ImageTk.PhotoImage | None = None
 
         self._load_source_images()
+        self.loss_warnings: list[LossWarning] = audit_conversion(self.source_path, self.output_path)
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -162,6 +171,23 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                     font=ctk.CTkFont(size=10, weight="bold"),
                     text_color=("#0E756B", "#70E1D4"),
                 ).pack(padx=8, pady=4)
+
+        # Headline losses (full list lives in the EXIF & Details view).
+        serious = [w for w in self.loss_warnings if w.severity in ("high", "medium")]
+        for warning in serious[:3]:
+            ctk.CTkLabel(
+                title_frame,
+                text=f"⚠ {warning.title}",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=_SEVERITY_COLOURS[warning.severity],
+            ).pack(anchor="w", pady=(4 if warning is serious[0] else 0, 0))
+        if len(serious) > 3:
+            ctk.CTkLabel(
+                title_frame,
+                text=f"+ {len(serious) - 3} more in EXIF & Details",
+                font=ctk.CTkFont(size=10),
+                text_color=_SEVERITY_COLOURS["info"],
+            ).pack(anchor="w")
 
         modes = ["Split Slider", "Side-by-Side", "Difference Map", "EXIF & Details"] if self.output_path else ["Side-by-Side", "EXIF & Details"]
         mode_selector = ctk.CTkSegmentedButton(
@@ -297,12 +323,29 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             highlightthickness=0,
             cursor="sb_h_double_arrow",
         )
-        self.canvas.grid(row=1, column=0, padx=16, pady=(4, 16))
+        self.canvas.grid(row=1, column=0, padx=16, pady=(4, 4))
 
         self.canvas.bind("<B1-Motion>", self._on_slider_drag)
         self.canvas.bind("<Button-1>", self._on_slider_drag)
+        self.canvas.bind("<Motion>", self._on_probe_motion)
+
+        self.probe_lbl = ctk.CTkLabel(
+            container,
+            text=format_probe(None),
+            font=ctk.CTkFont(family="Menlo" if sys.platform == "darwin" else "Consolas", size=11),
+            text_color=("#667085", "#98a2b3"),
+        )
+        self.probe_lbl.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="w")
 
         self._draw_split_canvas()
+
+    def _on_probe_motion(self, event: tk.Event) -> None:
+        """Pixel inspector: source coordinates and RGBA of both images under the pointer."""
+        if self.orig_pil is None or not hasattr(self, "probe_lbl"):
+            return
+        point = display_to_source(int(event.x), int(event.y), self.disp_size, self.orig_pil.size)
+        probe = pixel_probe(self.orig_pil, self.conv_pil, *point) if point else None
+        self.probe_lbl.configure(text=format_probe(probe))
 
     def _zoom_in(self) -> None:
         if self.zoom_factor < 2.5:
@@ -558,6 +601,48 @@ class ImagePreviewDialog(ctk.CTkToplevel):
 
         # Output Details
         self._build_metadata_card(container, col=1, title="Converted Output", path=self.output_path)
+
+        self._build_loss_card(container)
+
+    def _build_loss_card(self, parent: ctk.CTkFrame) -> None:
+        card = ctk.CTkFrame(
+            parent,
+            corner_radius=8,
+            fg_color=("#f8fafc", "#121417"),
+            border_width=1,
+            border_color=("#e2e8f0", "#2d333b"),
+        )
+        card.grid(row=2, column=0, columnspan=2, padx=8, pady=(8, 4), sticky="ew")
+        ctk.CTkLabel(
+            card,
+            text="What this conversion changed or discarded",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(anchor="w", padx=12, pady=(10, 4))
+        if not self.output_path:
+            message = "Convert this file to audit what was lost."
+        elif not self.loss_warnings:
+            message = "Nothing notable: transparency, animation, bit depth, colour profile and resolution all carried over."
+        else:
+            message = ""
+        if message:
+            ctk.CTkLabel(card, text=message, font=ctk.CTkFont(size=11), text_color=_SEVERITY_COLOURS["info"]).pack(anchor="w", padx=12, pady=(0, 10))
+            return
+        for warning in self.loss_warnings:
+            ctk.CTkLabel(
+                card,
+                text=f"⚠ {warning.title}" if warning.severity != "info" else f"• {warning.title}",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=_SEVERITY_COLOURS[warning.severity],
+            ).pack(anchor="w", padx=12, pady=(4, 0))
+            ctk.CTkLabel(
+                card,
+                text=warning.detail,
+                font=ctk.CTkFont(size=11),
+                text_color=("#475467", "#cbd5e1"),
+                wraplength=860,
+                justify="left",
+            ).pack(anchor="w", padx=24, pady=(0, 2))
+        ctk.CTkFrame(card, fg_color="transparent", height=6).pack()
 
     def _build_metadata_card(
         self, parent: ctk.CTkFrame, col: int, title: str, path: Path | None
