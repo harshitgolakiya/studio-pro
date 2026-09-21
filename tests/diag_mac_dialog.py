@@ -71,6 +71,59 @@ root = ctk.CTk(); root.withdraw()
 p = CommandPalette(root, [PaletteAction('Clear all', lambda: None)])
 p.query.set('zzz'); p.update()
 """,
+    # The app's own dialogs, opened the way a user opens them: from a visible window.
+    "D1 VISIBLE root + LicenseDialog": """
+from license_dialog import LicenseDialog
+root = ctk.CTk(); root.update()
+d = LicenseDialog(root); d.update()
+""",
+    "D2 VISIBLE root + WatchFolderDialog": """
+from watch_folder_dialog import WatchFolderDialog
+root = ctk.CTk(); root.update()
+d = WatchFolderDialog(root); d.update()
+""",
+    "D3 VISIBLE root + URLDownloaderDialog": """
+from url_downloader_dialog import URLDownloaderDialog
+root = ctk.CTk(); root.update()
+d = URLDownloaderDialog(root); d.update()
+""",
+    "D4 VISIBLE root + VideoTrimmerDialog": """
+from pathlib import Path
+from video_trimmer_dialog import VideoTrimmerDialog
+root = ctk.CTk(); root.update()
+d = VideoTrimmerDialog(root, Path('missing.mp4')); d.update()
+""",
+    "D5 VISIBLE root + RecipeManagerDialog": """
+from recipe_dialog import RecipeManagerDialog
+root = ctk.CTk(); root.update()
+d = RecipeManagerDialog(root, lambda: {}, lambda s: None); d.update()
+""",
+    "D6 VISIBLE root + HistoryDialog": """
+from history_dialog import HistoryDialog
+root = ctk.CTk(); root.update()
+d = HistoryDialog(root, lambda s: None); d.update()
+""",
+    "D7 VISIBLE root + OptimizerDialog": """
+from pathlib import Path
+from optimizer_dialog import OptimizerDialog
+root = ctk.CTk(); root.update()
+d = OptimizerDialog(root, Path('missing.png'), lambda c, q: None); d.update()
+""",
+    "D8 VISIBLE root + ImagePreviewDialog": """
+import tempfile
+from pathlib import Path
+from PIL import Image
+from preview_modal import ImagePreviewDialog
+p = Path(tempfile.mkdtemp()) / 'a.png'; Image.new('RGB', (40, 30), 'red').save(p)
+root = ctk.CTk(); root.update()
+d = ImagePreviewDialog(root, p); d.update()
+""",
+    "E1 full app window constructs and updates": """
+import os
+os.environ['SHADOW_NO_QUEUE_RESTORE'] = '1'
+from main import WebPCompressorApp
+app = WebPCompressorApp(); app.update()
+""",
 }
 
 
@@ -86,11 +139,11 @@ def main() -> int:
     for name, body in SCENARIOS.items():
         code = PRELUDE + textwrap.dedent(body) + "\nprint('returned')\n"
         try:
-            out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=15)
+            out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
             ok = "returned" in out.stdout
             status = "ok" if ok else f"ERROR rc={out.returncode}: {(out.stderr or '').strip().splitlines()[-1:]}"
         except subprocess.TimeoutExpired:
-            status = "HUNG (no return from update within 15 s)"
+            status = "HUNG (no return from update within 30 s)"
             hung.append(name)
         print(f"  {name:58s} -> {status}")
     print(f"\n{len(hung)} scenario(s) hung")

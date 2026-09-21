@@ -69,7 +69,8 @@ class CommandPalette(ctk.CTkToplevel):
 
     def _grab(self) -> None:
         self._grab_after_id = None
-        if self.winfo_exists():
+        # See FormatBrowserDialog._grab: never grab a window that isn't viewable.
+        if self.winfo_exists() and self.winfo_viewable():
             self.grab_set()
 
     def destroy(self) -> None:

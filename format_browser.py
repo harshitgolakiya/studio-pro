@@ -194,7 +194,10 @@ class FormatBrowserDialog(ctk.CTkToplevel):
 
     def _grab(self) -> None:
         self._grab_after_id = None
-        if self.winfo_exists():
+        # Only grab a window that is actually on screen. On Tk 8.6/macOS,
+        # grabbing one that can never become viewable (e.g. transient to a
+        # withdrawn parent) makes update() spin forever.
+        if self.winfo_exists() and self.winfo_viewable():
             self.grab_set()
 
     def destroy(self) -> None:
