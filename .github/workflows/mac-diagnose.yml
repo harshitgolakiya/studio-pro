@@ -1,0 +1,20 @@
+name: macOS dialog diagnostic (temporary)
+
+# Manual only. Finds which Tk dialog scenario never returns from update() on
+# macOS. Delete this workflow and tests/diag_mac_dialog.py once resolved.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diagnose:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements.txt
+      - name: Run scenario matrix
+        timeout-minutes: 6
+        run: python tests/diag_mac_dialog.py
