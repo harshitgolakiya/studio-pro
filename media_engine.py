@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+from typing import Callable
 
 from converter import ConversionResult
 import temp_tracker
@@ -274,8 +276,10 @@ def convert_media_file(
     filename_prefix: str = "",
     filename_suffix: str = "",
     normalize_audio: bool = False,
+    progress_callback: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> ConversionResult:
-    """Convert and compress video or audio files using FFmpeg."""
+    """Convert and compress video or audio files using FFmpeg with real-time progress updates."""
     ffmpeg = get_ffmpeg_path()
     if not ffmpeg:
         return ConversionResult(
@@ -285,7 +289,7 @@ def convert_media_file(
             None,
             "-",
             "Failed",
-            "FFmpeg not found on system. Please install FFmpeg.",
+            "FFmpeg executable not found on system. Please install FFmpeg to process video/audio files.",
         )
 
     original_size = None
@@ -322,9 +326,7 @@ def convert_media_file(
             reserved_paths,
         )
 
-        # Temporary intermediate destination. Uses a unique name (not just the
-        # output stem) so two concurrent jobs that happen to share a
-        # destination stem can never write the same temp file.
+        # Temporary intermediate destination
         temp_fd, temp_name = tempfile.mkstemp(
             suffix=f".tmp{dest_ext}", dir=str(output_directory)
         )
@@ -332,7 +334,17 @@ def convert_media_file(
         temporary_file = Path(temp_name)
         temp_tracker.register(temporary_file)
 
-        args = [ffmpeg, "-y", "-i", str(source_path.resolve())]
+        media_duration = get_media_duration(source_path)
+
+        args = [
+            ffmpeg,
+            "-y",
+            "-nostats",
+            "-progress",
+            "pipe:1",
+            "-i",
+            str(source_path.resolve()),
+        ]
 
         # Configure encoding arguments based on target format
         if target_fmt == "mp4":
@@ -348,9 +360,6 @@ def convert_media_file(
                 elif gpu_enc == "h264_amf":
                     args.extend(["-rc", "cbr"])
                 elif gpu_enc == "h264_videotoolbox":
-                    # Constant-quality (-q:v, 1-100) is only honoured by the
-                    # Apple-silicon encoder; the Intel-Mac encoder silently
-                    # ignores it, so it gets an explicit bitrate instead.
                     if platform.machine() == "arm64":
                         q = "75" if video_quality == "high" else ("45" if video_quality == "low" else "60")
                         args.extend(["-q:v", q])
@@ -367,7 +376,7 @@ def convert_media_file(
                 elif (
                     video_quality in ("discord25", "target_mb") or target_mb
                 ):
-                    duration = get_media_duration(source_path) or 30.0
+                    duration = media_duration or 30.0
                     mb_limit = 24.0 if video_quality == "discord25" else (target_mb or 15.0)
                     total_kbits = (mb_limit * 8192) / duration
                     audio_kbps = 96
@@ -428,18 +437,76 @@ def convert_media_file(
             if hasattr(subprocess, "CREATE_NO_WINDOW")
             else 0
         )
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             args,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            bufsize=1,
             creationflags=flags,
         )
+
+        last_cb_time = 0.0
+        cancelled = False
+
+        if proc.stdout:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                if cancel_check and cancel_check():
+                    cancelled = True
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1.0)
+                    except Exception:
+                        proc.kill()
+                    break
+
+                if line.startswith("out_time_us="):
+                    try:
+                        us = int(line.split("=")[1])
+                        elapsed_sec = us / 1_000_000.0
+                        now = time.monotonic()
+                        if progress_callback and (now - last_cb_time >= 0.12):
+                            last_cb_time = now
+                            if media_duration and media_duration > 0:
+                                fraction = max(0.01, min(0.99, elapsed_sec / media_duration))
+                                pct_int = int(fraction * 100)
+                                elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
+                                total_m, total_s = divmod(int(media_duration), 60)
+                                msg = f"Encoding {source_path.name}: {pct_int}% ({elapsed_m:02d}:{elapsed_s:02d} / {total_m:02d}:{total_s:02d})"
+                                progress_callback(fraction, msg)
+                            else:
+                                elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
+                                msg = f"Encoding {source_path.name}: {elapsed_m:02d}:{elapsed_s:02d} elapsed"
+                                progress_callback(0.5, msg)
+                    except (ValueError, IndexError):
+                        pass
+                elif line == "progress=end":
+                    if progress_callback:
+                        progress_callback(1.0, f"Finishing {source_path.name}...")
+
+        _, stderr_text = proc.communicate()
+
+        if cancelled:
+            temporary_file.unlink(missing_ok=True)
+            temp_tracker.unregister(temporary_file)
+            return ConversionResult(
+                source_path, None, original_size, None, "-", "Cancelled", "Operation cancelled"
+            )
 
         if proc.returncode != 0:
             temporary_file.unlink(missing_ok=True)
             temp_tracker.unregister(temporary_file)
-            raise RuntimeError(f"FFmpeg error: {proc.stderr[-300:] if proc.stderr else 'Unknown conversion failure'}")
+            clean_err = (stderr_text or "").strip()
+            err_lines = [
+                l.strip()
+                for l in clean_err.splitlines()
+                if l.strip() and not l.strip().startswith(("built with", "configuration:", "libav", "ffmpeg version"))
+            ]
+            err_msg = err_lines[-1] if err_lines else "Unknown conversion failure"
+            raise RuntimeError(f"FFmpeg error: {err_msg}")
 
         # Atomic rename to final output path
         os.replace(temporary_file, output_path)

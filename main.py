@@ -2680,6 +2680,10 @@ class WebPCompressorApp(ctk.CTk):
             command=self._redo_file_overrides,
         )
         self.context_menu.add_command(
+            label="View Error Details", command=self._ctx_view_error_details
+        )
+        self.context_menu.add_separator()
+        self.context_menu.add_command(
             label="Clear Selected File Overrides",
             command=self._clear_file_overrides,
         )
@@ -2701,6 +2705,7 @@ class WebPCompressorApp(ctk.CTk):
                     and res.output_path.exists()
                 )
                 is_video = bool(path and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS)
+                is_failed = bool(res and res.status == "Failed")
                 self.context_menu.entryconfigure(
                     2, state="normal" if can_open_converted else "disabled"
                 )
@@ -2709,6 +2714,9 @@ class WebPCompressorApp(ctk.CTk):
                 )
                 self.context_menu.entryconfigure(
                     7, state="normal" if can_open_converted else "disabled"
+                )
+                self.context_menu.entryconfigure(
+                    17, state="normal" if is_failed else "disabled"
                 )
                 self.context_menu.tk_popup(event.x_root, event.y_root)
 
@@ -2720,7 +2728,36 @@ class WebPCompressorApp(ctk.CTk):
         if item_id:
             path = next((p for p, r in self.row_ids.items() if r == item_id), None)
             if path:
+                res = self.row_results.get(path)
+                if res and res.status == "Failed":
+                    self._show_error_dialog(path, res)
+                    return
                 self._show_preview_dialog(path)
+
+    def _show_error_dialog(self, path: Path, result: ConversionResult) -> None:
+        err = result.error or "Unknown conversion error"
+        msg = (
+            f"File: {path.name}\n"
+            f"Location: {path.parent}\n\n"
+            f"Error Details:\n{err}\n\n"
+            "Troubleshooting Tips:\n"
+            "• If this is a video or audio file, ensure FFmpeg is installed on your device.\n"
+            "• Make sure the file exists and is not locked by another application.\n"
+            "• Verify you have sufficient disk space and write permissions for the destination folder."
+        )
+        messagebox.showerror("Conversion Error Details", msg)
+
+    def _ctx_view_error_details(self) -> None:
+        sel = self.table.selection()
+        if not sel:
+            return
+        path = next((p for p, r in self.row_ids.items() if r == sel[0]), None)
+        if path:
+            res = self.row_results.get(path)
+            if res and res.status == "Failed":
+                self._show_error_dialog(path, res)
+            else:
+                messagebox.showinfo("Error Details", f"'{path.name}' has not reported any conversion failure.")
 
     def _open_selected_preview(self) -> None:
         sel = self.table.selection()
@@ -4012,6 +4049,96 @@ class WebPCompressorApp(ctk.CTk):
             else batch_source[:FREE_BATCH_LIMIT]
         )
 
+        # 1. Check for missing input files on device
+        missing_inputs = [p for p in selected_batch if not p.is_file()]
+        if missing_inputs:
+            missing_names = "\n".join(f"• {p.name}" for p in missing_inputs[:8])
+            if len(missing_inputs) > 8:
+                missing_names += f"\n... and {len(missing_inputs) - 8} more"
+            messagebox.showerror(
+                "Missing Files on Device",
+                f"The following file(s) were not found on this computer:\n\n"
+                f"{missing_names}\n\n"
+                f"They may have been deleted, moved, or reside on a disconnected drive.\n"
+                f"Please verify your files or remove them from the media queue.",
+            )
+            for p in missing_inputs:
+                row_id = self.row_ids.get(p)
+                if row_id:
+                    self.table.set(row_id, "status", "File Not Found")
+            self.status_text.set("Error: Missing file(s) detected in queue")
+            return
+
+        # 2. Check output directory validity and write permissions
+        if not use_source_folder:
+            if not output:
+                self.status_text.set("Choose an output folder first")
+                return
+            try:
+                output.mkdir(parents=True, exist_ok=True)
+                test_tmp = output / f".perm_probe_{os.getpid()}_{int(time.time())}.tmp"
+                test_tmp.write_text("ok", encoding="utf-8")
+                test_tmp.unlink(missing_ok=True)
+            except Exception as exc:
+                messagebox.showerror(
+                    "Output Folder Inaccessible",
+                    f"Cannot write to output folder:\n{output}\n\n"
+                    f"Error details: {exc}\n\n"
+                    f"Please choose a writable folder or enable 'Save in original file's parent folder'.",
+                )
+                self.status_text.set(f"Error: Output folder not writable: {exc}")
+                return
+
+        # 3. Check for required system tools (FFmpeg) if media conversion is requested
+        target_fmt_str = self.target_format.get().upper()
+        needs_ffmpeg = any(
+            p.suffix.lower() in (SUPPORTED_VIDEO_EXTENSIONS | SUPPORTED_AUDIO_EXTENSIONS)
+            for p in selected_batch
+        ) or any(
+            tag in target_fmt_str
+            for tag in ("WEBM", "MP4", "ANIMATED WEBP", "GIF", "AUDIO", "MP3", "AAC", "OPUS", "WAV")
+        )
+        if needs_ffmpeg:
+            from media_engine import get_ffmpeg_path
+            if not get_ffmpeg_path():
+                messagebox.showerror(
+                    "Missing Required Component: FFmpeg",
+                    "FFmpeg is required on your device to convert and process video and audio files, but it was not found.\n\n"
+                    "To install FFmpeg on this system:\n"
+                    "• Windows: Open PowerShell and run:\n    winget install Gyan.Dev.FFmpeg\n    (or run .\\fetch_ffmpeg.ps1 in the app folder)\n"
+                    "• macOS: Open Terminal and run:\n    brew install ffmpeg\n"
+                    "• Direct download: https://www.ffmpeg.org/download.html\n\n"
+                    "Please install FFmpeg and restart the application.",
+                )
+                self.status_text.set("Error: FFmpeg is missing from this device. Video/audio processing cannot proceed.")
+                return
+
+        # 4. Check watermark logo file existence
+        if self.enable_watermark.get() and self.watermark_type.get() == "Logo PNG":
+            logo_path_str = self.watermark_logo_path.get().strip()
+            if not logo_path_str or not Path(logo_path_str).is_file():
+                messagebox.showerror(
+                    "Missing Watermark Logo File",
+                    f"The specified watermark logo image was not found on your device:\n"
+                    f"{logo_path_str or '(No path specified)'}\n\n"
+                    f"Please select a valid PNG logo file or disable the watermark option.",
+                )
+                self.status_text.set("Error: Watermark logo file not found")
+                return
+
+        # 5. Check custom ICC profile existence
+        if self.color_profile_mode.get() == "custom":
+            icc_path_str = self.color_profile_custom.get().strip()
+            if not icc_path_str or not Path(icc_path_str).is_file():
+                messagebox.showerror(
+                    "Missing Color Profile File",
+                    f"The specified custom ICC color profile file was not found:\n"
+                    f"{icc_path_str or '(No path specified)'}\n\n"
+                    f"Please select a valid .icc / .icm file or set Color Profile to 'Preserve original'.",
+                )
+                self.status_text.set("Error: Custom color profile file not found")
+                return
+
         preflight_dest = output if output is not None else selected_batch[0].parent
         check = disk_preflight(selected_batch, preflight_dest, self.target_format.get())
         if not check.ok and not self._confirm_low_disk(check):
@@ -4020,6 +4147,13 @@ class WebPCompressorApp(ctk.CTk):
                 f"batch may need up to {format_file_size(check.needed_bytes)}"
             )
             return
+
+        self._batch_total = len(selected_batch)
+        self._batch_completed_count = 0
+        for p in selected_batch:
+            row_id = self.row_ids.get(p)
+            if row_id:
+                self.table.set(row_id, "status", "In queue")
 
         self.conversion_running = True
         self.cancel_event.clear()
@@ -4370,6 +4504,7 @@ class WebPCompressorApp(ctk.CTk):
             )
 
             with reserved_lock:
+                self.events.put(("item_started", source_p))
                 if is_document:
                     # Document/Markdown engine conversion
                     doc_fmt_key = "MD"
@@ -4412,6 +4547,9 @@ class WebPCompressorApp(ctk.CTk):
                     elif "WAV" in effective_target_format.upper():
                         fmt_key = "wav"
 
+                    def _media_progress(pct: float, msg: str) -> None:
+                        self.events.put(("media_progress", (source_p, pct, msg)))
+
                     res = convert_media_file(
                         source_p,
                         target_dir,
@@ -4423,6 +4561,8 @@ class WebPCompressorApp(ctk.CTk):
                         filename_prefix=effective_prefix,
                         filename_suffix=effective_suffix,
                         normalize_audio=effective_normalize_audio,
+                        progress_callback=_media_progress,
+                        cancel_check=self.cancel_event.is_set,
                     )
                 else:
                     # Image engine conversion
@@ -4512,7 +4652,23 @@ class WebPCompressorApp(ctk.CTk):
                     value, message = payload
                     self.progress_value.set(value)
                     self.status_text.set(message)
+                elif event == "item_started":
+                    source_p = payload
+                    row_id = self.row_ids.get(source_p)
+                    if row_id:
+                        self.table.set(row_id, "status", "Converting...")
+                elif event == "media_progress":
+                    source_p, frac, msg = payload
+                    self.status_text.set(msg)
+                    row_id = self.row_ids.get(source_p)
+                    if row_id:
+                        self.table.set(row_id, "status", f"Encoding {int(frac * 100)}%")
+                    batch_tot = getattr(self, "_batch_total", 0)
+                    if batch_tot > 0:
+                        done = getattr(self, "_batch_completed_count", 0)
+                        self.progress_value.set(min(0.99, (done + frac) / batch_tot))
                 elif event == "result":
+                    self._batch_completed_count = getattr(self, "_batch_completed_count", 0) + 1
                     self._display_result(payload)
                 elif event == "error":
                     self.status_text.set(f"Process error: {payload}")
@@ -4549,7 +4705,7 @@ class WebPCompressorApp(ctk.CTk):
                         f"| Total saved: {format_file_size(saved_bytes)} ({saved_pct:.1f}%)"
                     )
                     if failed > 0:
-                        summary += f" • {failed} failed"
+                        summary += f" • ⚠️ {failed} failed (double-click row for details)"
 
                     self.status_text.set(
                         f"Cancelled: {summary}" if cancelled else summary
