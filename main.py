@@ -1175,44 +1175,37 @@ class WebPCompressorApp(ctk.CTk):
         self.format_capability_frame.pack(fill="x", pady=(0, 5))
         self._update_format_capabilities(self.target_format.get())
 
-        # Quality Row
+        # Quality Row (Direct input box)
         self.quality_row = ctk.CTkFrame(tab_format, fg_color="transparent")
         self.quality_row.pack(fill="x", pady=(2, 4))
-        self.quality_row.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
             self.quality_row,
             text="Quality (1-100):",
             text_color=APP_MUTED,
             font=ctk.CTkFont(size=12),
-            width=100,
             anchor="w",
-        ).grid(row=0, column=0, sticky="w")
+        ).pack(side="left", padx=(0, 8))
 
-        self.quality_slider = ctk.CTkSlider(
-            self.quality_row,
-            from_=1,
-            to=100,
-            number_of_steps=99,
-            variable=self.quality,
-            command=self._slider_changed,
-        )
-        self.quality_slider.grid(row=0, column=1, sticky="ew", padx=(4, 10))
+        self.quality_slider = None
 
         self.quality_entry = ctk.CTkEntry(
             self.quality_row,
-            width=54,
+            width=64,
             height=26,
             textvariable=self.quality_text,
             justify="center",
             corner_radius=6,
         )
-        self.quality_entry.grid(row=0, column=2, sticky="e")
+        self.quality_entry.pack(side="left")
         self.quality_entry.bind(
             "<FocusOut>", lambda _event: self._sync_quality_from_entry()
         )
         self.quality_entry.bind(
             "<Return>", lambda _event: self._sync_quality_from_entry()
+        )
+        self.quality_entry.bind(
+            "<KeyRelease>", lambda _event: self._on_quality_key_release()
         )
 
         # Sizing / Constraints Row
@@ -3626,6 +3619,15 @@ class WebPCompressorApp(ctk.CTk):
             self.output_directory.set(directory)
             update_setting("last_output_directory", directory)
 
+    def _on_quality_key_release(self) -> None:
+        val = self.quality_text.get().strip()
+        if val.isdigit() and 1 <= int(val) <= 100:
+            self.quality.set(int(val))
+            self.quality_entry.configure(
+                border_color=ctk.ThemeManager.theme["CTkEntry"]["border_color"]
+            )
+            self._schedule_size_estimate()
+
     def _slider_changed(self, value: float) -> None:
         self.quality_text.set(str(round(value)))
         self._schedule_size_estimate()
@@ -3633,7 +3635,8 @@ class WebPCompressorApp(ctk.CTk):
     def _lossless_changed(self) -> None:
         if not self.conversion_running:
             quality_state = "disabled" if self.lossless.get() else "normal"
-            self.quality_slider.configure(state=quality_state)
+            if getattr(self, "quality_slider", None) is not None:
+                self.quality_slider.configure(state=quality_state)
             self.quality_entry.configure(state=quality_state)
         self._schedule_size_estimate()
 
@@ -4619,7 +4622,8 @@ class WebPCompressorApp(ctk.CTk):
             state=state if self.table.selection() else "disabled"
         )
         self.clear_button.configure(state=state)
-        self.quality_slider.configure(state=state)
+        if getattr(self, "quality_slider", None) is not None:
+            self.quality_slider.configure(state=state)
         self.quality_entry.configure(state=state)
         self.format_menu.configure(state=state)
         self.format_browse_button.configure(state=state)
