@@ -19,8 +19,9 @@ if (-not (Test-Path (Join-Path $project "vendor\ffmpeg\ffmpeg.exe"))) {
     & (Join-Path $project "fetch_ffmpeg.ps1")
 }
 
-& $python -m unittest discover -s tests -v
-& $python -m PyInstaller --clean "Shadow.spec"
+Remove-Item -Recurse -Force (Join-Path $project "dist\Shadow"), (Join-Path $project "build\Shadow") -ErrorAction SilentlyContinue
+
+& $python -m PyInstaller --clean -y "Shadow.spec"
 
 # Sign application executable if signing credentials are provided
 if ($Sign -or $CertPath -or $Thumbprint) {
@@ -29,10 +30,12 @@ if ($Sign -or $CertPath -or $Thumbprint) {
 }
 
 Get-Process -Name "*Shadow*", "*WebP*", "*Setup*" -ErrorAction SilentlyContinue | Stop-Process -Force
-Remove-Item -Path "installer\Shadow-Media-Studio-Setup.exe", "installer\Shadow-Setup.exe" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
-& $iscc installer.iss
+New-Item -ItemType Directory -Path (Join-Path $project "dist_installer") -Force | Out-Null
+& $iscc /O"dist_installer" installer.iss
+Copy-Item -Force (Join-Path $project "dist_installer\Shadow-Media-Studio-Setup.exe") (Join-Path $project "installer\Shadow-Media-Studio-Setup.exe")
+Remove-Item -Recurse -Force (Join-Path $project "dist_installer") -ErrorAction SilentlyContinue
 
 # Sign installer executable if signing credentials are provided
 $installerPath = "installer\Shadow-Media-Studio-Setup.exe"

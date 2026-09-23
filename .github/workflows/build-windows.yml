@@ -40,7 +40,7 @@ jobs:
 
       - name: Build Shadow.exe with PyInstaller
         run: |
-          python -m PyInstaller --clean Shadow.spec
+          python -m PyInstaller --clean -y Shadow.spec
 
       - name: Install Inno Setup
         shell: powershell
