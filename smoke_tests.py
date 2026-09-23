@@ -224,8 +224,9 @@ class CrashReporter:
 
     def _save_report(self, report: CrashReport) -> None:
         self._reports_dir.mkdir(parents=True, exist_ok=True)
+        import uuid
         ts = report.timestamp.replace(":", "-").replace("+", "p")
-        path = self._reports_dir / f"crash_{ts}.json"
+        path = self._reports_dir / f"crash_{ts}_{uuid.uuid4().hex[:6]}.json"
         path.write_text(json.dumps(report.to_dict(), indent=2, default=str), "utf-8")
         self._prune_old_reports()
 
