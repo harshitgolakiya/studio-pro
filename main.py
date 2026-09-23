@@ -247,9 +247,8 @@ APP_CTA = "#D4A03C"
 APP_CTA_STRONG = "#E8B750"
 APP_BORDER = ("#D6DFE7", "#27303B")
 
-# Density presets map to CustomTkinter's global widget scaling, which rescales
-# paddings, fonts and control heights together so the layout stays coherent.
-DENSITY_SCALES = {"Compact": 0.88, "Comfortable": 1.0}
+# Enforce standard 1.0 scaling across all widgets
+ctk.set_widget_scaling(1.0)
 
 
 class WebPCompressorApp(ctk.CTk):
@@ -429,7 +428,7 @@ class WebPCompressorApp(ctk.CTk):
         self._estimate_after_id: str | None = None
         self._estimate_generation = 0
 
-        self._apply_density(self.settings.get("density", "Comfortable"))
+        ctk.set_widget_scaling(1.0)
         self._build_interface()
         self._setup_estimate_traces()
         self._setup_drag_and_drop()
@@ -640,16 +639,6 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.history_button.pack(side="left", padx=(0, 8))
 
-        self.density_menu = ctk.CTkOptionMenu(
-            header_right,
-            values=list(DENSITY_SCALES),
-            command=self._change_density,
-            width=112,
-            height=30,
-            corner_radius=7,
-        )
-        self.density_menu.set(self.settings.get("density", "Comfortable"))
-        self.density_menu.pack(side="left", padx=(0, 8))
 
         self.theme_menu = ctk.CTkOptionMenu(
             header_right,
@@ -2525,17 +2514,11 @@ class WebPCompressorApp(ctk.CTk):
         update_setting("theme", new_mode)
         self._apply_table_theme()
 
-    def _apply_density(self, density: str) -> None:
-        ctk.set_widget_scaling(DENSITY_SCALES.get(density, 1.0))
+    def _apply_density(self, _density: str = "Comfortable") -> None:
+        ctk.set_widget_scaling(1.0)
 
-    def _change_density(self, density: str) -> None:
-        if density not in DENSITY_SCALES:
-            density = "Comfortable"
-        self._apply_density(density)
-        update_setting("density", density)
-        if hasattr(self, "density_menu"):
-            self.density_menu.set(density)
-        self.after(50, self._force_redraw_after_resize)
+    def _change_density(self, _density: str = "Comfortable") -> None:
+        ctk.set_widget_scaling(1.0)
 
     # -- command palette ----------------------------------------------------
 
@@ -2574,8 +2557,6 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("Theme: System", lambda: self._set_theme("System"), "Appearance", "", "appearance"),
             PaletteAction("Theme: Dark", lambda: self._set_theme("Dark"), "Appearance", "", "appearance"),
             PaletteAction("Theme: Light", lambda: self._set_theme("Light"), "Appearance", "", "appearance"),
-            PaletteAction("Density: Compact", lambda: self._change_density("Compact"), "Appearance", "", "scaling small tight"),
-            PaletteAction("Density: Comfortable", lambda: self._change_density("Comfortable"), "Appearance", "", "scaling default"),
             PaletteAction("History…", self._open_history, "Help", "", "log past conversions reproduce"),
             PaletteAction("Export diagnostics…", self._export_diagnostics_bundle, "Help", "", "support bundle logs system info"),
             PaletteAction("License…", self._open_license_manager, "Help", "", "activate pro vip key"),

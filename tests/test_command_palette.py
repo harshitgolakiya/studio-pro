@@ -47,7 +47,6 @@ class PaletteAppTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         try:
-            cls.app._change_density("Comfortable")
             cls.app.destroy()
         except Exception:
             pass
@@ -63,7 +62,7 @@ class PaletteAppTests(unittest.TestCase):
             palette = app._open_command_palette()
             self.assertIsInstance(palette, CommandPalette)
             labels = [a.label for a in palette._actions]
-            for expected in ("Add files…", "Convert", "Clear all", "Browse formats…", "Recipes…", "Theme: Dark", "Density: Compact"):
+            for expected in ("Add files…", "Convert", "Clear all", "Browse formats…", "Recipes…", "Theme: Dark"):
                 self.assertIn(expected, labels)
 
             palette.query.set("clear all")
@@ -81,17 +80,6 @@ class PaletteAppTests(unittest.TestCase):
             palette.run_cursor()  # disabled: must not run or close
             self.assertTrue(palette.winfo_exists())
             palette.destroy()
-
-    def test_density_changes_scaling_and_persists(self) -> None:
-        app = self.app
-        app._change_density("Compact")
-        self.assertLess(ctk.ScalingTracker.widget_scaling, 1.0)
-        self.assertEqual(app.density_menu.get(), "Compact")
-        from settings import load_settings
-
-        self.assertEqual(load_settings().get("density"), "Compact")
-        app._change_density("Comfortable")
-        self.assertEqual(ctk.ScalingTracker.widget_scaling, 1.0)
 
 
 if __name__ == "__main__":
