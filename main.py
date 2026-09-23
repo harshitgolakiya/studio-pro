@@ -888,54 +888,55 @@ class WebPCompressorApp(ctk.CTk):
         ctk.CTkLabel(
             empty_content,
             text="＋",
-            width=64,
-            height=64,
-            corner_radius=20,
+            width=48,
+            height=48,
+            corner_radius=14,
             fg_color=(APP_ACCENT_SOFT, "#1e293b"),
             text_color=(APP_ACCENT, APP_ACCENT_TINT),
-            font=ctk.CTkFont(size=28, weight="bold"),
-        ).pack(pady=(18, 10))
+            font=ctk.CTkFont(size=22, weight="bold"),
+        ).pack(pady=(12, 6))
 
         ctk.CTkLabel(
             empty_content,
             text="Build your conversion queue",
-            font=ctk.CTkFont(family=DISPLAY_FONT, size=22, weight="bold"),
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=18, weight="bold"),
             text_color=APP_TEXT,
-        ).pack(pady=(0, 6))
+        ).pack(pady=(0, 4))
 
         ctk.CTkLabel(
             empty_content,
             text="Drop files or folders anywhere · 48 image extensions · video, audio and documents",
             text_color=APP_MUTED,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=11),
             wraplength=820,
-        ).pack(pady=(0, 18))
+        ).pack(pady=(0, 10))
 
         empty_buttons = ctk.CTkFrame(empty_content, fg_color="transparent")
-        empty_buttons.pack(pady=(0, 22))
+        empty_buttons.pack(pady=(0, 12))
         ctk.CTkButton(
             empty_buttons,
             text="＋ Add files",
             command=self._add_files,
-            width=135,
-            height=38,
-            corner_radius=9,
+            width=120,
+            height=32,
+            corner_radius=8,
             fg_color=APP_ACCENT,
             hover_color=APP_ACCENT_DARK,
             text_color="white",
-            font=ctk.CTkFont(weight="bold"),
+            font=ctk.CTkFont(weight="bold", size=12),
         ).pack(side="left", padx=5)
         ctk.CTkButton(
             empty_buttons,
             text="Add folder",
             command=self._add_folder,
-            width=135,
-            height=38,
-            corner_radius=9,
+            width=120,
+            height=32,
+            corner_radius=8,
             fg_color="transparent",
             border_width=1,
             border_color=("#cbd5e1", "#334155"),
             text_color=("#334155", "#f1f5f9"),
+            font=ctk.CTkFont(size=12),
         ).pack(side="left", padx=5)
 
         # Table Frame
@@ -1175,39 +1176,6 @@ class WebPCompressorApp(ctk.CTk):
         self.format_capability_frame.pack(fill="x", pady=(0, 5))
         self._update_format_capabilities(self.target_format.get())
 
-        # Quality Row (Direct input box)
-        self.quality_row = ctk.CTkFrame(tab_format, fg_color="transparent")
-        self.quality_row.pack(fill="x", pady=(2, 4))
-
-        ctk.CTkLabel(
-            self.quality_row,
-            text="Quality (1-100):",
-            text_color=APP_MUTED,
-            font=ctk.CTkFont(size=12),
-            anchor="w",
-        ).pack(side="left", padx=(0, 8))
-
-        self.quality_slider = None
-
-        self.quality_entry = ctk.CTkEntry(
-            self.quality_row,
-            width=64,
-            height=26,
-            textvariable=self.quality_text,
-            justify="center",
-            corner_radius=6,
-        )
-        self.quality_entry.pack(side="left")
-        self.quality_entry.bind(
-            "<FocusOut>", lambda _event: self._sync_quality_from_entry()
-        )
-        self.quality_entry.bind(
-            "<Return>", lambda _event: self._sync_quality_from_entry()
-        )
-        self.quality_entry.bind(
-            "<KeyRelease>", lambda _event: self._on_quality_key_release()
-        )
-
         # Sizing / Constraints Row
         size_row = ctk.CTkFrame(tab_format, fg_color="transparent")
         size_row.pack(fill="x", pady=(2, 2))
@@ -1282,12 +1250,45 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.scale_entry.pack(side="left")
 
+        # Quality Row (Direct input box positioned after Scale %)
+        self.quality_row = ctk.CTkFrame(size_row, fg_color="transparent")
+        self.quality_row.pack(side="left", padx=(10, 0))
+
         ctk.CTkLabel(
+            self.quality_row,
+            text="Quality:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+
+        self.quality_slider = None
+
+        self.quality_entry = ctk.CTkEntry(
+            self.quality_row,
+            width=48,
+            height=24,
+            textvariable=self.quality_text,
+            justify="center",
+            corner_radius=5,
+        )
+        self.quality_entry.pack(side="left")
+        self.quality_entry.bind(
+            "<FocusOut>", lambda _event: self._sync_quality_from_entry()
+        )
+        self.quality_entry.bind(
+            "<Return>", lambda _event: self._sync_quality_from_entry()
+        )
+        self.quality_entry.bind(
+            "<KeyRelease>", lambda _event: self._on_quality_key_release()
+        )
+
+        self.when_label = ctk.CTkLabel(
             size_row,
             text="When:",
             font=ctk.CTkFont(size=11),
             text_color=APP_MUTED,
-        ).pack(side="left", padx=(10, 4))
+        )
+        self.when_label.pack(side="left", padx=(10, 4))
         self.resize_cond_menu = ctk.CTkOptionMenu(
             size_row,
             values=["Always", "Only if larger", "Only above 4K", "Only above 2K"],
@@ -1760,7 +1761,7 @@ class WebPCompressorApp(ctk.CTk):
 
         # Output Folder Selector Frame
         output = ctk.CTkFrame(content_inner, fg_color=APP_SURFACE, corner_radius=12, border_width=1, border_color=APP_BORDER)
-        output.grid(row=2, column=0, padx=32, pady=(0, 12), sticky="ew")
+        output.grid(row=2, column=0, padx=32, pady=(0, 10), sticky="ew")
         output.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -1768,39 +1769,43 @@ class WebPCompressorApp(ctk.CTk):
             text="Output destination",
             text_color=APP_MUTED,
             font=ctk.CTkFont(size=12, weight="bold"),
-        ).grid(row=0, column=0, padx=(14, 10), pady=14, sticky="w")
+        ).grid(row=0, column=0, padx=(14, 10), pady=(10, 4), sticky="w")
 
         self.output_entry = ctk.CTkEntry(
             output,
             textvariable=self.output_directory,
-            height=32,
+            height=28,
             placeholder_text="Choose destination folder",
-            corner_radius=7,
+            corner_radius=6,
         )
-        self.output_entry.grid(row=0, column=1, pady=14, sticky="ew")
+        self.output_entry.grid(row=0, column=1, pady=(10, 4), sticky="ew")
 
         self.browse_button = ctk.CTkButton(
             output,
             text="Browse...",
             command=self._choose_output_directory,
-            width=88,
-            height=32,
-            corner_radius=7,
+            width=84,
+            height=28,
+            corner_radius=6,
             fg_color=APP_ELEVATED,
             hover_color=APP_ACCENT,
             text_color=APP_TEXT,
         )
-        self.browse_button.grid(row=0, column=2, padx=(8, 14), pady=14)
+        self.browse_button.grid(row=0, column=2, padx=(8, 14), pady=(10, 4))
 
         self.same_folder_checkbox = ctk.CTkCheckBox(
             output,
             text="Save in original file's parent folder",
             variable=self.save_in_source_folder,
             command=self._save_in_source_folder_toggled,
+            checkbox_width=16,
+            checkbox_height=16,
+            border_width=2,
+            corner_radius=4,
             font=ctk.CTkFont(size=11),
         )
         self.same_folder_checkbox.grid(
-            row=1, column=1, columnspan=2, sticky="w", pady=(4, 14)
+            row=1, column=1, columnspan=2, sticky="w", pady=(2, 10)
         )
 
         # Footer Frame
@@ -2104,85 +2109,96 @@ class WebPCompressorApp(ctk.CTk):
         self._schedule_queue_save()
 
 
+    def _set_quality_visibility(self, visible: bool) -> None:
+        if not hasattr(self, "quality_row") or self.quality_row is None:
+            return
+        if visible:
+            if hasattr(self, "when_label") and self.when_label.winfo_exists():
+                self.quality_row.pack(side="left", padx=(10, 0), before=self.when_label)
+            else:
+                self.quality_row.pack(side="left", padx=(10, 0))
+        else:
+            self.quality_row.pack_forget()
+
     def _format_changed(self, new_format: str) -> None:
         fmt = new_format.upper()
         self._update_format_capabilities(new_format)
         if "ANIMATED WEBP" in fmt:
             self.convert_button.configure(text="Convert to Animated WebP")
-            self.quality_row.pack(fill="x", pady=(2, 4))
+            self._set_quality_visibility(True)
         elif "WEBP" in fmt:
             self.convert_button.configure(text="Convert to WebP")
-            self.quality_row.pack(fill="x", pady=(2, 4))
+            self._set_quality_visibility(True)
         elif "AVIF" in fmt:
             self.convert_button.configure(text="Convert to AVIF")
-            self.quality_row.pack(fill="x", pady=(2, 4))
+            self._set_quality_visibility(True)
         elif "DOCUMENT: MD" in fmt:
             self.convert_button.configure(text="Convert to Markdown")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "DOCUMENT: DOCX" in fmt:
             self.convert_button.configure(text="Convert to Word (.docx)")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "DOCUMENT: PDF" in fmt:
             self.convert_button.configure(text="Convert to PDF")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "DOCUMENT: HTML" in fmt:
             self.convert_button.configure(text="Convert to HTML")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "DOCUMENT: TXT" in fmt:
             self.convert_button.configure(text="Convert to Plain Text")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif fmt == "PDF (COMBINED)":
             self.convert_button.configure(text="Combine into PDF")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "PDF" in fmt:
             self.convert_button.configure(text="Combine into PDF")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "VIDEO: MP4" in fmt or fmt == "MP4":
             self.convert_button.configure(text="Compress Video (MP4)")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "VIDEO: WEBM" in fmt or fmt == "WEBM":
             self.convert_button.configure(text="Compress Video (WebM)")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "GIF" in fmt:
             self.convert_button.configure(text="Convert to GIF")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "MP3" in fmt:
             self.convert_button.configure(text="Convert to MP3 Audio")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "AAC" in fmt:
             self.convert_button.configure(text="Convert to AAC Audio")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "OPUS" in fmt:
             self.convert_button.configure(text="Convert to Opus Audio")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "WAV" in fmt:
             self.convert_button.configure(text="Convert to WAV Audio")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "PNG" in fmt:
             self.convert_button.configure(text="Convert to PNG")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "JPEG" in fmt or "JPG" in fmt:
             self.convert_button.configure(text="Convert to JPEG")
-            self.quality_row.pack(fill="x", pady=(2, 4))
+            self._set_quality_visibility(True)
         elif "ICO" in fmt:
             self.convert_button.configure(text="Convert to ICO")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif normalize_output_format(new_format) in IMAGE_OUTPUT_FORMATS:
             image_fmt = normalize_output_format(new_format)
             self.convert_button.configure(text=f"Convert to {image_fmt}")
             if image_fmt in LOSSY_IMAGE_FORMATS:
-                self.quality_row.pack(fill="x", pady=(2, 4))
+                self._set_quality_visibility(True)
             else:
-                self.quality_row.pack_forget()
+                self._set_quality_visibility(False)
         elif "VIDEO" in fmt:
             self.convert_button.configure(text="Process Video")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         elif "AUDIO" in fmt:
             self.convert_button.configure(text="Convert Audio")
-            self.quality_row.pack_forget()
+            self._set_quality_visibility(False)
         else:
             self.convert_button.configure(text=f"Convert to {fmt}")
-            self.quality_row.pack(fill="x", pady=(2, 4))
+            self._set_quality_visibility(True)
 
     def _open_format_browser(self) -> None:
         options = list(self.format_menu.cget("values"))
