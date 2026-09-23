@@ -58,6 +58,21 @@ class CompareFactsTests(unittest.TestCase):
         kept = compare_facts(_facts(has_icc=True, icc_name="Display P3"), _facts(has_icc=True, icc_name="Display P3"))
         self.assertEqual(kept, [])
 
+    def test_gamut_clipping_detection(self) -> None:
+        src = _facts(has_icc=True, icc_name="Display P3", gamut_clipping_pct=8.4)
+        out = _facts(has_icc=True, icc_name="sRGB")
+        warnings = compare_facts(src, out)
+        titles = _titles(warnings)
+        self.assertIn("Gamut clipping detected", titles)
+        self.assertEqual(warnings[0].severity, "high")
+        self.assertIn("8.4%", warnings[0].detail)
+
+    def test_psd_layers_flattened_warning(self) -> None:
+        src = _facts(psd_layers=5)
+        out = _facts()
+        warnings = compare_facts(src, out)
+        self.assertIn("PSD layers flattened", _titles(warnings))
+
     def test_metadata_gps_size_and_ordering(self) -> None:
         src = _facts(has_exif=True, has_gps=True, size_bytes=1000)
         out = _facts(has_exif=True, has_gps=True, size_bytes=1500, width=50, height=50)

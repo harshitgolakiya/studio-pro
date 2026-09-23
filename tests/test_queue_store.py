@@ -62,6 +62,13 @@ class QueueStoreTests(unittest.TestCase):
         self.assertEqual(loaded.output_directory, str(self.dir))
         self.assertEqual(loaded.dropped, 0)
 
+    def test_round_trip_keeps_file_overrides(self) -> None:
+        a = _png(self.dir / "a.png")
+        overrides = {a: {"target_format": "PNG", "quality": 42, "grayscale": True}}
+        save_queue_state(build_state([a], {}, "", overrides), self.state_file)
+        loaded = load_queue_state(self.state_file)
+        self.assertEqual(loaded.items[0].overrides, overrides[a])
+
     def test_missing_sources_are_pruned_and_missing_outputs_reset(self) -> None:
         a = _png(self.dir / "a.png")
         ghost = self.dir / "gone.png"
@@ -155,6 +162,17 @@ class QueueRecoveryAppTests(unittest.TestCase):
         self.assertIn(a, app.row_results)
         row_b = app.table.item(app.row_ids[b])["values"]
         self.assertEqual(row_b[-1], "Ready")
+
+    def test_restore_keeps_file_overrides(self) -> None:
+        app = self.app
+        a = _png(self.dir / "a.png")
+        app._ingest_image_paths([a])
+        app.file_overrides[a] = {"target_format": "PNG", "quality": 33}
+        app._save_queue_now()
+        app._clear_all()
+        app._confirm_queue_restore = lambda count, dropped: True
+        app._offer_queue_restore()
+        self.assertEqual(app.file_overrides[a]["quality"], 33)
 
     def test_declining_restore_discards_saved_queue(self) -> None:
         app = self.app

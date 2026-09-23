@@ -215,7 +215,7 @@ class OptimizerDialog(ctk.CTkToplevel):
         w, h = c.winfo_width(), c.winfo_height()
         if w < 60 or h < 60:
             return
-        dark = ctk.get_appearance_mode() == "Dark"
+        dark = ctk.get_appearance_mode().lower() == "dark"
         bg = "#11161D" if dark else "#FFFFFF"
         fg = "#91A0AE" if dark else "#607181"
         c.configure(bg=bg)

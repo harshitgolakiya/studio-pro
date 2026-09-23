@@ -99,7 +99,12 @@ class RecipeManagerDialog(ctk.CTkToplevel):
         if s["lossless"]:
             parts.append("lossless")
         if s["enable_resize"]:
-            parts.append(f"max {s['max_dimension_text']}px")
+            cond = str(s.get("resize_condition", "always")).strip().lower()
+            if cond and cond != "always":
+                cond_label = cond.replace("only_", "").replace("_", " ")
+                parts.append(f"max {s['max_dimension_text']}px ({cond_label})")
+            else:
+                parts.append(f"max {s['max_dimension_text']}px")
         if s["enable_target_size"]:
             parts.append(f"target {s['target_size_val']} {s['target_size_unit']}")
         if s["enable_watermark"]:

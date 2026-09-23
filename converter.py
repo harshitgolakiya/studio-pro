@@ -17,6 +17,38 @@ except ImportError:
     # gives source users a useful error only when they actually select HEIF.
     pass
 
+try:
+    import raw_engine
+    from raw_engine import register_raw_opener, RAW_EXTENSIONS
+
+    register_raw_opener()
+except ImportError:
+    RAW_EXTENSIONS = set()
+    raw_engine = None
+
+try:
+    import svg_engine
+    from svg_engine import register_svg_opener, SVG_EXTENSIONS
+
+    register_svg_opener()
+except ImportError:
+    SVG_EXTENSIONS = set()
+    svg_engine = None
+
+try:
+    import jxl_engine
+    from jxl_engine import register_jxl_opener, is_jxl_available
+
+    register_jxl_opener()
+except ImportError:
+    jxl_engine = None
+    is_jxl_available = lambda: False
+
+try:
+    import psd_engine
+except ImportError:
+    psd_engine = None
+
 import temp_tracker
 from utils import (
     build_destination_filename,
@@ -29,7 +61,12 @@ from watermark import apply_image_watermark, apply_text_watermark
 SUPPORTED_EXTENSIONS = {
     # Common web and camera formats
     ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".apng", ".webp",
-    ".avif", ".avifs", ".heic", ".heif", ".hif", ".gif",
+    ".avif", ".avifs", ".heic", ".heif", ".hif", ".gif", ".jxl",
+    # Vector graphics
+    ".svg", ".svgz",
+    # Professional Camera RAW formats
+    ".dng", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".srf", ".sr2",
+    ".raf", ".orf", ".rw2", ".pef", ".raw", ".srw",
     # Bitmaps, icons, and layered artwork
     ".bmp", ".dib", ".tiff", ".tif", ".ico", ".icns", ".cur", ".psd",
     # JPEG 2000 family
@@ -48,6 +85,7 @@ IMAGE_OUTPUT_FORMATS: dict[str, tuple[str, str]] = {
     "WEBP": (".webp", "WEBP"),
     "AVIF": (".avif", "AVIF"),
     "HEIC": (".heic", "HEIF"),
+    "JXL": (".jxl", "JXL"),
     "JPEG": (".jpg", "JPEG"),
     "PNG": (".png", "PNG"),
     "GIF": (".gif", "GIF"),
@@ -70,6 +108,7 @@ IMAGE_FORMAT_CAPABILITIES: dict[str, dict[str, object]] = {
     "WEBP": {"category": "Modern web", "description": "Excellent web compression with transparency and animation.", "badges": ("Alpha", "Animation", "Lossy", "Lossless", "Metadata")},
     "AVIF": {"category": "Modern web", "description": "Very small modern files for photos and web delivery.", "badges": ("Alpha", "Animation", "High efficiency")},
     "HEIC": {"category": "Photography", "description": "High-efficiency Apple and mobile photography format.", "badges": ("Alpha", "Metadata", "High efficiency")},
+    "JXL": {"category": "Modern web", "description": "Next-generation JPEG XL with high fidelity, HDR, and lossless support.", "badges": ("Alpha", "Lossless", "Lossy", "HDR", "High efficiency")},
     "JPEG": {"category": "Web & photo", "description": "Universal photographic output with progressive encoding.", "badges": ("Universal", "Lossy", "Metadata")},
     "PNG": {"category": "Web & design", "description": "Lossless artwork, screenshots, and transparent graphics.", "badges": ("Alpha", "Lossless", "Web")},
     "GIF": {"category": "Animation", "description": "Widely compatible indexed-color animation.", "badges": ("Animation", "Transparency", "Indexed")},
@@ -88,7 +127,7 @@ IMAGE_FORMAT_CAPABILITIES: dict[str, dict[str, object]] = {
     "PDF": {"category": "Document", "description": "Package one image or a complete batch as a document.", "badges": ("Document", "Multi-page", "Portable")},
 }
 
-LOSSY_IMAGE_FORMATS = {"WEBP", "AVIF", "HEIC", "JPEG"}
+LOSSY_IMAGE_FORMATS = {"WEBP", "AVIF", "HEIC", "JPEG", "JXL"}
 
 
 def normalize_output_format(value: str) -> str:
@@ -102,6 +141,9 @@ def normalize_output_format(value: str) -> str:
         "HIF": "HEIC",
         "JP2": "JPEG 2000",
         "JPEG2000": "JPEG 2000",
+        "JPEGXL": "JXL",
+        "JPEG-XL": "JXL",
+        ".JXL": "JXL",
         "TIF": "TIFF",
         "PDF (COMBINED)": "PDF",
     }
@@ -219,9 +261,10 @@ def solve_quality_for_ssim(
 # The processing stack. Each name is one step; the order is user-reorderable
 # (see the "Processing stack" panel) and stored in recipes.
 DEFAULT_OPERATION_ORDER: tuple[str, ...] = (
-    "rotate", "flip", "crop", "grayscale", "rounded", "resize", "watermark",
+    "color", "rotate", "flip", "crop", "grayscale", "rounded", "resize", "watermark", "tone_map",
 )
 OPERATION_LABELS: dict[str, str] = {
+    "color": "Color Management",
     "rotate": "Rotate",
     "flip": "Flip",
     "crop": "Aspect-ratio crop",
@@ -229,6 +272,7 @@ OPERATION_LABELS: dict[str, str] = {
     "rounded": "Rounded corners",
     "resize": "Resize",
     "watermark": "Watermark",
+    "tone_map": "HDR & Tone Mapping",
 }
 
 ResizeSpec = tuple  # (scale_percent | None, max_width | None, max_height | None)
@@ -258,9 +302,33 @@ def compute_resize_dims(
     scale_percent: float | None = None,
     max_width: int | None = None,
     max_height: int | None = None,
+    condition: str = "always",
 ) -> tuple[int, int] | None:
-    """Proportional target size for an image of ``size``, or None if no resize is needed."""
+    """Proportional target size for an image of ``size``, or None if no resize is needed.
+    Supports conditional resizing: 'always', 'only_if_larger', 'only_above_4k', 'only_above_2k'.
+    """
     w, h = size
+    cond = str(condition or "always").strip().lower().replace(" ", "_").replace(">", "above_")
+
+    if cond in ("only_above_4k", "above_4k"):
+        # 4K UHD: 3840x2160 (~8.29 MP). Check both max dimension and total pixels.
+        if max(w, h) < 3840 and (w * h) < 8_294_400:
+            return None
+    elif cond in ("only_above_2k", "above_2k"):
+        # 2K/QHD: 2560x1440 (~3.68 MP).
+        if max(w, h) < 2560 and (w * h) < 3_686_400:
+            return None
+    elif cond == "only_if_larger":
+        # Only downscale if the image actually exceeds max_width or max_height
+        if max_width and w <= max_width and max_height and h <= max_height:
+            return None
+        if max_width and not max_height and w <= max_width:
+            return None
+        if max_height and not max_width and h <= max_height:
+            return None
+        if scale_percent is not None and scale_percent >= 100:
+            return None
+
     if scale_percent is not None and 1 <= scale_percent < 100:
         return max(1, int(round(w * scale_percent / 100.0))), max(1, int(round(h * scale_percent / 100.0)))
     if (max_width and w > max_width) or (max_height and h > max_height):
@@ -280,14 +348,36 @@ def apply_image_transformations(
     resize_spec: ResizeSpec | None = None,
     watermark_fn: object = None,
     order: object = None,
+    resize_condition: str = "always",
+    watermark_condition: str = "always",
+    color_profile_mode: str = "preserve",
+    color_profile_custom: str = "",
+    rendering_intent: str = "relative_colorimetric",
+    hdr_tone_mapping: str = "none",
+    hdr_exposure: float = 0.0,
 ) -> Image.Image:
-    """Run the processing stack in ``order`` (default: rotate, flip, crop,
-    grayscale, rounded, resize, watermark).
+    """Run the processing stack in ``order`` (default: color, rotate, flip, crop,
+    grayscale, rounded, resize, watermark, tone_map).
 
     Resize dimensions are computed from the image *as it arrives at the
     resize step*, so a crop or rotation earlier in the stack can never be
     stretched back to the source's proportions.
     """
+
+    def step_color(im: Image.Image) -> Image.Image:
+        if not color_profile_mode or str(color_profile_mode).strip().lower() in ("preserve", "preserve_(source)", "none", "untouched"):
+            return im
+        try:
+            from color_manager import convert_color_profile
+            out_im, _, _ = convert_color_profile(
+                im,
+                target_mode=color_profile_mode,
+                custom_path=color_profile_custom,
+                intent=rendering_intent,
+            )
+            return out_im
+        except Exception:
+            return im
 
     def step_rotate(im: Image.Image) -> Image.Image:
         if rotate_angle == 90:
@@ -356,13 +446,30 @@ def apply_image_transformations(
     def step_resize(im: Image.Image) -> Image.Image:
         if not resize_spec:
             return im
-        dims = compute_resize_dims(im.size, *resize_spec)
+        dims = compute_resize_dims(im.size, *resize_spec, condition=resize_condition)
         return im.resize(dims, Image.Resampling.LANCZOS) if dims else im
 
     def step_watermark(im: Image.Image) -> Image.Image:
-        return watermark_fn(im) if callable(watermark_fn) else im
+        if not callable(watermark_fn):
+            return im
+        w_cond = str(watermark_condition or "always").strip().lower().replace(" ", "_").replace("≥", ">=")
+        if ("800" in w_cond or w_cond in ("only_if_larger", "only_if_>=_800px")) and max(im.size) < 800:
+            return im
+        if ("1200" in w_cond or w_cond == "only_if_>=_1200px") and max(im.size) < 1200:
+            return im
+        return watermark_fn(im)
+
+    def step_tone_map(im: Image.Image) -> Image.Image:
+        if (not hdr_tone_mapping or str(hdr_tone_mapping).strip().lower() in ("none", "direct")) and hdr_exposure == 0.0:
+            return im
+        try:
+            from hdr_tone_map import apply_tone_mapping
+            return apply_tone_mapping(im, method=hdr_tone_mapping, exposure=hdr_exposure)
+        except Exception:
+            return im
 
     steps = {
+        "color": step_color,
         "rotate": step_rotate,
         "flip": step_flip,
         "crop": step_crop,
@@ -370,6 +477,7 @@ def apply_image_transformations(
         "rounded": step_rounded,
         "resize": step_resize,
         "watermark": step_watermark,
+        "tone_map": step_tone_map,
     }
     im = image
     for name in normalize_operation_order(order):
@@ -430,6 +538,14 @@ def _process_frame_image(
     corner_radius: int = 0,
     grayscale: bool = False,
     operation_order: object = None,
+    resize_condition: str = "always",
+    watermark_condition: str = "always",
+    color_profile_mode: str = "preserve",
+    color_profile_custom: str = "",
+    rendering_intent: str = "relative_colorimetric",
+    hdr_tone_mapping: str = "none",
+    hdr_exposure: float = 0.0,
+    bit_depth: str = "auto",
 ) -> Image.Image:
     f = apply_image_transformations(
         frame.copy(),
@@ -445,6 +561,13 @@ def _process_frame_image(
             watermark_scale_pct, watermark_opacity,
         ),
         order=operation_order,
+        resize_condition=resize_condition,
+        watermark_condition=watermark_condition,
+        color_profile_mode=color_profile_mode,
+        color_profile_custom=color_profile_custom,
+        rendering_intent=rendering_intent,
+        hdr_tone_mapping=hdr_tone_mapping,
+        hdr_exposure=hdr_exposure,
     )
     if f.mode not in ("RGB", "RGBA"):
         has_trans = "A" in f.getbands() or "transparency" in f.info
@@ -483,6 +606,21 @@ def convert_image(
     min_ssim: float | None = None,
     target_ssim: float | None = None,
     operation_order: object = None,
+    resize_condition: str = "always",
+    watermark_condition: str = "always",
+    color_profile_mode: str = "preserve",
+    color_profile_custom: str = "",
+    rendering_intent: str = "relative_colorimetric",
+    bit_depth: str = "auto",
+    hdr_tone_mapping: str = "none",
+    hdr_exposure: float = 0.0,
+    raw_white_balance: str = "camera",
+    raw_exposure: float = 0.0,
+    raw_demosaic: str = "auto",
+    svg_scale: float = 1.0,
+    svg_background: str = "transparent",
+    psd_composite_mode: str = "merged",
+    psd_layer_index: int = -1,
 ) -> ConversionResult:
     """Convert and optimize image with format conversion, resizing, watermarking, and target size solver.
 
@@ -525,7 +663,34 @@ def convert_image(
             reserved_paths,
         )
 
-        with Image.open(source_path) as image:
+        is_raw = source_path.suffix.lower() in RAW_EXTENSIONS
+        is_svg = source_path.suffix.lower() in SVG_EXTENSIONS
+        if is_raw and raw_engine is not None:
+            raw_target_bps = 16 if bit_depth in ("16", "auto") and dest_ext in (".tif", ".tiff", ".png") else 8
+            image_obj = raw_engine.develop_raw(
+                source_path,
+                wb=raw_white_balance,
+                exposure=raw_exposure,
+                demosaic=raw_demosaic,
+                output_bps=raw_target_bps,
+            )
+        elif is_svg and svg_engine is not None:
+            image_obj = svg_engine.rasterize_svg(
+                source_path,
+                scale=svg_scale,
+                background=svg_background,
+            )
+        elif source_path.suffix.lower() == ".psd" and psd_engine is not None and (psd_composite_mode != "merged" or (psd_layer_index is not None and psd_layer_index >= 0)):
+            target_layers = [psd_layer_index] if (psd_layer_index is not None and psd_layer_index >= 0) else None
+            image_obj = psd_engine.composite_psd(
+                source_path,
+                composite_mode=psd_composite_mode,
+                layer_indices=target_layers,
+            )
+        else:
+            image_obj = Image.open(source_path)
+
+        with image_obj as image:
             is_animated = bool(getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1)
 
             # Resize is a stack step: its dimensions are derived from the image
@@ -553,6 +718,11 @@ def convert_image(
                         aspect_ratio=aspect_ratio,
                         corner_radius=corner_radius,
                         grayscale=grayscale,
+                        resize_condition=resize_condition,
+                        watermark_condition=watermark_condition,
+                        color_profile_mode=color_profile_mode,
+                        color_profile_custom=color_profile_custom,
+                        rendering_intent=rendering_intent,
                     )
                     frames.append(pf)
                     durations.append(frame.info.get("duration", 100))
@@ -635,7 +805,26 @@ def convert_image(
                     watermark_scale_pct, watermark_opacity,
                 ),
                 order=operation_order,
+                resize_condition=resize_condition,
+                watermark_condition=watermark_condition,
+                color_profile_mode=color_profile_mode,
+                color_profile_custom=color_profile_custom,
+                rendering_intent=rendering_intent,
+                hdr_tone_mapping=hdr_tone_mapping,
+                hdr_exposure=hdr_exposure,
             )
+
+            from hdr_tone_map import resolve_target_bit_depth, apply_tone_mapping
+            effective_bit_depth = resolve_target_bit_depth(image, bit_depth, fmt)
+
+            # If image is high bit-depth/HDR float and output format only supports 8-bit,
+            # tone-map down to 8-bit smoothly so highlights don't blow out
+            if image.mode in ("I;16", "I;16L", "I;16B", "I", "F") and effective_bit_depth == 8:
+                image = apply_tone_mapping(
+                    image,
+                    method="aces" if (not hdr_tone_mapping or hdr_tone_mapping == "none") else hdr_tone_mapping,
+                    exposure=hdr_exposure,
+                )
 
             width, height = image.size
 
@@ -654,19 +843,40 @@ def convert_image(
                 except Exception:
                     icc_profile = None
 
+            # Color profile override if color management conversion was active
+            if color_profile_mode and str(color_profile_mode).strip().lower() not in ("preserve", "preserve_(source)", "none", "untouched"):
+                try:
+                    from color_manager import load_target_profile
+                    _, target_bytes, _ = load_target_profile(color_profile_mode, color_profile_custom)
+                    if target_bytes:
+                        icc_profile = target_bytes
+                except Exception:
+                    pass
+
             # Mode normalization
             if fmt in ("JPEG", "JPG"):
-                if image.mode != "RGB":
+                if image.mode not in ("RGB", "CMYK"):
                     image = flatten_to_rgb(image)
             elif fmt in ("WEBP", "AVIF", "HEIC", "JPEG 2000", "TGA", "DDS", "QOI", "ICNS", "SGI"):
+                if image.mode == "CMYK":
+                    image = image.convert("RGB")
                 if image.mode not in ("RGB", "RGBA"):
                     has_trans = (
                         "A" in image.getbands() or "transparency" in image.info
                     )
                     image = image.convert("RGBA" if has_trans else "RGB")
             elif fmt == "PNG":
-                if image.mode not in ("RGB", "RGBA", "L", "LA"):
+                if image.mode == "CMYK":
+                    image = image.convert("RGB")
+                if effective_bit_depth == 16 and image.mode in ("I;16", "I"):
+                    if image.mode != "I;16":
+                        image = image.convert("I;16")
+                elif image.mode not in ("RGB", "RGBA", "L", "LA"):
                     image = image.convert("RGBA")
+            elif fmt == "TIFF":
+                if effective_bit_depth == 16 and image.mode in ("I;16", "I"):
+                    if image.mode != "I;16":
+                        image = image.convert("I;16")
             elif fmt == "ICO":
                 image = image.convert("RGBA")
             elif fmt == "GIF":
@@ -738,6 +948,8 @@ def convert_image(
                         "format": "AVIF",
                         "quality": chosen_quality,
                     }
+                    if effective_bit_depth in (10, 12):
+                        save_options["bit_depth"] = effective_bit_depth
                     if exif_data:
                         save_options["exif"] = exif_data
                     if icc_profile:
@@ -749,6 +961,8 @@ def convert_image(
                         "format": "HEIF",
                         "quality": chosen_quality,
                     }
+                    if effective_bit_depth in (10, 12):
+                        save_options["bit_depth"] = effective_bit_depth
                     if exif_data:
                         save_options["exif"] = exif_data
                     if icc_profile:
@@ -787,7 +1001,19 @@ def convert_image(
                     )
 
                 elif fmt == "TIFF":
-                    image.save(temporary_path, format="TIFF", compression="tiff_deflate")
+                    save_options = {"format": "TIFF", "compression": "tiff_deflate"}
+                    if icc_profile:
+                        save_options["icc_profile"] = icc_profile
+                    image.save(temporary_path, **save_options)
+
+                elif fmt == "JXL":
+                    save_options = {
+                        "format": "JXL",
+                        "quality": quality,
+                        "lossless": lossless,
+                        "effort": 7,
+                    }
+                    image.save(temporary_path, **save_options)
 
                 elif fmt == "PDF":
                     pdf_img = flatten_to_rgb(image)

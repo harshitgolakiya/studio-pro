@@ -136,6 +136,52 @@ powershell -ExecutionPolicy Bypass -File .\fetch_ffmpeg.ps1   # one-time, ~200MB
 python main.py
 ```
 
+### Headless CLI
+
+The GUI is not required for scripted conversion. Use a saved recipe for
+repeatable settings and one JSON result per input:
+
+```powershell
+python -m headless_cli .\input --output .\output --recipe .\web-recipe.shadow-recipe.json --json
+```
+
+JSON mode writes newline-delimited objects with `started`, `progress`,
+`result`, and `finished` events. A successful run exits `0`; an input or
+conversion failure exits nonzero. Watch mode emits `watch` events using the
+same stream.
+
+To run the same recipe as a local watched-folder service, stop it with
+`Ctrl+C`:
+
+```powershell
+python -m headless_cli --watch .\incoming --watch-output .\optimized --recipe .\web-recipe.shadow-recipe.json
+```
+
+Watched folders can route files to different recipes and destinations with a
+JSON rules file. Rules are evaluated in order; omit `default` to use the CLI
+fallback, or set it to `null` to skip unmatched files:
+
+```json
+{
+  "rules": [
+    {
+      "extensions": [".png"],
+      "recipe": "recipes/web.shadow-recipe.json",
+      "output": "web"
+    },
+    {
+      "glob": "*_print.*",
+      "recipe": "recipes/print.shadow-recipe.json",
+      "output": "print"
+    }
+  ],
+  "default": null
+}
+```
+
+Use it with `--rules rules.json`. Rules also support `name_contains`,
+`min_bytes`, and `max_bytes` conditions.
+
 ---
 
 ## 📦 Building the Standalone Executable & Installer
@@ -240,7 +286,7 @@ MediaCompressor Studio Pro includes automated test coverage covering all convers
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-All 55 automated tests pass cleanly with zero external network requirements.
+All 323 automated tests pass cleanly with zero external network requirements.
 
 ---
 

@@ -19,7 +19,7 @@ from converter import ConversionResult
 from settings import get_app_data_dir
 from utils import format_saved_percentage
 
-QUEUE_STATE_VERSION = 1
+QUEUE_STATE_VERSION = 2
 _DISABLE_ENV = "SHADOW_NO_QUEUE_RESTORE"
 
 
@@ -38,6 +38,15 @@ class QueueItem:
     path: Path
     status: str = "Ready"
     output_path: Path | None = None
+    overrides: dict[str, Any] = field(default_factory=dict)
+    priority: int = 0  # Higher = higher priority; 0 is default
+    paused: bool = False  # Per-item pause; worker skips paused items
+    depends_on: list[str] = field(default_factory=list)  # Paths of items that must complete first
+
+    @property
+    def is_runnable(self) -> bool:
+        """True if this item can be picked up by a worker right now."""
+        return self.status == "Ready" and not self.paused
 
 
 @dataclass
@@ -52,13 +61,14 @@ def build_state(
     files: Iterable[Path],
     results: dict[Path, ConversionResult],
     output_directory: str,
+    overrides: dict[Path, dict[str, Any]] | None = None,
 ) -> QueueState:
     items: list[QueueItem] = []
     for path in files:
         result = results.get(path)
         status = result.status if result is not None else "Ready"
         out = result.output_path if result is not None and status == "Completed" else None
-        items.append(QueueItem(Path(path), status, out))
+        items.append(QueueItem(Path(path), status, out, dict((overrides or {}).get(path, {}))))
     return QueueState(items, output_directory, datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
@@ -73,6 +83,10 @@ def save_queue_state(state: QueueState, path: Path | None = None) -> Path:
                 "path": str(item.path),
                 "status": item.status,
                 "output_path": str(item.output_path) if item.output_path else None,
+                "overrides": item.overrides,
+                "priority": item.priority,
+                "paused": item.paused,
+                "depends_on": item.depends_on,
             }
             for item in state.items
         ],
@@ -94,7 +108,7 @@ def load_queue_state(path: Path | None = None) -> QueueState | None:
         data = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or data.get("version") != QUEUE_STATE_VERSION:
+    if not isinstance(data, dict) or data.get("version") not in (1, QUEUE_STATE_VERSION):
         return None
 
     state = QueueState(output_directory=str(data.get("output_directory") or ""), saved=str(data.get("saved") or ""))
@@ -112,7 +126,13 @@ def load_queue_state(path: Path | None = None) -> QueueState | None:
             status, out = "Ready", None
         elif status != "Completed":
             status, out = "Ready", None
-        state.items.append(QueueItem(src, status, out))
+        raw_overrides = raw.get("overrides")
+        overrides = dict(raw_overrides) if isinstance(raw_overrides, dict) else {}
+        priority = int(raw.get("priority") or 0)
+        paused = bool(raw.get("paused", False))
+        raw_deps = raw.get("depends_on")
+        depends_on = list(raw_deps) if isinstance(raw_deps, list) else []
+        state.items.append(QueueItem(src, status, out, overrides, priority, paused, depends_on))
     return state if state.items else None
 
 

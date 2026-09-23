@@ -16,6 +16,13 @@ from typing import Any
 
 from PIL import Image
 
+try:
+    from raw_engine import register_raw_opener, RAW_EXTENSIONS, extract_raw_metadata
+
+    register_raw_opener()
+except ImportError:
+    RAW_EXTENSIONS = set()
+
 _GPS_IFD = 0x8825
 _WIDE_GAMUT_HINTS = ("display p3", "p3", "adobe rgb", "adobergb", "prophoto", "rec2020", "rec. 2020", "bt.2020")
 _HIGH_DEPTH_MODES = ("I", "F", "I;16", "I;16L", "I;16B", "I;16N")
@@ -40,6 +47,9 @@ class ImageFacts:
     icc_name: str  # "" when there is no profile
     has_icc: bool
     size_bytes: int
+    bit_depth: int = 8
+    gamut_clipping_pct: float = 0.0
+    psd_layers: int = 0
 
     @property
     def wide_gamut(self) -> bool:
@@ -63,7 +73,7 @@ def _has_real_transparency(im: Image.Image) -> bool:
     if im.mode in ("RGBA", "LA"):
         return im.getchannel("A").getextrema()[0] < 255
     if im.mode == "PA":
-        return im.convert("RGBA").getchannel("A").getextrema()[0] < 255
+        return True
     if "transparency" in im.info:
         return True
     return False
@@ -79,17 +89,55 @@ def gather_facts(path: Path) -> ImageFacts:
         except Exception:
             has_gps = _GPS_IFD in exif
         icc = im.info.get("icc_profile")
+        try:
+            from hdr_tone_map import get_image_bit_depth
+            depth = get_image_bit_depth(im)
+        except Exception:
+            depth = 8
+
+        has_exif = bool(len(exif))
+        if path.suffix.lower() in RAW_EXTENSIONS:
+            if depth <= 8:
+                depth = 14
+            try:
+                raw_meta = extract_raw_metadata(path)
+                if raw_meta.get("camera_make") or raw_meta.get("camera_model"):
+                    has_exif = True
+            except Exception:
+                pass
+
+        psd_layers = 0
+        if path.suffix.lower() == ".psd":
+            try:
+                import psd_engine
+                psd_meta = psd_engine.get_psd_metadata(path)
+                psd_layers = psd_meta.get("total_layers", 0)
+            except Exception:
+                pass
+
+        icc_desc = _icc_name(icc)
+        gamut_clipping_pct = 0.0
+        if icc and any(h in icc_desc.lower() for h in _WIDE_GAMUT_HINTS):
+            try:
+                from color_manager import calculate_gamut_clipping
+                gamut_clipping_pct = calculate_gamut_clipping(im, target_mode="srgb")
+            except Exception:
+                gamut_clipping_pct = 0.0
+
         return ImageFacts(
             width=im.width,
             height=im.height,
             mode=im.mode,
             frames=frames,
             has_transparency=_has_real_transparency(im),
-            has_exif=bool(len(exif)),
+            has_exif=has_exif,
             has_gps=has_gps,
-            icc_name=_icc_name(icc),
+            icc_name=icc_desc,
             has_icc=bool(icc),
             size_bytes=path.stat().st_size,
+            bit_depth=depth,
+            gamut_clipping_pct=gamut_clipping_pct,
+            psd_layers=psd_layers,
         )
 
 
@@ -100,18 +148,29 @@ def compare_facts(src: ImageFacts, out: ImageFacts) -> list[LossWarning]:
         warnings.append(LossWarning("high", "Transparency lost", "The source has transparent pixels; the output is fully opaque (flattened onto a background)."))
     if src.frames > 1 and out.frames <= 1:
         warnings.append(LossWarning("high", "Animation lost", f"The source has {src.frames} frames; only one survived. Use WebP or GIF to keep animation."))
-    if src.mode in _HIGH_DEPTH_MODES and out.mode not in _HIGH_DEPTH_MODES:
-        warnings.append(LossWarning("medium", "Bit depth reduced", f"High-bit-depth source ({src.mode}) was reduced to 8 bits per channel ({out.mode})."))
+    if (src.mode in _HIGH_DEPTH_MODES or src.bit_depth > 8) and (out.mode not in _HIGH_DEPTH_MODES and out.bit_depth <= 8):
+        warnings.append(LossWarning("medium", "Bit depth reduced", f"High bit-depth source ({src.bit_depth}-bit, {src.mode}) was reduced to 8 bits per channel ({out.mode}). Gradients may show banding; use AVIF, HEIC, or TIFF to preserve bit depth."))
     if src.mode not in ("P", "1", "L") and out.mode == "P":
         warnings.append(LossWarning("medium", "Reduced to a 256-colour palette", "Truecolour was quantised to an indexed palette; gradients may band."))
     if src.mode != "1" and out.mode == "1":
         warnings.append(LossWarning("medium", "Reduced to 1-bit monochrome", "Every pixel is now pure black or white."))
+
+    if src.psd_layers > 1:
+        warnings.append(LossWarning("info", "PSD layers flattened", f"PSD source contains {src.psd_layers} layers that were merged into a single raster layer in the output."))
 
     if src.has_icc and not out.has_icc:
         if src.wide_gamut:
             warnings.append(LossWarning("high", "Wide-gamut colour profile removed", f"The source is tagged “{src.icc_name}” but the output has no profile, so viewers will assume sRGB and colours will look desaturated or shifted. Enable “Preserve metadata”."))
         else:
             warnings.append(LossWarning("info", "Colour profile removed", f"The embedded profile ({src.icc_name or 'ICC'}) was not carried over. Harmless for sRGB sources."))
+    elif src.wide_gamut and (not out.wide_gamut or "srgb" in out.icc_name.lower()):
+        if src.gamut_clipping_pct > 0.0:
+            severity = "high" if src.gamut_clipping_pct >= 5.0 else "medium"
+            warnings.append(LossWarning(severity, "Gamut clipping detected", f"{src.gamut_clipping_pct:.1f}% of pixels in wide-gamut source ({src.icc_name}) exceeded sRGB and were clipped at the gamut boundary."))
+        else:
+            warnings.append(LossWarning("medium", "Wide-gamut converted to sRGB", f"The wide-gamut source profile ({src.icc_name}) was converted to sRGB. Saturated out-of-gamut colors will be mapped or clipped to the sRGB boundary."))
+    elif src.has_icc and out.has_icc and src.icc_name != out.icc_name:
+        warnings.append(LossWarning("info", "Colour profile transformed", f"Colour profile converted from {src.icc_name} to {out.icc_name}."))
 
     if src.has_exif and not out.has_exif:
         warnings.append(LossWarning("info", "EXIF metadata removed", "Camera, date and copyright fields are gone. Enable “Preserve metadata” to keep them."))

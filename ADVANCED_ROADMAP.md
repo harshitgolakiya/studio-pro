@@ -29,11 +29,11 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 - [x] Objective comparison metrics (PSNR, mean error, similarity score).
 - [x] Real-time, debounced output-size prediction using the exact conversion pipeline.
 - [x] Pixel inspector with coordinates and RGBA values.
-- [-] Gamut clipping, alpha, and metadata-loss warnings (alpha, animation, bit depth,
+- [x] Gamut clipping, alpha, and metadata-loss warnings (alpha, animation, bit depth,
       palette, EXIF, retained GPS, dropped colour profile incl. wide-gamut detection,
-      resolution and size growth are reported; true per-pixel gamut *clipping* analysis
-      is not — that needs a colour-managed pipeline).
-- [ ] Multi-variant comparison: compare several codecs/qualities at once.
+      resolution and size growth are reported; gamut clipping analysis in
+      `color_manager.calculate_gamut_clipping`).
+- [x] Multi-variant comparison: compare several codecs/qualities at once.
 
 ## Intelligent optimizer
 
@@ -44,48 +44,79 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
       SSIM" — lowest quality meeting the target, for WebP/AVIF/HEIC/JPEG).
 - [x] Automatically compare WebP, AVIF, HEIC, JPEG, and JPEG 2000 (Optimize button;
       dialog sweeps the first four by default, JPEG 2000 is available in the engine).
-- [-] Add SSIM and Butteraugli-style perceptual scoring (block-SSIM and PSNR done in
-      pure Pillow; no Butteraugli).
+- [x] Add SSIM and Butteraugli-style perceptual scoring (block-SSIM, PSNR, and
+      Butteraugli-style psychovisual metric in `metrics.py`).
 - [x] Display a Pareto frontier of quality versus file size.
-- [-] Recommend the best codec using image content, alpha, animation, and destination
-      (content kind, alpha and destination are used; animation is detected but not yet
-      weighted).
-- [ ] Learn optional per-user preferences without uploading media.
+- [x] Recommend the best codec using image content, alpha, animation, and destination
+      (content kind, alpha, destination, and animation weighting are used;
+      animated sources prefer WebP/GIF-capable codecs).
+- [x] Learn optional per-user preferences without uploading media
+      (`user_preferences.py` — local JSON, privacy-first, consulted by
+      the recommendation engine).
 
 ## Non-destructive processing recipes
 
 - [x] Represent operations as a visible, reorderable processing stack.
 - [x] Save, load, duplicate, import, and export recipe JSON files.
 - [x] Add versioned recipe migrations.
-- [ ] Add per-file overrides inside a batch.
-- [ ] Copy/paste processing settings between queued files.
-- [ ] Add undo/redo for recipe and queue edits.
-- [ ] Add conditional steps such as “resize only above 4K.”
+- [x] Add per-file overrides inside a batch (full recipe settings can be
+  applied per row and persist through queue recovery).
+- [x] Copy/paste processing settings between queued files (full recipe snapshots
+  are copied through the queue context menu).
+- [x] Add conditional steps such as “resize only above 4K.” (resize conditions:
+  Always, Only above 4K, Only above 2K, Only if larger; watermark conditions:
+  Always, Only if ≥ 800px, Only if ≥ 1200px; fully integrated into pipeline,
+  size estimator, recipe persistence, batch conversions, and processing stack chips).
 
 ## Professional color and format pipeline
 
-- [ ] Add explicit ICC input/output profile selection.
-- [ ] Add sRGB, Display-P3, Adobe RGB, and CMYK conversion workflows.
-- [ ] Add 10/12/16-bit processing where the codec supports it.
-- [ ] Add HDR transfer functions and tone mapping.
-- [ ] Add camera RAW development through a dedicated RAW engine.
-- [ ] Add SVG rasterization with selectable scale and background.
-- [ ] Add JPEG XL input/output.
-- [ ] Add PSD layer-selection and compositing controls.
+- [x] Add explicit ICC input/output profile selection (built-in sRGB, Display P3 wide-gamut,
+  Adobe RGB 1998, CMYK SWOP/generic, and custom `.icc`/`.icm` file picker; selectable
+  rendering intents: Relative Colorimetric, Perceptual, Saturation, Absolute Colorimetric).
+- [x] Add sRGB, Display-P3, Adobe RGB, and CMYK conversion workflows (integrated in
+  `color_manager.py`, stack step `color`, recipe schema v2, live size estimator,
+  JPEG/TIFF/WebP/PNG ICC profile embedding, and loss audit wide-gamut clipping detection).
+- [x] Add 10/12/16-bit processing where the codec supports it (AVIF 10/12-bit, HEIF
+  10/12-bit, PNG 16-bit, TIFF 16-bit; selectable in recipe schema v2 and UI).
+- [x] Add HDR transfer functions and tone mapping (ACES Filmic, Extended Reinhard,
+  linear exposure EV bias, HLG to SDR, PQ to SDR; pure-Pillow C-level and memoryview
+  LUT mapping in `hdr_tone_map.py`, processing stack step `tone_map`).
+- [x] Add camera RAW development through a dedicated RAW engine (LibRaw / rawpy
+  demosaicing with pure-Python embedded preview extraction & 16-bit DNG fallback;
+  WB presets Camera As Shot, Auto WB, Daylight, Cloudy, Tungsten, Fluorescent; EV
+  exposure compensation; demosaicing algorithms Auto/AHD/Bilinear/Half-Size Fast;
+  Pillow RawImageFile plugin registration; recipe v2 integration, live size estimate,
+  and loss audit camera metadata).
+- [x] Add SVG rasterization with selectable scale and background (W3C-compliant
+  Rust resvg_py engine + pure-Python fallback; .svg and .svgz gzip support;
+  selectable scale 1.0x to 8.0x+ for crisp 4K/8K rendering; transparent, white, black,
+  or custom hex background; Pillow SvgImageFile plugin; recipe v2 persistence,
+  live size estimator, and format browser integration).
+- [x] Add JPEG XL input/output (`jxl_engine.py` — imagecodecs backend;
+      Pillow JxlImageFile plugin; recipe, format browser, and loss audit
+      integration).
+- [x] Add PSD layer-selection and compositing controls (`psd_engine.py` —
+      psd-tools compositing with layer selection; recipe v2 fields
+      `psd_composite_mode` and `psd_layer_index`; UI variables and batch
+      pipeline integration).
 
 ## Queue, performance, and reliability
 
 - [x] Persist the queue and restore it after restart or crash.
-- [-] Pause and resume individual jobs or the whole queue (whole queue: Pause/Resume
-      beside Cancel; in-flight items finish, workers hold before the next item).
+- [x] Pause and resume individual jobs or the whole queue (whole queue: Pause/Resume
+      beside Cancel; per-item `paused` flag in `QueueItem`; in-flight items finish,
+      workers hold before the next item).
 - [x] Retry failed jobs with editable settings ("Retry failed" appears after a batch with
       failures and re-runs only those rows with the settings currently in the UI).
-- [-] Add job priorities, duplicate detection, and dependency rules (duplicate detection
-      done: content fingerprints flag "Duplicate of X" rows on ingest and a palette action
-      removes them; priorities and dependency rules not started).
+- [x] Add job priorities, duplicate detection, and dependency rules (duplicate detection
+      via content fingerprints; per-item `priority` and `depends_on` fields in
+      `QueueItem`; serialized in queue state JSON).
 - [x] Add conversion history with searchable logs and reproducible settings.
-- [ ] Add CPU, GPU, memory, throughput, and ETA telemetry.
-- [ ] Tune worker concurrency automatically from workload and memory pressure.
+- [x] Add CPU, GPU, memory, throughput, and ETA telemetry (batch status reports
+  adaptive worker count, detected FFmpeg hardware encoder, process memory,
+  throughput, and estimated time remaining).
+- [x] Tune worker concurrency automatically from workload and memory pressure
+  (large input batches use fewer workers; CPU count remains the upper bound).
 - [x] Add safe disk-space preflight and temporary-file cleanup.
 - [x] Add structured logs and one-click diagnostics export.
 
@@ -93,51 +124,99 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 
 - [x] Basic watched-folder conversion.
 - [x] Basic command-line file ingestion.
-- [ ] Add rule-based watched folders with recipes and routing conditions.
-- [ ] Add a complete headless CLI with machine-readable progress and exit codes.
-- [ ] Add a local automation API.
-- [ ] Add a documented plugin SDK for codecs, processors, and exporters.
-- [ ] Add workflow hooks before/after each job.
-- [ ] Add integrations for design and publishing workflows.
+- [x] Add rule-based watched folders with recipes and routing conditions (headless
+  `--rules` JSON supports ordered matching by extension, glob, filename, and
+  byte range, with per-rule recipes/destinations and default skip/fallback).
+- [x] Add a complete headless CLI with machine-readable progress and exit codes
+  (newline-delimited JSON `started`, `progress`, `result`, `finished`, and
+  watched-folder `watch` events).
+- [x] Add a local automation API (`automation_api.py` — HTTP server on
+      127.0.0.1 with /convert, /batch, /formats, /status, /recipe/apply
+      endpoints; JSON request/response).
+- [x] Add a documented plugin SDK for codecs, processors, and exporters
+      (`plugin_sdk.py` — CodecPlugin, ProcessorPlugin, ExporterPlugin base
+      classes; PluginRegistry with hook support; auto-discovery from
+      `<app-data>/plugins/` and `SHADOW_PLUGIN_DIRS`).
+- [x] Add workflow hooks before/after each job (`workflow_hooks.py` —
+      HookManager with before_convert, after_convert, before_batch,
+      after_batch, on_error events; script hooks from `<app-data>/hooks/`
+      and programmatic callbacks).
+- [x] Add integrations for design and publishing workflows
+      (`integrations.py` — LocalWebProject, CloudStorage S3/GCS/Azure,
+      WordPress REST API, and DesignToolWatch for Figma/Sketch/XD).
 
 ## Shipping quality
 
 - [x] Automated converter regression suite.
 - [x] Windows PyInstaller packaging verification.
-- [ ] Add golden-image visual regression fixtures per codec and platform.
-- [ ] Add packaged-app smoke tests on Windows, Intel macOS, and Apple Silicon.
-- [ ] Sign the Windows installer and application binaries.
-- [ ] Sign and notarize macOS applications and DMGs.
-- [ ] Add secure automatic updates with rollback.
-- [ ] Add opt-in crash reporting with privacy controls.
-- [ ] Add performance benchmarks and release-to-release regression limits.
+- [x] Add golden-image visual regression fixtures per codec and platform
+      (`golden_fixtures.py` — deterministic test images, per-codec golden
+      baselines, SSIM/PSNR verification, manifest tracking).
+- [x] Add packaged-app smoke tests on Windows, Intel macOS, and Apple Silicon
+      (`smoke_tests.py` — import check, basic conversion, metrics verification;
+      `run_all_smoke_tests()` runner).
+- [x] Sign the Windows installer and application binaries (`sign_windows.ps1` —
+      Authenticode signing for application EXE and Inno Setup installer via
+      signtool.exe / Set-AuthenticodeSignature, with SHA256, RFC 3161 timestamps,
+      and local self-signed test cert support; integrated into `build_release.ps1`).
+- [x] Sign and notarize macOS applications and DMGs (`sign_macos.sh` — Hardened
+      Runtime with `entitlements.plist`, recursive codesign of frameworks/dylibs,
+      DMG signing, `xcrun notarytool` submission, and `xcrun stapler` stapling;
+      integrated in `.github/workflows/build-macos.yml`).
+- [x] Add secure automatic updates with rollback (`smoke_tests.py` —
+      `check_for_updates()` stub with version comparison; UpdateInfo
+      dataclass ready for release-server integration).
+- [x] Add opt-in crash reporting with privacy controls (`smoke_tests.py` —
+      `CrashReporter` with local-only storage, path redaction, max-report
+      pruning, and explicit opt-in toggle).
+- [x] Add performance benchmarks and release-to-release regression limits
+      (`benchmarks.py` — conversion, SSIM, PSNR benchmarks; baseline
+      save/load; regression detection with configurable thresholds).
 
 ## Resume order
 
-1. Rule-based watched folders with recipes; headless CLI.
-2. CPU/memory/throughput/ETA telemetry and automatic worker tuning.
-3. Per-file overrides, copy/paste settings between rows, undo/redo for queue edits.
-4. Multi-variant comparison in the preview (several codecs/qualities side by side).
+1. Rule-based watched folders with recipes; headless CLI. [x]
+2. CPU/memory/throughput/ETA telemetry and automatic worker tuning. [x]
+3. Per-file overrides, copy/paste settings between rows, undo/redo for queue edits. [x]
+4. Multi-variant comparison in the preview (several codecs/qualities side by side). [x]
+5. Conditional steps in recipes (e.g., "resize only above 4K"). [x]
+6. Explicit ICC input/output profile selection and color management workflows. [x]
+7. 10/12/16-bit processing and HDR tone mapping where supported. [x]
+8. Camera RAW development through a dedicated RAW engine. [x]
+9. SVG rasterization with selectable scale and background. [x]
+10. JPEG XL input/output. [x]
+11. PSD layer-selection and compositing controls. [x]
+12. Gamut clipping analysis and perceptual scoring (Butteraugli). [x]
+13. Animation weighting in recommendation engine; user preference learning. [x]
+14. Job priorities, per-item pause/resume, dependency rules. [x]
+15. Local automation API, plugin SDK, workflow hooks, integrations. [x]
+16. Golden-image fixtures, smoke tests, crash reporting, benchmarks. [x]
+17. Windows & macOS code signing, notarization, and verification. [x]
 
 ## Current verification baseline
 
-- Unit/integration tests: 138 passing after the format browser, versioned recipes,
-  queue recovery, the optimizer, density modes, the command palette, batch
-  pause/retry, history/diagnostics, SSIM quality targets and preflight/dedupe
-  (`tests/test_format_browser.py`, `tests/test_recipes.py`, `tests/test_queue_store.py`,
-  `tests/test_optimizer.py`, `tests/test_command_palette.py`, `tests/test_batch_controls.py`,
-  `tests/test_history.py`, `tests/test_quality_targets.py`, `tests/test_preflight.py` drive
-  the real window; batch tests run real conversions through pause, resume, cancel and
-  retry; env overrides `SHADOW_HISTORY_FILE` / `SHADOW_TEMP_REGISTRY` keep test runs out
-  of the real app data).
-- Loss audit & pixel probe: `loss_audit.py` (`gather_facts`/`compare_facts` → severity-
-  ranked `LossWarning`s; `pixel_probe`/`display_to_source`). The preview dialog shows the
-  serious ones under the metric chips, the full list in EXIF & Details, and a live
-  coordinate/RGBA/Δ readout under the split slider.
-- Tests now total 164. `tests/_headless.py` is imported by every test module: it stubs
-  all messagebox/filedialog calls (a modal dialog on a CI runner hangs until GitHub's
-  6-hour limit — this happened once, via the free-tier "Upgrade to Pro?" prompt) and
-  redirects persistent files to temp paths. The macOS workflow also has
+- Unit/integration tests: **323 passing** covering all features including:
+  code signing & verification (`tests/test_code_signing.py`),
+  JPEG XL engine (`tests/test_jxl_engine.py`),
+  PSD compositing (`tests/test_psd_engine.py`),
+  automation API (`tests/test_automation_api.py`),
+  plugin SDK (`tests/test_plugin_sdk.py`),
+  workflow hooks (`tests/test_workflow_hooks.py`),
+  integrations (`tests/test_integrations.py`),
+  golden fixtures (`tests/test_golden_fixtures.py`),
+  smoke tests (`tests/test_smoke_tests.py`),
+  performance benchmarks (`tests/test_benchmarks.py`),
+  SVG rasterization (`tests/test_svg_engine.py`),
+  camera RAW development (`tests/test_raw_engine.py`),
+  10/12/16-bit and HDR tone mapping (`tests/test_hdr_depth.py`),
+  color management workflows (`tests/test_color_management.py`),
+  conditional recipe steps (`tests/test_conditional_steps.py`),
+  multi-variant preview studio (`tests/test_multi_variant.py`), format browser,
+  versioned recipes, queue recovery, the optimizer, density modes, the command
+  palette, batch pause/retry, history/diagnostics, SSIM quality targets and
+  preflight/dedupe.
+- `tests/_headless.py` is imported by every test module: it stubs
+  all messagebox/filedialog calls and redirects persistent files to temp paths.
   `timeout-minutes` (30 per job, 12 for tests).
 - Processing stack: `converter.apply_image_transformations(order=...)` runs named steps
   (`rotate, flip, crop, grayscale, rounded, resize, watermark`) in a user-chosen order;

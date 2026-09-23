@@ -52,6 +52,29 @@ jobs:
       - name: Build Shadow.app with PyInstaller
         run: python -m PyInstaller --clean Shadow-mac.spec
 
+      - name: Import Apple Developer Certificate
+        if: env.APPLE_CERTIFICATE_BASE64 != ''
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD || 'temporary-build-keychain' }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+      - name: Codesign Shadow.app
+        run: |
+          chmod +x sign_macos.sh
+          ./sign_macos.sh "dist/Shadow.app" "" "entitlements.plist"
+
       - name: Package DMG
         run: |
           set -euo pipefail
@@ -62,6 +85,15 @@ jobs:
             -srcfolder dmg_staging \
             -ov -format UDZO \
             "installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg"
+
+      - name: Sign, Notarize, and Staple DMG
+        env:
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ./sign_macos.sh "dist/Shadow.app" "installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg" "entitlements.plist"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

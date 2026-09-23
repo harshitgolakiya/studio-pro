@@ -28,7 +28,8 @@ except Exception:  # pragma: no cover - optional at runtime
     pass
 
 from converter import solve_target_size_quality
-from metrics import block_ssim, psnr  # noqa: F401 -- re-exported for callers/tests
+from metrics import block_ssim, butteraugli_score, psnr  # noqa: F401 -- re-exported for callers/tests
+from user_preferences import get_preference_store
 
 
 # -- image profile -------------------------------------------------------
@@ -189,6 +190,8 @@ DESTINATIONS: dict[str, dict[str, Any]] = {
     "Smallest possible": {"codecs": ("AVIF", "WEBP", "HEIC", "JPEG", "JPEG 2000"), "min_ssim": 0.92},
 }
 
+ANIMATION_CODECS = {"WEBP", "GIF"}
+
 
 @dataclass
 class Recommendation:
@@ -216,16 +219,42 @@ def recommend(
         notes.append("transparency rules out JPEG")
     if profile.kind == "graphic":
         notes.append("flat-colour artwork favours higher quality settings")
+
+    # Animation weighting: strongly prefer codecs that support animation
+    if profile.is_animated:
+        anim_pool = [c for c in pool if c.codec in ANIMATION_CODECS]
+        if anim_pool:
+            pool = anim_pool
+            frontier = [c for c in pareto_frontier(pool) if c.ssim >= floor]
+            notes.append("animated source; only animation-capable codecs considered")
+
     if frontier:
         pick = frontier[0]
         why = f"smallest Pareto-optimal candidate keeping SSIM ≥ {floor:.2f} for {destination.lower()}"
     else:
         pick = max(pool, key=lambda c: (c.ssim, -c.size_bytes))
         why = f"no candidate reaches SSIM {floor:.2f}; picked the highest-quality one instead"
+
+    # Consult user preference store for learned bias
+    try:
+        store = get_preference_store()
+        pref_codec = store.get_preferred_codec(profile.kind, destination)
+        if pref_codec:
+            pref_cands = [c for c in pool if c.codec == pref_codec and c.ssim >= floor]
+            if pref_cands:
+                pref_pick = min(pref_cands, key=lambda c: c.size_bytes)
+                # Only override if it doesn't cost >10% more size
+                if pref_pick.size_bytes <= pick.size_bytes * 1.10:
+                    pick = pref_pick
+                    notes.append(f"user prefers {pref_codec}")
+    except Exception:
+        pass
+
     if notes:
         why += " (" + "; ".join(notes) + ")"
     alternatives = [c for c in pareto_frontier(pool) if c is not pick][:3]
     return Recommendation(pick, why, alternatives)
+
 
 
 # -- targeted solvers ----------------------------------------------------

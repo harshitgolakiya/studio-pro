@@ -21,6 +21,117 @@ except ImportError as exc:
         "Missing required dependency: customtkinter. Please run: python -m pip install -r requirements.txt"
     ) from exc
 
+# Patch CustomTkinter performance bottlenecks during appearance mode switching:
+# 1. CTkTabview._draw recursively called tab.configure(...) which forced every descendant
+#    widget across all tabs to re-execute configure() and redraw, causing massive UI freezes.
+# 2. CTkOptionMenu._draw called self._canvas.update_idletasks() mid-draw, triggering synchronous
+#    geometry recalculation storms during batch appearance mode updates.
+# 3. AppearanceModeTracker.set_appearance_mode("system") previously failed to detect and notify
+#    callbacks immediately upon switching to System theme.
+try:
+    from customtkinter.windows.widgets.appearance_mode import AppearanceModeTracker
+
+    def _tabview_fast_draw(self, no_color_updates: bool = False):
+        super(ctk.CTkTabview, self)._draw(no_color_updates)
+        if not self._canvas.winfo_exists():
+            return
+        requires_recoloring = self._draw_engine.draw_rounded_rect_with_border(
+            self._apply_widget_scaling(self._current_width),
+            self._apply_widget_scaling(
+                self._current_height - self._outer_spacing - self._outer_button_overhang
+            ),
+            self._apply_widget_scaling(self._corner_radius),
+            self._apply_widget_scaling(self._border_width),
+        )
+        if no_color_updates is False or requires_recoloring:
+            if self._fg_color == "transparent":
+                target_fg = self._apply_appearance_mode(self._bg_color)
+            else:
+                target_fg = self._apply_appearance_mode(self._fg_color)
+            self._canvas.itemconfig("inner_parts", fill=target_fg, outline=target_fg)
+            self._canvas.itemconfig(
+                "border_parts",
+                fill=self._apply_appearance_mode(self._border_color),
+                outline=self._apply_appearance_mode(self._border_color),
+            )
+            bg_color = self._apply_appearance_mode(self._bg_color)
+            self._canvas.configure(bg=bg_color)
+            tk.Frame.configure(self, bg=bg_color)
+            for tab in self._tab_dict.values():
+                if tab._canvas.winfo_exists():
+                    tab._canvas.configure(bg=target_fg)
+                    tk.Frame.configure(tab, bg=target_fg)
+
+    ctk.CTkTabview._draw = _tabview_fast_draw
+
+    def _optionmenu_fast_draw(self, no_color_updates: bool = False):
+        super(ctk.CTkOptionMenu, self)._draw(no_color_updates)
+        left_section_width = self._current_width - self._current_height
+        requires_recoloring = self._draw_engine.draw_rounded_rect_with_border_vertical_split(
+            self._apply_widget_scaling(self._current_width),
+            self._apply_widget_scaling(self._current_height),
+            self._apply_widget_scaling(self._corner_radius),
+            0,
+            self._apply_widget_scaling(left_section_width),
+        )
+        requires_recoloring_2 = self._draw_engine.draw_dropdown_arrow(
+            self._apply_widget_scaling(self._current_width - (self._current_height / 2)),
+            self._apply_widget_scaling(self._current_height / 2),
+            self._apply_widget_scaling(self._current_height / 3),
+        )
+        if no_color_updates is False or requires_recoloring or requires_recoloring_2:
+            self._canvas.configure(bg=self._apply_appearance_mode(self._bg_color))
+            self._canvas.itemconfig(
+                "inner_parts_left",
+                outline=self._apply_appearance_mode(self._fg_color),
+                fill=self._apply_appearance_mode(self._fg_color),
+            )
+            self._canvas.itemconfig(
+                "inner_parts_right",
+                outline=self._apply_appearance_mode(self._button_color),
+                fill=self._apply_appearance_mode(self._button_color),
+            )
+            if self._state == tk.DISABLED:
+                self._text_label.configure(fg=self._apply_appearance_mode(self._text_color_disabled))
+                self._canvas.itemconfig(
+                    "dropdown_arrow",
+                    fill=self._apply_appearance_mode(self._text_color_disabled),
+                )
+            else:
+                self._text_label.configure(fg=self._apply_appearance_mode(self._text_color))
+                self._canvas.itemconfig(
+                    "dropdown_arrow",
+                    fill=self._apply_appearance_mode(self._text_color),
+                )
+            self._text_label.configure(bg=self._apply_appearance_mode(self._fg_color))
+        # Note: self._canvas.update_idletasks() omitted intentionally to avoid UI stalls
+
+    ctk.CTkOptionMenu._draw = _optionmenu_fast_draw
+
+    def _baseclass_fast_set_appearance_mode(self, mode_string):
+        super(ctk.CTkBaseClass, self)._set_appearance_mode(mode_string)
+        self._draw()
+
+    ctk.CTkBaseClass._set_appearance_mode = _baseclass_fast_set_appearance_mode
+
+    _orig_set_appearance_mode = AppearanceModeTracker.set_appearance_mode.__func__
+
+    @classmethod
+    def _patched_set_appearance_mode(cls, mode_string: str):
+        if mode_string.lower() == "system":
+            cls.appearance_mode_set_by = "system"
+            new_mode = cls.detect_appearance_mode()
+            if new_mode != cls.appearance_mode:
+                cls.appearance_mode = new_mode
+                cls.update_callbacks()
+        else:
+            _orig_set_appearance_mode(cls, mode_string)
+
+    AppearanceModeTracker.set_appearance_mode = _patched_set_appearance_mode
+except Exception:
+    pass
+
+
 from app_bootstrap import ensure_runtime_dependencies_noisy
 
 # No-op in a packaged build (see app_bootstrap.py) -- only auto-installs
@@ -55,6 +166,8 @@ from converter import (
     normalize_operation_order,
     LOSSY_IMAGE_FORMATS,
     SUPPORTED_EXTENSIONS,
+    RAW_EXTENSIONS,
+    SVG_EXTENSIONS,
     ConversionResult,
     combine_images_to_pdf,
     convert_image,
@@ -72,6 +185,7 @@ from media_engine import (
     SUPPORTED_AUDIO_EXTENSIONS,
     SUPPORTED_VIDEO_EXTENSIONS,
     convert_media_file,
+    get_best_hardware_encoder,
     get_ffmpeg_path,
 )
 from optimizer_dialog import OptimizerDialog
@@ -89,6 +203,7 @@ from queue_store import (
 from recipe_dialog import RecipeManagerDialog
 from recipes import RECIPE_FIELDS
 from settings import load_settings, update_setting
+from telemetry import BatchTelemetry, recommend_workers
 import temp_tracker
 from url_downloader_dialog import URLDownloaderDialog
 from video_trimmer_dialog import VideoTrimmerDialog
@@ -202,6 +317,9 @@ class WebPCompressorApp(ctk.CTk):
         self.scale_percent_text = tk.StringVar(
             value=self.settings.get("scale_percent", "75")
         )
+        self.resize_condition = tk.StringVar(
+            value=self.settings.get("resize_condition", "Always")
+        )
 
         # Transformations & Enhancements
         self.rotate_angle = tk.StringVar(value="0°")
@@ -212,6 +330,45 @@ class WebPCompressorApp(ctk.CTk):
         self.corner_radius = tk.StringVar(value="20")
         self.grayscale = tk.BooleanVar(value=False)
         self.normalize_audio = tk.BooleanVar(value=False)
+        self.color_profile_mode = tk.StringVar(
+            value=self.settings.get("color_profile_mode", "Preserve (Source)")
+        )
+        self.color_profile_custom = tk.StringVar(
+            value=self.settings.get("color_profile_custom", "")
+        )
+        self.rendering_intent = tk.StringVar(
+            value=self.settings.get("rendering_intent", "Relative Colorimetric")
+        )
+        self.bit_depth = tk.StringVar(
+            value=self.settings.get("bit_depth", "Auto (Match Codec)")
+        )
+        self.hdr_tone_mapping = tk.StringVar(
+            value=self.settings.get("hdr_tone_mapping", "None / Direct")
+        )
+        self.hdr_exposure = tk.StringVar(
+            value=str(self.settings.get("hdr_exposure", "0.0"))
+        )
+        self.raw_white_balance = tk.StringVar(
+            value=self.settings.get("raw_white_balance", "Camera As Shot")
+        )
+        self.raw_exposure = tk.StringVar(
+            value=str(self.settings.get("raw_exposure", "0.0"))
+        )
+        self.raw_demosaic = tk.StringVar(
+            value=self.settings.get("raw_demosaic", "Auto (High Quality)")
+        )
+        self.svg_scale = tk.StringVar(
+            value=self.settings.get("svg_scale", "1.0x (Default)")
+        )
+        self.svg_background = tk.StringVar(
+            value=self.settings.get("svg_background", "Transparent")
+        )
+        self.psd_composite_mode = tk.StringVar(
+            value=self.settings.get("psd_composite_mode", "merged")
+        )
+        self.psd_layer_index = tk.StringVar(
+            value=str(self.settings.get("psd_layer_index", "-1"))
+        )
 
         # Batch Renaming
         self.filename_prefix = tk.StringVar(value="")
@@ -244,6 +401,9 @@ class WebPCompressorApp(ctk.CTk):
         self.watermark_position = tk.StringVar(
             value=self.settings.get("watermark_position", "bottom-right")
         )
+        self.watermark_condition = tk.StringVar(
+            value=self.settings.get("watermark_condition", "Always")
+        )
 
         self.status_text = tk.StringVar(value="Ready to convert")
         self.estimate_text = tk.StringVar(value="Add an image to estimate output size")
@@ -254,6 +414,14 @@ class WebPCompressorApp(ctk.CTk):
         self.pause_event = threading.Event()  # set = paused; workers wait between items
         self.row_ids: dict[Path, str] = {}
         self.row_results: dict[Path, ConversionResult] = {}
+        self.file_overrides: dict[Path, dict[str, object]] = {}
+        self.copied_file_override: dict[str, object] | None = None
+        self._override_undo: list[dict[Path, dict[str, object]]] = []
+        self._override_redo: list[dict[Path, dict[str, object]]] = []
+        self._queue_undo: list[tuple[list[Path], dict[Path, dict[str, object]]]] = []
+        self._queue_redo: list[tuple[list[Path], dict[Path, dict[str, object]]]] = []
+        self._recipe_undo: list[dict[str, Any]] = []
+        self._recipe_redo: list[dict[str, Any]] = []
         self.last_results: list[ConversionResult] = []
         self.image_count_text = tk.StringVar(value="0 items")
         self.total_size_text = tk.StringVar(value="")
@@ -285,6 +453,8 @@ class WebPCompressorApp(ctk.CTk):
         self.bind("<Configure>", self._on_window_configure)
 
     def _on_window_configure(self, _event: tk.Event) -> None:
+        if _event.widget != self:
+            return
         if self._resize_redraw_job is not None:
             self.after_cancel(self._resize_redraw_job)
         self._resize_redraw_job = self.after(120, self._force_redraw_after_resize)
@@ -328,6 +498,8 @@ class WebPCompressorApp(ctk.CTk):
         self.bind("<Control-k>", lambda _e: self._open_command_palette())
         self.bind("<Control-K>", lambda _e: self._open_command_palette())
         self.bind("<Control-Shift-P>", lambda _e: self._open_command_palette())
+        self.bind("<Control-z>", lambda _e: self._undo_editor_change())
+        self.bind("<Control-y>", lambda _e: self._redo_editor_change())
 
     @staticmethod
     def _resource_path(relative_path: str) -> Path:
@@ -1117,6 +1289,23 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.scale_entry.pack(side="left")
 
+        ctk.CTkLabel(
+            size_row,
+            text="When:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(10, 4))
+        self.resize_cond_menu = ctk.CTkOptionMenu(
+            size_row,
+            values=["Always", "Only if larger", "Only above 4K", "Only above 2K"],
+            variable=self.resize_condition,
+            width=115,
+            height=24,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+        )
+        self.resize_cond_menu.pack(side="left")
+
         # ==========================================
         # TAB 2: EDIT & TRANSFORM
         # ==========================================
@@ -1168,6 +1357,260 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.CTkCheckBox(tr_row1, text="Grayscale (Monochrome B&W)", variable=self.grayscale, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 18))
         ctk.CTkCheckBox(tr_row1, text="Broadcast Audio Loudnorm (EBU R128)", variable=self.normalize_audio, font=ctk.CTkFont(size=11)).pack(side="left")
+
+        # Color Management Row
+        tr_row_color = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        tr_row_color.pack(fill="x", pady=(5, 4))
+
+        ctk.CTkLabel(
+            tr_row_color,
+            text="Color Profile:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 6))
+        self.color_profile_menu = ctk.CTkOptionMenu(
+            tr_row_color,
+            values=[
+                "Preserve (Source)",
+                "Convert to sRGB (Web Standard)",
+                "Convert to Display P3 (Wide Gamut)",
+                "Convert to Adobe RGB",
+                "Convert to CMYK (Print)",
+                "Custom Profile...",
+            ],
+            variable=self.color_profile_mode,
+            command=self._on_color_profile_mode_changed,
+            width=210,
+            height=26,
+            corner_radius=6,
+        )
+        self.color_profile_menu.pack(side="left", padx=(0, 14))
+
+        ctk.CTkLabel(
+            tr_row_color,
+            text="Intent:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.rendering_intent_menu = ctk.CTkOptionMenu(
+            tr_row_color,
+            values=[
+                "Relative Colorimetric",
+                "Perceptual",
+                "Saturation",
+                "Absolute Colorimetric",
+            ],
+            variable=self.rendering_intent,
+            width=145,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.rendering_intent_menu.pack(side="left", padx=(0, 10))
+
+        self.custom_icc_btn = ctk.CTkButton(
+            tr_row_color,
+            text="Choose ICC...",
+            width=88,
+            height=26,
+            corner_radius=6,
+            command=self._browse_custom_icc_profile,
+            font=ctk.CTkFont(size=11),
+        )
+        if "Custom" in self.color_profile_mode.get():
+            self.custom_icc_btn.pack(side="left")
+
+        # HDR & High Bit-Depth Row
+        tr_row_hdr = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        tr_row_hdr.pack(fill="x", pady=(2, 4))
+        ctk.CTkLabel(
+            tr_row_hdr,
+            text="Bit Depth:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 6))
+        self.bit_depth_menu = ctk.CTkOptionMenu(
+            tr_row_hdr,
+            values=[
+                "Auto (Match Codec)",
+                "8-bit (Standard)",
+                "10-bit (HDR / AVIF & HEIC)",
+                "12-bit (Cinema / AVIF & HEIC)",
+                "16-bit (Deep Color / TIFF & PNG)",
+            ],
+            variable=self.bit_depth,
+            width=190,
+            height=26,
+            corner_radius=6,
+        )
+        self.bit_depth_menu.pack(side="left", padx=(0, 14))
+
+        ctk.CTkLabel(
+            tr_row_hdr,
+            text="Tone Map:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.hdr_tone_menu = ctk.CTkOptionMenu(
+            tr_row_hdr,
+            values=[
+                "None / Direct",
+                "ACES Filmic (Cinematic)",
+                "Reinhard (Smooth)",
+                "Exposure Boost",
+                "HLG to SDR (ITU-R BT.2100)",
+                "PQ to SDR (SMPTE ST 2084)",
+            ],
+            variable=self.hdr_tone_mapping,
+            width=180,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.hdr_tone_menu.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(
+            tr_row_hdr,
+            text="EV:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.hdr_exposure_entry = ctk.CTkEntry(
+            tr_row_hdr,
+            textvariable=self.hdr_exposure,
+            width=48,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.hdr_exposure_entry.pack(side="left")
+
+        # Camera RAW Development Row
+        tr_row_raw = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        tr_row_raw.pack(fill="x", pady=(2, 4))
+        ctk.CTkLabel(
+            tr_row_raw,
+            text="Camera RAW:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(
+            tr_row_raw,
+            text="WB:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.raw_wb_menu = ctk.CTkOptionMenu(
+            tr_row_raw,
+            values=[
+                "Camera As Shot",
+                "Auto WB",
+                "Daylight (5500K)",
+                "Cloudy (6500K)",
+                "Tungsten (3200K)",
+                "Fluorescent (4000K)",
+            ],
+            variable=self.raw_white_balance,
+            width=140,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.raw_wb_menu.pack(side="left", padx=(0, 8))
+
+        ctk.CTkLabel(
+            tr_row_raw,
+            text="Demosaic:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.raw_demosaic_menu = ctk.CTkOptionMenu(
+            tr_row_raw,
+            values=[
+                "Auto (High Quality)",
+                "AHD (Adaptive Homogeneity)",
+                "Bilinear (Balanced)",
+                "Half-Size (Fast Draft)",
+            ],
+            variable=self.raw_demosaic,
+            width=165,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.raw_demosaic_menu.pack(side="left", padx=(0, 8))
+
+        ctk.CTkLabel(
+            tr_row_raw,
+            text="EV:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.raw_exposure_entry = ctk.CTkEntry(
+            tr_row_raw,
+            textvariable=self.raw_exposure,
+            width=48,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.raw_exposure_entry.pack(side="left")
+
+        # Vector SVG Rasterization Row
+        tr_row_svg = ctk.CTkFrame(tab_transform, fg_color="transparent")
+        tr_row_svg.pack(fill="x", pady=(2, 4))
+        ctk.CTkLabel(
+            tr_row_svg,
+            text="Vector SVG:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#334155", "#cbd5e1"),
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(
+            tr_row_svg,
+            text="Scale:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.svg_scale_menu = ctk.CTkOptionMenu(
+            tr_row_svg,
+            values=[
+                "1.0x (Default)",
+                "1.5x",
+                "2.0x (Retina)",
+                "3.0x",
+                "4.0x (Ultra HD)",
+                "8.0x (Max Detail)",
+            ],
+            variable=self.svg_scale,
+            width=140,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.svg_scale_menu.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(
+            tr_row_svg,
+            text="Background:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        self.svg_bg_menu = ctk.CTkOptionMenu(
+            tr_row_svg,
+            values=[
+                "Transparent",
+                "White (#FFFFFF)",
+                "Black (#000000)",
+            ],
+            variable=self.svg_background,
+            width=145,
+            height=26,
+            corner_radius=6,
+            font=ctk.CTkFont(size=11),
+        )
+        self.svg_bg_menu.pack(side="left")
 
         stack_header = ctk.CTkFrame(tab_transform, fg_color="transparent")
         stack_header.pack(fill="x", pady=(6, 0))
@@ -1304,6 +1747,20 @@ class WebPCompressorApp(ctk.CTk):
             wm_row0,
             values=["bottom-right", "bottom-left", "top-right", "top-left", "center"],
             variable=self.watermark_position,
+            width=125,
+            height=26,
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            wm_row0,
+            text="When:",
+            font=ctk.CTkFont(size=11),
+            text_color=("#64748b", "#94a3b8"),
+        ).pack(side="left", padx=(10, 4))
+        ctk.CTkOptionMenu(
+            wm_row0,
+            values=["Always", "Only if ≥ 800px", "Only if ≥ 1200px"],
+            variable=self.watermark_condition,
             width=125,
             height=26,
         ).pack(side="left")
@@ -1605,7 +2062,12 @@ class WebPCompressorApp(ctk.CTk):
             if not self.selected_files:
                 clear_queue_state(self.queue_state_file)
                 return
-            state = build_state(self.selected_files, self.row_results, self.output_directory.get())
+            state = build_state(
+                self.selected_files,
+                self.row_results,
+                self.output_directory.get(),
+                self.file_overrides,
+            )
             save_queue_state(state, self.queue_state_file)
         except Exception:
             pass
@@ -1636,6 +2098,8 @@ class WebPCompressorApp(ctk.CTk):
             self.output_directory.set(state.output_directory)
         self._ingest_image_paths([item.path for item in state.items])
         for item in state.items:
+            if item.overrides:
+                self.file_overrides[item.path] = dict(item.overrides)
             result = synthesize_result(item)
             if result is not None:
                 self._display_result(result)
@@ -2010,10 +2474,10 @@ class WebPCompressorApp(ctk.CTk):
             self.status_text.set(f"Logo selected: {Path(file_selected).name}")
 
     def _apply_table_theme(self) -> None:
-        dark_mode = ctk.get_appearance_mode() == "Dark"
-        table_bg = "#191c20" if dark_mode else "#ffffff"
-        head_bg = "#252a31" if dark_mode else "#f2f4f7"
-        fg = "#f2f4f7" if dark_mode else "#344054"
+        dark_mode = ctk.get_appearance_mode().lower() == "dark"
+        table_bg = "#11161d" if dark_mode else "#ffffff"
+        head_bg = "#1a2029" if dark_mode else "#f2f4f7"
+        fg = "#f4f7fa" if dark_mode else "#14212b"
         sel_bg = "#123B36" if dark_mode else "#CFF4EE"
         sel_fg = "#ffffff" if dark_mode else "#0B3B35"
 
@@ -2044,9 +2508,13 @@ class WebPCompressorApp(ctk.CTk):
         )
 
     def _change_appearance_mode(self, new_mode: str) -> None:
+        # Defer execution slightly so the OptionMenu popup menu dismisses and ungrabs cleanly
+        self.after(20, lambda: self._apply_appearance_mode_change(new_mode))
+
+    def _apply_appearance_mode_change(self, new_mode: str) -> None:
         ctk.set_appearance_mode(new_mode)
         update_setting("theme", new_mode)
-        self.after(50, self._apply_table_theme)
+        self._apply_table_theme()
 
     def _apply_density(self, density: str) -> None:
         ctk.set_widget_scaling(DENSITY_SCALES.get(density, 1.0))
@@ -2201,6 +2669,30 @@ class WebPCompressorApp(ctk.CTk):
         self.context_menu.add_command(
             label="Remove from List", command=self._remove_selected
         )
+        self.context_menu.add_command(
+            label="Use Current Format & Quality for Selected",
+            command=self._apply_file_override,
+        )
+        self.context_menu.add_command(
+            label="Copy Selected File Settings",
+            command=self._copy_file_override,
+        )
+        self.context_menu.add_command(
+            label="Paste File Settings to Selected",
+            command=self._paste_file_override,
+        )
+        self.context_menu.add_command(
+            label="Undo File Settings",
+            command=self._undo_file_overrides,
+        )
+        self.context_menu.add_command(
+            label="Redo File Settings",
+            command=self._redo_file_overrides,
+        )
+        self.context_menu.add_command(
+            label="Clear Selected File Overrides",
+            command=self._clear_file_overrides,
+        )
 
         def show_menu(event: tk.Event) -> None:
             item_id = self.table.identify_row(event.y)
@@ -2290,8 +2782,12 @@ class WebPCompressorApp(ctk.CTk):
 
     def _show_preview_dialog(self, path: Path) -> None:
         result = self.row_results.get(path)
-        dialog = ImagePreviewDialog(self, path, result)
+        dialog = ImagePreviewDialog(self, path, result, on_apply=self._apply_variant_choice)
         dialog.focus()
+
+    def _apply_variant_choice(self, codec: str, quality: int) -> None:
+        self._apply_optimizer_choice(codec, quality)
+        self.status_text.set(f"Applied preview variant {codec} at quality {int(quality)}")
 
     def _ctx_open_converted(self) -> None:
         for item_id in self.table.selection():
@@ -2367,6 +2863,8 @@ class WebPCompressorApp(ctk.CTk):
             filetypes=[
                 ("All Supported Media", " ".join(f"*{ext}" for ext in ALL_MEDIA_EXTENSIONS)),
                 ("Images", " ".join(f"*{ext}" for ext in SUPPORTED_EXTENSIONS)),
+                ("Camera RAW", " ".join(f"*{ext}" for ext in sorted(RAW_EXTENSIONS))),
+                ("SVG Vector Graphics", " ".join(f"*{ext}" for ext in sorted(SVG_EXTENSIONS))),
                 ("Videos", " ".join(f"*{ext}" for ext in SUPPORTED_VIDEO_EXTENSIONS)),
                 ("Audios", " ".join(f"*{ext}" for ext in SUPPORTED_AUDIO_EXTENSIONS)),
                 ("All files", "*.*"),
@@ -2451,6 +2949,7 @@ class WebPCompressorApp(ctk.CTk):
         if not dupes:
             self.status_text.set("No duplicate files in the queue")
             return
+        self._remember_queue_state()
         for path in list(dupes):
             row_id = self.row_ids.pop(path, None)
             if row_id:
@@ -2467,6 +2966,9 @@ class WebPCompressorApp(ctk.CTk):
         self.status_text.set(f"Removed {len(dupes)} duplicate file{'s' if len(dupes) != 1 else ''}")
 
     def _remove_selected(self) -> None:
+        if not self.table.selection():
+            return
+        self._remember_queue_state()
         for item_id in self.table.selection():
             path = next(
                 (p for p, r in self.row_ids.items() if r == item_id), None
@@ -2475,6 +2977,7 @@ class WebPCompressorApp(ctk.CTk):
                 self.selected_files.remove(path)
                 del self.row_ids[path]
                 self.row_results.pop(path, None)
+                self.file_overrides.pop(path, None)
             self.table.delete(item_id)
         if not self.selected_files:
             self.empty_state.grid()
@@ -2484,15 +2987,184 @@ class WebPCompressorApp(ctk.CTk):
         self._schedule_queue_save()
 
     def _clear_all(self) -> None:
+        if self.selected_files:
+            self._remember_queue_state()
         self.selected_files.clear()
         self.row_ids.clear()
         self.row_results.clear()
+        self.file_overrides.clear()
         self.table.delete(*self.table.get_children())
         self.empty_state.grid()
         self.table_frame.grid_remove()
         self._update_image_summary()
         self._update_button_states()
         self._schedule_queue_save()
+
+    def _selected_paths(self) -> list[Path]:
+        return [
+            path
+            for item_id in self.table.selection()
+            for path, row_id in self.row_ids.items()
+            if row_id == item_id
+        ]
+
+    def _apply_file_override(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            return
+        self._remember_override_state()
+        override = dict(self._collect_recipe_settings())
+        for path in paths:
+            self.file_overrides[path] = dict(override)
+            row_id = self.row_ids.get(path)
+            if row_id and path not in self.row_results:
+                values = list(self.table.item(row_id)["values"])
+                values[-1] = "Ready - Override"
+                self.table.item(row_id, values=values)
+        self.status_text.set(f"Applied full recipe override to {len(paths)} file(s)")
+
+    def _clear_file_overrides(self) -> None:
+        paths = self._selected_paths()
+        if not any(path in self.file_overrides for path in paths):
+            return
+        self._remember_override_state()
+        for path in paths:
+            self.file_overrides.pop(path, None)
+            row_id = self.row_ids.get(path)
+            if row_id and path not in self.row_results:
+                values = list(self.table.item(row_id)["values"])
+                values[-1] = "Ready"
+                self.table.item(row_id, values=values)
+        if paths:
+            self.status_text.set(f"Cleared file overrides for {len(paths)} file(s)")
+
+    def _copy_file_override(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            return
+        self.copied_file_override = dict(
+            self.file_overrides.get(
+                paths[0],
+                self._collect_recipe_settings(),
+            )
+        )
+        self.status_text.set(f"Copied settings from {paths[0].name}")
+
+    def _paste_file_override(self) -> None:
+        paths = self._selected_paths()
+        if not paths or self.copied_file_override is None:
+            self.status_text.set("Copy file settings first")
+            return
+        self._remember_override_state()
+        for path in paths:
+            self.file_overrides[path] = dict(self.copied_file_override)
+            row_id = self.row_ids.get(path)
+            if row_id and path not in self.row_results:
+                values = list(self.table.item(row_id)["values"])
+                values[-1] = "Ready - Override"
+                self.table.item(row_id, values=values)
+        self.status_text.set(f"Pasted settings to {len(paths)} file(s)")
+
+    def _remember_override_state(self) -> None:
+        self._override_undo.append({path: dict(values) for path, values in self.file_overrides.items()})
+        del self._override_undo[:-50]
+        self._override_redo.clear()
+
+    def _restore_override_state(self, state: dict[Path, dict[str, object]]) -> None:
+        self.file_overrides = {path: dict(values) for path, values in state.items()}
+        for path in self.selected_files:
+            row_id = self.row_ids.get(path)
+            if not row_id or path in self.row_results:
+                continue
+            values = list(self.table.item(row_id)["values"])
+            values[-1] = "Ready - Override" if path in self.file_overrides else "Ready"
+            self.table.item(row_id, values=values)
+
+    def _undo_file_overrides(self) -> bool:
+        if not self._override_undo:
+            return False
+        self._override_redo.append({path: dict(values) for path, values in self.file_overrides.items()})
+        self._restore_override_state(self._override_undo.pop())
+        self.status_text.set("Undid file settings change")
+        return True
+
+    def _redo_file_overrides(self) -> bool:
+        if not self._override_redo:
+            return False
+        self._override_undo.append({path: dict(values) for path, values in self.file_overrides.items()})
+        self._restore_override_state(self._override_redo.pop())
+        self.status_text.set("Redid file settings change")
+        return True
+
+    def _remember_queue_state(self) -> None:
+        state = (
+            list(self.selected_files),
+            {path: dict(values) for path, values in self.file_overrides.items()},
+        )
+        self._queue_undo.append(state)
+        del self._queue_undo[:-50]
+        self._queue_redo.clear()
+
+    def _restore_queue_state(self, state: tuple[list[Path], dict[Path, dict[str, object]]]) -> None:
+        files, overrides = state
+        self.selected_files.clear()
+        self.row_ids.clear()
+        self.row_results.clear()
+        self.file_overrides = {path: dict(values) for path, values in overrides.items()}
+        self.table.delete(*self.table.get_children())
+        self._ingest_image_paths(list(files))
+        for path in files:
+            row_id = self.row_ids.get(path)
+            if row_id and path in self.file_overrides:
+                values = list(self.table.item(row_id)["values"])
+                values[-1] = "Ready - Override"
+                self.table.item(row_id, values=values)
+
+    def _undo_queue_edit(self) -> bool:
+        if not self._queue_undo:
+            return False
+        current = (
+            list(self.selected_files),
+            {path: dict(values) for path, values in self.file_overrides.items()},
+        )
+        self._queue_redo.append(current)
+        self._restore_queue_state(self._queue_undo.pop())
+        return True
+
+    def _redo_queue_edit(self) -> bool:
+        if not self._queue_redo:
+            return False
+        current = (
+            list(self.selected_files),
+            {path: dict(values) for path, values in self.file_overrides.items()},
+        )
+        self._queue_undo.append(current)
+        self._restore_queue_state(self._queue_redo.pop())
+        return True
+
+    def _undo_editor_change(self) -> None:
+        if self._undo_queue_edit():
+            self.status_text.set("Undid queue edit")
+        elif self._undo_file_overrides():
+            pass
+        elif self._recipe_undo:
+            self._recipe_redo.append(self._collect_recipe_settings())
+            self._apply_recipe_settings(self._recipe_undo.pop(), record_history=False)
+            self.status_text.set("Undid recipe change")
+        else:
+            self.status_text.set("Nothing to undo")
+
+    def _redo_editor_change(self) -> None:
+        if self._redo_queue_edit():
+            self.status_text.set("Redid queue edit")
+        elif self._redo_file_overrides():
+            pass
+        elif self._recipe_redo:
+            self._recipe_undo.append(self._collect_recipe_settings())
+            self._apply_recipe_settings(self._recipe_redo.pop(), record_history=False)
+            self.status_text.set("Redid recipe change")
+        else:
+            self.status_text.set("Nothing to redo")
 
     def _select_all_rows(self) -> None:
         children = self.table.get_children()
@@ -2504,6 +3176,7 @@ class WebPCompressorApp(ctk.CTk):
         sel = self.table.selection()
         if not sel:
             return
+        self._remember_queue_state()
         for item_id in sel:
             idx = self.table.index(item_id)
             if idx > 0:
@@ -2522,6 +3195,7 @@ class WebPCompressorApp(ctk.CTk):
         sel = self.table.selection()
         if not sel:
             return
+        self._remember_queue_state()
         children = self.table.get_children()
         for item_id in reversed(sel):
             idx = self.table.index(item_id)
@@ -2689,6 +3363,15 @@ class WebPCompressorApp(ctk.CTk):
 
     def _operation_active(self, name: str) -> bool:
         """Whether the step currently does anything, given the UI settings."""
+        if name == "color":
+            return not self.color_profile_mode.get().startswith("Preserve")
+        if name == "tone_map":
+            tm = str(self.hdr_tone_mapping.get()).strip().lower()
+            try:
+                ev = float(self.hdr_exposure.get())
+            except (ValueError, TypeError):
+                ev = 0.0
+            return not (tm.startswith("none") or tm.startswith("direct")) or ev != 0.0
         if name == "rotate":
             return not self.rotate_angle.get().startswith("0")
         if name == "flip":
@@ -2704,6 +3387,25 @@ class WebPCompressorApp(ctk.CTk):
         if name == "watermark":
             return bool(self.enable_watermark.get())
         return False
+
+    def _on_color_profile_mode_changed(self, value: str) -> None:
+        if hasattr(self, "custom_icc_btn"):
+            if "Custom" in value:
+                self.custom_icc_btn.pack(side="left")
+            else:
+                self.custom_icc_btn.pack_forget()
+        self._schedule_size_estimate()
+        self._render_stack()
+
+    def _browse_custom_icc_profile(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Choose ICC / ICM Color Profile",
+            filetypes=[("Color Profiles (*.icc, *.icm)", "*.icc *.icm"), ("All Files (*.*)", "*.*")],
+        )
+        if path:
+            self.color_profile_custom.set(path)
+            self._schedule_size_estimate()
+            self._render_stack()
 
     def _current_operation_order(self) -> tuple[str, ...]:
         return normalize_operation_order(self.operation_order.get())
@@ -2730,9 +3432,55 @@ class WebPCompressorApp(ctk.CTk):
                 state="normal" if index > 0 else "disabled",
                 command=lambda n=name: self._move_operation(n, -1),
             ).pack(side="left", padx=(2, 0))
+            label_text = f"{index + 1}. {OPERATION_LABELS[name]}"
+            if active and name == "color":
+                c_mode = str(self.color_profile_mode.get()).strip().lower()
+                if "srgb" in c_mode:
+                    label_text += " (sRGB)"
+                elif "p3" in c_mode:
+                    label_text += " (Display P3)"
+                elif "adobe" in c_mode:
+                    label_text += " (Adobe RGB)"
+                elif "cmyk" in c_mode:
+                    label_text += " (CMYK)"
+                elif "custom" in c_mode:
+                    label_text += " (Custom)"
+            elif active and name == "tone_map":
+                tm = str(self.hdr_tone_mapping.get()).strip().lower()
+                if "aces" in tm:
+                    label_text += " (ACES)"
+                elif "reinhard" in tm:
+                    label_text += " (Reinhard)"
+                elif "hlg" in tm:
+                    label_text += " (HLG)"
+                elif "pq" in tm:
+                    label_text += " (PQ)"
+                elif "exposure" in tm:
+                    label_text += " (Exposure)"
+                try:
+                    ev = float(self.hdr_exposure.get())
+                    if ev != 0.0:
+                        label_text += f" ({ev:+.1f}EV)"
+                except Exception:
+                    pass
+            elif active and name == "resize":
+                r_cond = str(self.resize_condition.get()).strip().lower()
+                if "4k" in r_cond:
+                    label_text += " (>4K)"
+                elif "2k" in r_cond:
+                    label_text += " (>2K)"
+                elif "larger" in r_cond:
+                    label_text += " (if larger)"
+            elif active and name == "watermark":
+                w_cond = str(self.watermark_condition.get()).strip().lower()
+                if "800" in w_cond:
+                    label_text += " (≥800px)"
+                elif "1200" in w_cond:
+                    label_text += " (≥1200px)"
+
             ctk.CTkLabel(
                 chip,
-                text=f"{index + 1}. {OPERATION_LABELS[name]}",
+                text=label_text,
                 font=ctk.CTkFont(size=11, weight="bold" if active else "normal"),
                 text_color=(APP_ACCENT_DARK, APP_ACCENT_TINT) if active else APP_MUTED,
             ).pack(side="left", padx=4, pady=3)
@@ -2764,10 +3512,108 @@ class WebPCompressorApp(ctk.CTk):
     def _collect_recipe_settings(self) -> dict[str, Any]:
         return {key: getattr(self, key).get() for key in RECIPE_FIELDS}
 
-    def _apply_recipe_settings(self, settings: dict[str, Any]) -> None:
+    def _apply_recipe_settings(self, settings: dict[str, Any], record_history: bool = True) -> None:
+        if record_history:
+            self._recipe_undo.append(self._collect_recipe_settings())
+            del self._recipe_undo[:-50]
+            self._recipe_redo.clear()
+        rc_map = {
+            "always": "Always",
+            "only_above_4k": "Only above 4K",
+            "only_above_2k": "Only above 2K",
+            "only_if_larger": "Only if larger",
+        }
+        wc_map = {
+            "always": "Always",
+            "only_if_>=_800px": "Only if ≥ 800px",
+            "only_if_>=_1200px": "Only if ≥ 1200px",
+            "only_if_larger": "Only if ≥ 800px",
+        }
+        cp_map = {
+            "preserve": "Preserve (Source)",
+            "srgb": "Convert to sRGB (Web Standard)",
+            "display_p3": "Convert to Display P3 (Wide Gamut)",
+            "adobe_rgb": "Convert to Adobe RGB",
+            "cmyk": "Convert to CMYK (Print)",
+            "custom": "Custom Profile...",
+        }
+        ri_map = {
+            "relative_colorimetric": "Relative Colorimetric",
+            "perceptual": "Perceptual",
+            "saturation": "Saturation",
+            "absolute_colorimetric": "Absolute Colorimetric",
+        }
+        bd_map = {
+            "auto": "Auto (Match Codec)",
+            "8": "8-bit (Standard)",
+            "10": "10-bit (HDR / AVIF & HEIC)",
+            "12": "12-bit (Cinema / AVIF & HEIC)",
+            "16": "16-bit (Deep Color / TIFF & PNG)",
+        }
+        htm_map = {
+            "none": "None / Direct",
+            "aces": "ACES Filmic (Cinematic)",
+            "reinhard": "Reinhard (Smooth)",
+            "exposure": "Exposure Boost",
+            "hlg": "HLG to SDR (ITU-R BT.2100)",
+            "pq": "PQ to SDR (SMPTE ST 2084)",
+        }
+        rwb_map = {
+            "camera": "Camera As Shot",
+            "auto": "Auto WB",
+            "daylight": "Daylight (5500K)",
+            "cloudy": "Cloudy (6500K)",
+            "tungsten": "Tungsten (3200K)",
+            "fluorescent": "Fluorescent (4000K)",
+        }
+        rdm_map = {
+            "auto": "Auto (High Quality)",
+            "ahd": "AHD (Adaptive Homogeneity)",
+            "bilinear": "Bilinear (Balanced)",
+            "half": "Half-Size (Fast Draft)",
+        }
+        svg_scale_map = {
+            "1": "1.0x (Default)", "1.0": "1.0x (Default)", "1.0x": "1.0x (Default)",
+            "1.5": "1.5x", "1.5x": "1.5x",
+            "2": "2.0x (Retina)", "2.0": "2.0x (Retina)", "2.0x": "2.0x (Retina)",
+            "3": "3.0x", "3.0x": "3.0x",
+            "4": "4.0x (Ultra HD)", "4.0": "4.0x (Ultra HD)", "4.0x": "4.0x (Ultra HD)",
+            "8": "8.0x (Max Detail)", "8.0": "8.0x (Max Detail)", "8.0x": "8.0x (Max Detail)",
+        }
+        svg_bg_map = {
+            "transparent": "Transparent", "none": "Transparent",
+            "white": "White (#FFFFFF)", "#ffffff": "White (#FFFFFF)",
+            "black": "Black (#000000)", "#000000": "Black (#000000)",
+        }
         for key in RECIPE_FIELDS:
             if key in settings:
-                getattr(self, key).set(settings[key])
+                val = settings[key]
+                if key == "resize_condition":
+                    val = rc_map.get(str(val).strip().lower(), val)
+                elif key == "watermark_condition":
+                    val = wc_map.get(str(val).strip().lower(), val)
+                elif key == "color_profile_mode":
+                    val = cp_map.get(str(val).strip().lower(), val)
+                elif key == "rendering_intent":
+                    val = ri_map.get(str(val).strip().lower(), val)
+                elif key == "bit_depth":
+                    val = bd_map.get(str(val).strip().lower(), val)
+                elif key == "hdr_tone_mapping":
+                    val = htm_map.get(str(val).strip().lower(), val)
+                elif key == "raw_white_balance":
+                    val = rwb_map.get(str(val).strip().lower(), val)
+                elif key == "raw_demosaic":
+                    val = rdm_map.get(str(val).strip().lower(), val)
+                elif key == "svg_scale":
+                    val = svg_scale_map.get(str(val).strip().lower().replace(" ", ""), val)
+                elif key == "svg_background":
+                    val = svg_bg_map.get(str(val).strip().lower(), val)
+                getattr(self, key).set(val)
+        if hasattr(self, "custom_icc_btn"):
+            if "Custom" in self.color_profile_mode.get():
+                self.custom_icc_btn.pack(side="left")
+            else:
+                self.custom_icc_btn.pack_forget()
         self.quality_text.set(str(self.quality.get()))
         self.preset_profile.set("Manual / Custom")
         self._format_changed(self.target_format.get())
@@ -2817,6 +3663,7 @@ class WebPCompressorApp(ctk.CTk):
             self.enable_resize,
             self.max_dimension_text,
             self.scale_percent_text,
+            self.resize_condition,
             self.rotate_angle,
             self.flip_h,
             self.flip_v,
@@ -2829,11 +3676,23 @@ class WebPCompressorApp(ctk.CTk):
             self.watermark_text,
             self.watermark_logo_path,
             self.watermark_position,
+            self.watermark_condition,
             self.protect_quality,
             self.min_ssim_text,
             self.enable_quality_target,
             self.target_ssim_text,
             self.operation_order,
+            self.color_profile_mode,
+            self.color_profile_custom,
+            self.rendering_intent,
+            self.bit_depth,
+            self.hdr_tone_mapping,
+            self.hdr_exposure,
+            self.raw_white_balance,
+            self.raw_exposure,
+            self.raw_demosaic,
+            self.svg_scale,
+            self.svg_background,
         )
         for variable in variables:
             variable.trace_add("write", lambda *_args: self._schedule_size_estimate())
@@ -2843,7 +3702,10 @@ class WebPCompressorApp(ctk.CTk):
         for variable in (
             self.operation_order, self.rotate_angle, self.flip_h, self.flip_v,
             self.aspect_ratio, self.grayscale, self.enable_rounded,
-            self.enable_resize, self.enable_watermark,
+            self.enable_resize, self.resize_condition,
+            self.enable_watermark, self.watermark_condition,
+            self.color_profile_mode,
+            self.hdr_tone_mapping, self.hdr_exposure,
         ):
             variable.trace_add("write", lambda *_args: self._render_stack())
 
@@ -2928,6 +3790,19 @@ class WebPCompressorApp(ctk.CTk):
             if self.enable_watermark.get() and self.watermark_type.get() == "Logo PNG"
             else ""
         )
+        try:
+            ev_val = float(self.hdr_exposure.get())
+        except (ValueError, TypeError):
+            ev_val = 0.0
+        try:
+            raw_ev_val = float(self.raw_exposure.get())
+        except (ValueError, TypeError):
+            raw_ev_val = 0.0
+        try:
+            svg_scale_val = float(str(self.svg_scale.get()).lower().replace("x", "").split()[0])
+        except (ValueError, TypeError, IndexError):
+            svg_scale_val = 1.0
+        svg_bg_val = self.svg_background.get()
         options = {
             "quality": quality,
             "lossless": self.lossless.get(),
@@ -2952,6 +3827,21 @@ class WebPCompressorApp(ctk.CTk):
             "min_ssim": min_ssim,
             "target_ssim": target_ssim,
             "operation_order": self.operation_order.get(),
+            "resize_condition": self.resize_condition.get(),
+            "watermark_condition": self.watermark_condition.get(),
+            "color_profile_mode": self.color_profile_mode.get(),
+            "color_profile_custom": self.color_profile_custom.get(),
+            "rendering_intent": self.rendering_intent.get(),
+            "bit_depth": self.bit_depth.get(),
+            "hdr_tone_mapping": self.hdr_tone_mapping.get(),
+            "hdr_exposure": ev_val,
+            "raw_white_balance": self.raw_white_balance.get(),
+            "raw_exposure": raw_ev_val,
+            "raw_demosaic": self.raw_demosaic.get(),
+            "svg_scale": svg_scale_val,
+            "svg_background": svg_bg_val,
+            "psd_composite_mode": self.psd_composite_mode.get(),
+            "psd_layer_index": int(self.psd_layer_index.get()) if self.psd_layer_index.get().lstrip("-").isdigit() else -1,
         }
         self.estimate_text.set("Estimating output…")
         threading.Thread(
@@ -3198,6 +4088,22 @@ class WebPCompressorApp(ctk.CTk):
                 min_ssim,
                 target_ssim,
                 self.operation_order.get(),
+                dict(self.file_overrides),
+                self.resize_condition.get(),
+                self.watermark_condition.get(),
+                self.color_profile_mode.get(),
+                self.color_profile_custom.get(),
+                self.rendering_intent.get(),
+                self.bit_depth.get(),
+                self.hdr_tone_mapping.get(),
+                self.hdr_exposure.get(),
+                self.raw_white_balance.get(),
+                self.raw_exposure.get(),
+                self.raw_demosaic.get(),
+                self.svg_scale.get(),
+                self.svg_background.get(),
+                self.psd_composite_mode.get(),
+                self.psd_layer_index.get(),
             ),
             daemon=True,
         ).start()
@@ -3233,6 +4139,22 @@ class WebPCompressorApp(ctk.CTk):
         min_ssim: float | None = None,
         target_ssim: float | None = None,
         operation_order: str = "",
+        file_overrides: dict[Path, dict[str, object]] | None = None,
+        resize_condition: str = "always",
+        watermark_condition: str = "always",
+        color_profile_mode: str = "preserve",
+        color_profile_custom: str = "",
+        rendering_intent: str = "relative_colorimetric",
+        bit_depth: str = "auto",
+        hdr_tone_mapping: str = "none",
+        hdr_exposure: str = "0.0",
+        raw_white_balance: str = "camera",
+        raw_exposure: str = "0.0",
+        raw_demosaic: str = "auto",
+        svg_scale: str = "1.0x",
+        svg_background: str = "Transparent",
+        psd_composite_mode: str = "merged",
+        psd_layer_index: str = "-1",
     ) -> None:
         total = len(files_snapshot)
         results: list[ConversionResult] = []
@@ -3241,6 +4163,9 @@ class WebPCompressorApp(ctk.CTk):
         counter_lock = threading.Lock()
         completed_count = 0
         start_time = time.perf_counter()
+        workers = recommend_workers(files_snapshot)
+        _, gpu_label = get_best_hardware_encoder()
+        telemetry = BatchTelemetry(total, workers, gpu_label)
 
         # Handle special Case: Combine images into PDF. Matched exactly (not
         # a substring check) so it doesn't also catch "Document: PDF", which
@@ -3279,6 +4204,144 @@ class WebPCompressorApp(ctk.CTk):
 
         def process_single(source_p: Path) -> ConversionResult:
             nonlocal completed_count
+            override = (file_overrides or {}).get(source_p, {})
+            effective_target_format = str(override.get("target_format", target_format_raw))
+            effective_quality = int(override.get("quality", quality))
+            use_override = bool(override)
+            effective_lossless = bool(override.get("lossless", lossless)) if use_override else lossless
+            effective_preserve_metadata = bool(override.get("preserve_metadata", preserve_metadata)) if use_override else preserve_metadata
+            effective_strip_metadata = bool(override.get("strip_metadata", strip_metadata)) if use_override else strip_metadata
+            effective_slugify = bool(override.get("slugify_names", slugify_names)) if use_override else slugify_names
+            effective_prefix = str(override.get("filename_prefix", filename_prefix)) if use_override else filename_prefix
+            effective_suffix = str(override.get("filename_suffix", filename_suffix)) if use_override else filename_suffix
+            effective_normalize_audio = bool(override.get("normalize_audio", normalize_audio)) if use_override else normalize_audio
+            effective_max_dim = max_dim
+            effective_scale_pct = scale_pct
+            effective_resize_condition = (
+                str(override.get("resize_condition", resize_condition))
+                if use_override and "resize_condition" in override
+                else resize_condition
+            )
+            effective_target_kb = target_kb
+            effective_target_mb = target_mb
+            effective_watermark_text = watermark_text
+            effective_watermark_logo = watermark_logo_path
+            effective_watermark_position = watermark_position
+            effective_watermark_condition = (
+                str(override.get("watermark_condition", watermark_condition))
+                if use_override and "watermark_condition" in override
+                else watermark_condition
+            )
+            effective_color_profile_mode = (
+                str(override.get("color_profile_mode", color_profile_mode))
+                if use_override and "color_profile_mode" in override
+                else color_profile_mode
+            )
+            effective_color_profile_custom = (
+                str(override.get("color_profile_custom", color_profile_custom))
+                if use_override and "color_profile_custom" in override
+                else color_profile_custom
+            )
+            effective_rendering_intent = (
+                str(override.get("rendering_intent", rendering_intent))
+                if use_override and "rendering_intent" in override
+                else rendering_intent
+            )
+            effective_bit_depth = (
+                str(override.get("bit_depth", bit_depth))
+                if use_override and "bit_depth" in override
+                else bit_depth
+            )
+            effective_hdr_tone_mapping = (
+                str(override.get("hdr_tone_mapping", hdr_tone_mapping))
+                if use_override and "hdr_tone_mapping" in override
+                else hdr_tone_mapping
+            )
+            raw_ev = (
+                override.get("hdr_exposure", hdr_exposure)
+                if use_override and "hdr_exposure" in override
+                else hdr_exposure
+            )
+            try:
+                effective_hdr_exposure = float(raw_ev)
+            except (ValueError, TypeError):
+                effective_hdr_exposure = 0.0
+            effective_raw_wb = (
+                str(override.get("raw_white_balance", raw_white_balance))
+                if use_override and "raw_white_balance" in override
+                else raw_white_balance
+            )
+            effective_raw_demosaic = (
+                str(override.get("raw_demosaic", raw_demosaic))
+                if use_override and "raw_demosaic" in override
+                else raw_demosaic
+            )
+            raw_ev_shift = (
+                override.get("raw_exposure", raw_exposure)
+                if use_override and "raw_exposure" in override
+                else raw_exposure
+            )
+            try:
+                effective_raw_exposure = float(raw_ev_shift)
+            except (ValueError, TypeError):
+                effective_raw_exposure = 0.0
+            effective_svg_scale_raw = (
+                override.get("svg_scale", svg_scale)
+                if use_override and "svg_scale" in override
+                else svg_scale
+            )
+            try:
+                effective_svg_scale = float(str(effective_svg_scale_raw).lower().replace("x", "").split()[0])
+            except (ValueError, TypeError, IndexError):
+                effective_svg_scale = 1.0
+            effective_svg_bg = (
+                str(override.get("svg_background", svg_background))
+                if use_override and "svg_background" in override
+                else svg_background
+            )
+            effective_rotate = rotate_angle
+            effective_flip_h = flip_h
+            effective_flip_v = flip_v
+            effective_aspect = aspect_ratio
+            effective_corner = corner_radius
+            effective_grayscale = grayscale
+            effective_min_ssim = min_ssim
+            effective_target_ssim = target_ssim
+            effective_order = operation_order
+            if use_override:
+                if override.get("enable_resize"):
+                    raw_dim = str(override.get("max_dimension_text", "")).strip()
+                    raw_scale = str(override.get("scale_percent_text", "")).strip()
+                    effective_max_dim = int(raw_dim) if raw_dim else None
+                    effective_scale_pct = float(raw_scale) if raw_scale else None
+                else:
+                    effective_max_dim = effective_scale_pct = None
+                if override.get("enable_target_size"):
+                    raw_size = float(override.get("target_size_val", "0"))
+                    effective_target_kb = int(raw_size if override.get("target_size_unit") == "KB" else raw_size * 1024)
+                    effective_target_mb = raw_size if override.get("target_size_unit") == "MB" else None
+                else:
+                    effective_target_kb = effective_target_mb = None
+                if override.get("enable_watermark"):
+                    if str(override.get("watermark_type", "text")) == "Logo PNG":
+                        effective_watermark_text = ""
+                        effective_watermark_logo = str(override.get("watermark_logo_path", ""))
+                    else:
+                        effective_watermark_text = str(override.get("watermark_text", ""))
+                        effective_watermark_logo = ""
+                    effective_watermark_position = str(override.get("watermark_position", watermark_position))
+                else:
+                    effective_watermark_text = effective_watermark_logo = ""
+                effective_rotate = int(str(override.get("rotate_angle", "0")).replace("°", "").strip() or "0")
+                effective_flip_h = bool(override.get("flip_h", False))
+                effective_flip_v = bool(override.get("flip_v", False))
+                raw_aspect = str(override.get("aspect_ratio", "Original"))
+                effective_aspect = None if raw_aspect == "Original" else raw_aspect
+                effective_corner = int(str(override.get("corner_radius", "0")).strip() or "0") if override.get("enable_rounded") else 0
+                effective_grayscale = bool(override.get("grayscale", False))
+                effective_min_ssim = float(override.get("min_ssim_text", "0.95")) if override.get("protect_quality") else None
+                effective_target_ssim = float(override.get("target_ssim_text", "0.95")) if override.get("enable_quality_target") else None
+                effective_order = str(override.get("operation_order", operation_order))
             # Pause holds workers here, before they pick up new work; items
             # already encoding run to completion. Cancel always wins.
             while self.pause_event.is_set() and not self.cancel_event.is_set():
@@ -3299,26 +4362,26 @@ class WebPCompressorApp(ctk.CTk):
             is_audio = source_p.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
             is_document = source_p.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
             is_gif_anim = source_p.suffix.lower() == ".gif" and (
-                "ANIMATED" in target_format_raw.upper()
-                or "GIF" in target_format_raw.upper()
-                or "VIDEO" in target_format_raw.upper()
-                or "MP4" in target_format_raw.upper()
-                or "WEBM" in target_format_raw.upper()
+                "ANIMATED" in effective_target_format.upper()
+                or "GIF" in effective_target_format.upper()
+                or "VIDEO" in effective_target_format.upper()
+                or "MP4" in effective_target_format.upper()
+                or "WEBM" in effective_target_format.upper()
             )
 
             with reserved_lock:
                 if is_document:
                     # Document/Markdown engine conversion
                     doc_fmt_key = "MD"
-                    if "DOCX" in target_format_raw.upper():
+                    if "DOCX" in effective_target_format.upper():
                         doc_fmt_key = "DOCX"
-                    elif "HTML" in target_format_raw.upper():
+                    elif "HTML" in effective_target_format.upper():
                         doc_fmt_key = "HTML"
-                    elif "TXT" in target_format_raw.upper():
+                    elif "TXT" in effective_target_format.upper():
                         doc_fmt_key = "TXT"
-                    elif "PDF" in target_format_raw.upper():
+                    elif "PDF" in effective_target_format.upper():
                         doc_fmt_key = "PDF"
-                    elif "MD" in target_format_raw.upper() or "MARKDOWN" in target_format_raw.upper():
+                    elif "MD" in effective_target_format.upper() or "MARKDOWN" in effective_target_format.upper():
                         doc_fmt_key = "MD"
 
                     res = convert_document(
@@ -3327,73 +4390,88 @@ class WebPCompressorApp(ctk.CTk):
                         target_format=doc_fmt_key,
                         overwrite=overwrite,
                         reserved_paths=reserved_paths,
-                        slugify_names=slugify_names,
-                        filename_prefix=filename_prefix,
-                        filename_suffix=filename_suffix,
+                        slugify_names=effective_slugify,
+                        filename_prefix=effective_prefix,
+                        filename_suffix=effective_suffix,
                     )
                 elif is_video or is_audio or is_gif_anim:
                     # Video/Audio engine conversion
                     fmt_key = "mp4"
-                    if "WEBM" in target_format_raw.upper():
+                    if "WEBM" in effective_target_format.upper():
                         fmt_key = "webm"
-                    elif "ANIMATED WEBP" in target_format_raw.upper() or "ANIMATED" in target_format_raw.upper():
+                    elif "ANIMATED WEBP" in effective_target_format.upper() or "ANIMATED" in effective_target_format.upper():
                         fmt_key = "animated_webp"
-                    elif "GIF" in target_format_raw.upper():
+                    elif "GIF" in effective_target_format.upper():
                         fmt_key = "gif"
-                    elif "AUDIO (MP3)" in target_format_raw.upper() or "MP3" in target_format_raw.upper():
+                    elif "AUDIO (MP3)" in effective_target_format.upper() or "MP3" in effective_target_format.upper():
                         fmt_key = "mp3"
-                    elif "AAC" in target_format_raw.upper():
+                    elif "AAC" in effective_target_format.upper():
                         fmt_key = "aac"
-                    elif "OPUS" in target_format_raw.upper():
+                    elif "OPUS" in effective_target_format.upper():
                         fmt_key = "opus"
-                    elif "WAV" in target_format_raw.upper():
+                    elif "WAV" in effective_target_format.upper():
                         fmt_key = "wav"
 
                     res = convert_media_file(
                         source_p,
                         target_dir,
                         target_format=fmt_key,
-                        target_mb=target_mb,
+                        target_mb=effective_target_mb,
                         overwrite=overwrite,
                         reserved_paths=reserved_paths,
-                        slugify_names=slugify_names,
-                        filename_prefix=filename_prefix,
-                        filename_suffix=filename_suffix,
-                        normalize_audio=normalize_audio,
+                        slugify_names=effective_slugify,
+                        filename_prefix=effective_prefix,
+                        filename_suffix=effective_suffix,
+                        normalize_audio=effective_normalize_audio,
                     )
                 else:
                     # Image engine conversion
-                    fmt_key = normalize_output_format(target_format_raw)
+                    fmt_key = normalize_output_format(effective_target_format)
 
                     res = convert_image(
                         source_p,
                         target_dir,
-                        quality=quality,
+                        quality=effective_quality,
                         overwrite=overwrite,
                         reserved_paths=reserved_paths,
-                        lossless=lossless,
-                        preserve_metadata=preserve_metadata,
-                        max_width=max_dim,
-                        max_height=max_dim,
-                        scale_percent=scale_pct,
+                        lossless=effective_lossless,
+                        preserve_metadata=effective_preserve_metadata,
+                        max_width=effective_max_dim,
+                        max_height=effective_max_dim,
+                        scale_percent=effective_scale_pct,
                         target_format=fmt_key,
-                        target_kb=target_kb,
-                        watermark_text=watermark_text,
-                        watermark_logo_path=watermark_logo_path,
-                        watermark_position=watermark_position,
-                        strip_metadata=strip_metadata,
-                        slugify_names=slugify_names,
-                        filename_prefix=filename_prefix,
-                        filename_suffix=filename_suffix,
-                        rotate_angle=rotate_angle,
-                        flip_h=flip_h,
-                        flip_v=flip_v,
-                        aspect_ratio=aspect_ratio,
-                        corner_radius=corner_radius,
-                        grayscale=grayscale,
-                        min_ssim=min_ssim,
-                        target_ssim=target_ssim,
-                        operation_order=operation_order,
+                        target_kb=effective_target_kb,
+                        watermark_text=effective_watermark_text,
+                        watermark_logo_path=effective_watermark_logo,
+                        watermark_position=effective_watermark_position,
+                        strip_metadata=effective_strip_metadata,
+                        slugify_names=effective_slugify,
+                        filename_prefix=effective_prefix,
+                        filename_suffix=effective_suffix,
+                        rotate_angle=effective_rotate,
+                        flip_h=effective_flip_h,
+                        flip_v=effective_flip_v,
+                        aspect_ratio=effective_aspect,
+                        corner_radius=effective_corner,
+                        grayscale=effective_grayscale,
+                        min_ssim=effective_min_ssim,
+                        target_ssim=effective_target_ssim,
+                        operation_order=effective_order,
+                        resize_condition=effective_resize_condition,
+                        watermark_condition=effective_watermark_condition,
+                        color_profile_mode=effective_color_profile_mode,
+                        color_profile_custom=effective_color_profile_custom,
+                        rendering_intent=effective_rendering_intent,
+                        bit_depth=effective_bit_depth,
+                        hdr_tone_mapping=effective_hdr_tone_mapping,
+                        hdr_exposure=effective_hdr_exposure,
+                        raw_white_balance=effective_raw_wb,
+                        raw_exposure=effective_raw_exposure,
+                        raw_demosaic=effective_raw_demosaic,
+                        svg_scale=effective_svg_scale,
+                        svg_background=effective_svg_bg,
+                        psd_composite_mode=override.get("psd_composite_mode", psd_composite_mode) if use_override and "psd_composite_mode" in override else psd_composite_mode,
+                        psd_layer_index=int(override.get("psd_layer_index", psd_layer_index)) if use_override and "psd_layer_index" in override else int(psd_layer_index) if str(psd_layer_index).lstrip("-").isdigit() else -1,
                     )
 
             with counter_lock:
@@ -3406,13 +4484,13 @@ class WebPCompressorApp(ctk.CTk):
                     "progress",
                     (
                         current / total,
-                        f"Processing {min(current + 1, total)} of {total}...",
+                        f"Processing {min(current + 1, total)} of {total} | "
+                        f"{telemetry.snapshot(current).status_text()}",
                     ),
                 )
             )
             return res
 
-        workers = min(4, max(1, os.cpu_count() or 4))
         try:
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [executor.submit(process_single, p) for p in files_snapshot]
@@ -3653,6 +4731,7 @@ class WebPCompressorApp(ctk.CTk):
 
 
 if __name__ == "__main__":
-    ctk.set_appearance_mode("Dark")
+    _saved_theme = load_settings().get("theme", "System")
+    ctk.set_appearance_mode(_saved_theme)
     ctk.set_default_color_theme(str(Path(__file__).resolve().parent / "assets" / "theme.json"))
     WebPCompressorApp().mainloop()

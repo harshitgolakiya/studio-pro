@@ -74,3 +74,79 @@ def downscaled(image: Image.Image, max_edge: int = 1024) -> Image.Image:
 def ssim_downscaled(a: Image.Image, b: Image.Image, max_edge: int = 1024) -> float:
     """SSIM on working copies capped at max_edge, for interactive use on large photos."""
     return block_ssim(downscaled(a, max_edge), downscaled(b, max_edge))
+
+
+def butteraugli_score(a: Image.Image, b: Image.Image) -> float:
+    """Psychovisual color-difference metric inspired by Google's Butteraugli model.
+
+    Evaluates human-perceptual distortion in retinal opponent color space (XYB)
+    with frequency masking and L_p / max spatial pooling.
+    Returns:
+        0.0: Mathematically identical images.
+        < 0.1: Extremely high fidelity, imperceptible differences.
+        ~ 0.5 - 1.0: Just-Noticeable-Difference (JND) threshold.
+        > 1.0: Noticeable compression or color artifacts.
+    """
+    if a.size != b.size:
+        b = b.resize(a.size, Image.Resampling.LANCZOS)
+
+    if a.mode != "RGB":
+        a = a.convert("RGB")
+    if b.mode != "RGB":
+        b = b.convert("RGB")
+
+    try:
+        import numpy as np
+
+        arr_a = np.asarray(a, dtype=np.float32) / 255.0
+        arr_b = np.asarray(b, dtype=np.float32) / 255.0
+
+        if np.array_equal(arr_a, arr_b):
+            return 0.0
+
+        gamma = 0.83
+        ra = np.power(np.maximum(arr_a[:, :, 0], 0.0), gamma)
+        ga = np.power(np.maximum(arr_a[:, :, 1], 0.0), gamma)
+        ba = np.power(np.maximum(arr_a[:, :, 2], 0.0), gamma)
+
+        rb = np.power(np.maximum(arr_b[:, :, 0], 0.0), gamma)
+        gb = np.power(np.maximum(arr_b[:, :, 1], 0.0), gamma)
+        bb = np.power(np.maximum(arr_b[:, :, 2], 0.0), gamma)
+
+        xa, xb = 0.5 * (ra - ga), 0.5 * (rb - gb)
+        ya, yb = 0.5 * (ra + ga), 0.5 * (rb + gb)
+        za, zb = ba, bb
+
+        diff_x = np.abs(xa - xb) * 4.0
+        diff_y = np.abs(ya - yb) * 11.0
+        diff_z = np.abs(za - zb) * 2.5
+        diff_map = np.sqrt(diff_x**2 + diff_y**2 + diff_z**2)
+
+        h, w = diff_map.shape
+        block = 8
+        pad_h = (block - (h % block)) % block
+        pad_w = (block - (w % block)) % block
+        if pad_h > 0 or pad_w > 0:
+            diff_map = np.pad(diff_map, ((0, pad_h), (0, pad_w)), mode="reflect")
+
+        bh, bw = diff_map.shape[0] // block, diff_map.shape[1] // block
+        blocks = diff_map.reshape(bh, block, bw, block).transpose(0, 2, 1, 3).reshape(bh * bw, block * block)
+
+        block_means = np.mean(blocks, axis=1)
+        block_maxs = np.max(blocks, axis=1)
+        block_scores = 0.7 * block_means + 0.3 * block_maxs
+
+        l4_norm = float(np.power(np.mean(np.power(block_scores, 4.0)), 0.25))
+        top_k = max(1, int(len(block_scores) * 0.01))
+        worst_defect = float(np.mean(np.partition(block_scores, -top_k)[-top_k:]))
+
+        final_score = 0.6 * l4_norm + 0.4 * worst_defect
+        return float(round(max(0.0, final_score), 4))
+    except Exception:
+        ssim_val = block_ssim(a, b)
+        return float(round(max(0.0, (1.0 - ssim_val) * 10.0), 4))
+
+
+def butteraugli_downscaled(a: Image.Image, b: Image.Image, max_edge: int = 1024) -> float:
+    """Butteraugli score on working copies capped at max_edge."""
+    return butteraugli_score(downscaled(a, max_edge), downscaled(b, max_edge))

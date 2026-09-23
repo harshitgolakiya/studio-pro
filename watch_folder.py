@@ -14,6 +14,7 @@ from media_engine import (
 )
 
 ALL_SUPPORTED_EXTS = SUPPORTED_EXTENSIONS | SUPPORTED_VIDEO_EXTENSIONS | SUPPORTED_AUDIO_EXTENSIONS
+Route = tuple[Path, dict[str, object]]
 
 
 class FolderWatcher:
@@ -30,6 +31,8 @@ class FolderWatcher:
         quality: int = 80,
         on_event: Callable[[str, str], None] | None = None,
         poll_interval: float = 1.5,
+        recipe_settings: dict[str, object] | None = None,
+        route_file: Callable[[Path], Route | None] | None = None,
     ) -> None:
         self.watch_dir = watch_dir
         self.output_dir = output_dir
@@ -37,6 +40,8 @@ class FolderWatcher:
         self.quality = quality
         self.on_event = on_event
         self.poll_interval = poll_interval
+        self.recipe_settings = recipe_settings
+        self.route_file = route_file
 
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -138,6 +143,24 @@ class FolderWatcher:
         is_audio = ext in SUPPORTED_AUDIO_EXTENSIONS
 
         try:
+            routed_output = self.output_dir
+            routed_settings = self.recipe_settings
+            if self.route_file is not None:
+                route = self.route_file(file_path)
+                if route is None:
+                    if self.on_event:
+                        self.on_event("info", f"Skipped by rules: {file_path.name}")
+                    return
+                routed_output, routed_settings = route
+            if self.recipe_settings is not None:
+                from headless_cli import convert_path
+
+                res = convert_path(file_path, routed_output, routed_settings or {})
+                if res.status == "Completed" and self.on_event:
+                    self.on_event("success", f"Done: {file_path.name}")
+                elif self.on_event:
+                    self.on_event("error", f"Failed {file_path.name}: {res.error}")
+                return
             if is_video or is_audio:
                 fmt_key = "mp4"
                 if "WEBM" in self.target_format.upper():
@@ -146,14 +169,14 @@ class FolderWatcher:
                     fmt_key = "mp3"
                 res = convert_media_file(
                     file_path,
-                    self.output_dir,
+                    routed_output,
                     target_format=fmt_key,
                 )
             else:
                 fmt_key = self.target_format.upper().replace(".", "")
                 res = convert_image(
                     file_path,
-                    self.output_dir,
+                    routed_output,
                     target_format=fmt_key,
                     quality=self.quality,
                 )
