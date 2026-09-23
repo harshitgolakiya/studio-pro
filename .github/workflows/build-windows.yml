@@ -1,0 +1,77 @@
+name: Build Windows App
+
+# Manual runs any time, plus automatic runs on pushes to main or when a version tag is pushed
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Fetch bundled FFmpeg binaries
+        shell: powershell
+        run: |
+          .\fetch_ffmpeg.ps1
+
+      - name: Run automated tests
+        timeout-minutes: 12
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Build Shadow.exe with PyInstaller
+        run: |
+          python -m PyInstaller --clean Shadow.spec
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: |
+          choco install innosetup --no-progress
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: Compile Inno Setup Installer
+        shell: powershell
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer.iss
+
+      - name: Sign installer (if certificates provided)
+        if: env.SHADOW_CERT_PATH != '' || env.SHADOW_CERT_THUMBPRINT != ''
+        shell: powershell
+        env:
+          SHADOW_CERT_PATH: ${{ secrets.SHADOW_CERT_PATH }}
+          SHADOW_CERT_PASSWORD: ${{ secrets.SHADOW_CERT_PASSWORD }}
+          SHADOW_CERT_THUMBPRINT: ${{ secrets.SHADOW_CERT_THUMBPRINT }}
+        run: |
+          .\sign_windows.ps1 -Files @("installer\Shadow-Media-Studio-Setup.exe")
+
+      - name: Upload Windows Setup Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shadow-Media-Studio-Setup-Windows
+          path: installer/Shadow-Media-Studio-Setup.exe
+          if-no-files-found: error
+
+      - name: Attach Installer to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Shadow-Media-Studio-Setup.exe
