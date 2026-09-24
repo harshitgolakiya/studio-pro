@@ -135,6 +135,8 @@ def normalize_output_format(value: str) -> str:
     fmt = value.upper().strip()
     aliases = {
         "JPG": "JPEG",
+        "JPEG / JPG": "JPEG",
+        "JPG / JPEG": "JPEG",
         "JPE": "JPEG",
         "JFIF": "JPEG",
         "HEIF": "HEIC",

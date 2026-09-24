@@ -229,7 +229,7 @@ ALL_MEDIA_EXTENSIONS = (
     | SUPPORTED_DOCUMENT_EXTENSIONS
 )
 IMAGE_FORMAT_OPTIONS = [
-    "PDF (Combined)" if fmt == "PDF" else fmt
+    "PDF (Combined)" if fmt == "PDF" else ("JPEG / JPG" if fmt == "JPEG" else fmt)
     for fmt in IMAGE_OUTPUT_FORMATS
 ]
 
@@ -499,6 +499,7 @@ class WebPCompressorApp(ctk.CTk):
         self.bind("<Control-Shift-P>", lambda _e: self._open_command_palette())
         self.bind("<Control-z>", lambda _e: self._undo_editor_change())
         self.bind("<Control-y>", lambda _e: self._redo_editor_change())
+        self.bind("<F1>", lambda _e: self._open_about_dialog())
 
     @staticmethod
     def _resource_path(relative_path: str) -> Path:
@@ -545,8 +546,9 @@ class WebPCompressorApp(ctk.CTk):
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
 
-        brand = ctk.CTkFrame(header, fg_color="transparent")
+        brand = ctk.CTkFrame(header, fg_color="transparent", cursor="hand2")
         brand.grid(row=0, column=0, padx=(28, 12), pady=14, sticky="w")
+        brand.bind("<Button-1>", lambda _e: self._open_about_dialog())
 
         logo_badge = ctk.CTkLabel(
             brand,
@@ -557,25 +559,34 @@ class WebPCompressorApp(ctk.CTk):
             fg_color=APP_ACCENT,
             text_color="#ffffff",
             font=ctk.CTkFont(size=15, weight="bold"),
+            cursor="hand2",
         )
         logo_badge.pack(side="left")
+        logo_badge.bind("<Button-1>", lambda _e: self._open_about_dialog())
 
-        brand_copy = ctk.CTkFrame(brand, fg_color="transparent")
+        brand_copy = ctk.CTkFrame(brand, fg_color="transparent", cursor="hand2")
         brand_copy.pack(side="left", padx=(11, 0))
-        ctk.CTkLabel(
+        brand_copy.bind("<Button-1>", lambda _e: self._open_about_dialog())
+        title_lbl = ctk.CTkLabel(
             brand_copy,
             text="Shadow Media Studio Pro",
             font=ctk.CTkFont(family=DISPLAY_FONT, size=19, weight="bold"),
             text_color=APP_TEXT,
             anchor="w",
-        ).pack(anchor="w")
-        ctk.CTkLabel(
+            cursor="hand2",
+        )
+        title_lbl.pack(anchor="w")
+        title_lbl.bind("<Button-1>", lambda _e: self._open_about_dialog())
+        sub_lbl = ctk.CTkLabel(
             brand_copy,
             text="Convert · optimize · automate",
             font=ctk.CTkFont(size=10),
             text_color=APP_MUTED,
             anchor="w",
-        ).pack(anchor="w", pady=(0, 1))
+            cursor="hand2",
+        )
+        sub_lbl.pack(anchor="w", pady=(0, 1))
+        sub_lbl.bind("<Button-1>", lambda _e: self._open_about_dialog())
 
         # Header Right Actions
         header_right = ctk.CTkFrame(header, fg_color="transparent")
@@ -2560,7 +2571,168 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("History…", self._open_history, "Help", "", "log past conversions reproduce"),
             PaletteAction("Export diagnostics…", self._export_diagnostics_bundle, "Help", "", "support bundle logs system info"),
             PaletteAction("License…", self._open_license_manager, "Help", "", "activate pro vip key"),
+            PaletteAction("About Shadow Media Studio…", self._open_about_dialog, "Help", "F1", "version info credits privacy offline"),
         ]
+
+    def _open_about_dialog(self) -> None:
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("About Shadow Media Studio Pro")
+        dlg.geometry("540x520")
+        dlg.minsize(480, 460)
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.configure(fg_color=APP_BACKGROUND)
+
+        # Center dialog relative to parent window
+        try:
+            px = self.winfo_x() + (self.winfo_width() - 540) // 2
+            py = self.winfo_y() + (self.winfo_height() - 520) // 2
+            dlg.geometry(f"540x520+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+
+        card = ctk.CTkFrame(dlg, fg_color=APP_SURFACE, corner_radius=12, border_width=1, border_color=APP_BORDER)
+        card.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Header branding
+        hdr = ctk.CTkFrame(card, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(24, 14))
+
+        logo = ctk.CTkLabel(
+            hdr,
+            text="S",
+            width=46,
+            height=46,
+            corner_radius=14,
+            fg_color=APP_ACCENT,
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20, weight="bold"),
+        )
+        logo.pack(side="left")
+
+        brand_text = ctk.CTkFrame(hdr, fg_color="transparent")
+        brand_text.pack(side="left", padx=(14, 0))
+
+        ctk.CTkLabel(
+            brand_text,
+            text="Shadow Media Studio Pro",
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=20, weight="bold"),
+            text_color=APP_TEXT,
+            anchor="w",
+        ).pack(anchor="w")
+
+        from diagnostics import APP_VERSION
+        is_vip = is_vip_activated()
+        is_pro = is_pro_activated()
+        edition = "VIP Master Edition" if is_vip else ("Pro Lifetime Edition" if is_pro else "Evaluation Edition")
+
+        ctk.CTkLabel(
+            brand_text,
+            text=f"Version {APP_VERSION} · {edition}",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=APP_ACCENT,
+            anchor="w",
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Description
+        desc_text = (
+            "A high-throughput, 100% offline desktop media studio for Windows.\n"
+            "Engineered for batch image, video, audio, and document conversion,\n"
+            "lossless compression, perceptual SSIM tuning, and automated pipelines."
+        )
+        ctk.CTkLabel(
+            card,
+            text=desc_text,
+            font=ctk.CTkFont(size=11),
+            text_color=APP_TEXT,
+            justify="left",
+            wraplength=450,
+        ).pack(anchor="w", padx=24, pady=(0, 14))
+
+        # Architecture Pills
+        pills = ctk.CTkFrame(card, fg_color=APP_ELEVATED, corner_radius=8)
+        pills.pack(fill="x", padx=24, pady=(0, 14), ipady=3)
+
+        items = ["🔒 100% Offline", "⚡ GPU Accelerated", "🎯 SSIM Targeter", "🗂️ Multi-Threaded"]
+        pills_inner = ctk.CTkFrame(pills, fg_color="transparent")
+        pills_inner.pack(padx=8, pady=4)
+        for item in items:
+            ctk.CTkLabel(
+                pills_inner,
+                text=item,
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=APP_TEXT,
+            ).pack(side="left", padx=8)
+
+        # Quick Shortcuts Cheatsheet
+        ctk.CTkLabel(
+            card,
+            text="Essential Keyboard Shortcuts",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=APP_TEXT,
+            anchor="w",
+        ).pack(anchor="w", padx=24, pady=(0, 6))
+
+        shortcuts_frame = ctk.CTkFrame(card, fg_color=APP_ELEVATED, corner_radius=8)
+        shortcuts_frame.pack(fill="x", padx=24, pady=(0, 16))
+
+        shortcuts = [
+            ("Ctrl + O", "Add files to media queue"),
+            ("Ctrl + Enter", "Start batch conversion"),
+            ("Ctrl + K", "Open Command Palette"),
+            ("Del", "Remove selected item(s) from queue"),
+            ("Alt + ↑ / ↓", "Reorder items up or down"),
+            ("F1", "Open this About / Help dialog"),
+        ]
+        for key, action in shortcuts:
+            row = ctk.CTkFrame(shortcuts_frame, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=1)
+            ctk.CTkLabel(
+                row,
+                text=key,
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=APP_ACCENT,
+                width=85,
+                anchor="w",
+            ).pack(side="left")
+            ctk.CTkLabel(
+                row,
+                text=action,
+                font=ctk.CTkFont(size=10),
+                text_color=APP_MUTED,
+                anchor="w",
+            ).pack(side="left")
+
+        # Bottom Actions
+        bot = ctk.CTkFrame(card, fg_color="transparent")
+        bot.pack(fill="x", padx=24, pady=(0, 16))
+
+        ctk.CTkButton(
+            bot,
+            text="System Diagnostics",
+            width=135,
+            height=28,
+            corner_radius=6,
+            fg_color=APP_ELEVATED,
+            hover_color=APP_BORDER,
+            text_color=APP_TEXT,
+            font=ctk.CTkFont(size=11),
+            command=self._export_diagnostics_bundle,
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            bot,
+            text="Close",
+            width=85,
+            height=28,
+            corner_radius=6,
+            fg_color=APP_ACCENT,
+            hover_color=APP_ACCENT_DARK,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=dlg.destroy,
+        ).pack(side="right")
+
+        dlg.after(50, lambda: dlg.grab_set() if dlg.winfo_exists() and dlg.winfo_viewable() else None)
 
     def _set_theme(self, mode: str) -> None:
         self.theme_menu.set(mode)
