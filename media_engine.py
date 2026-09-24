@@ -393,13 +393,35 @@ def convert_media_file(
                 args.extend(["-c:a", "aac", "-b:a", "128k"])
 
         elif target_fmt == "webm":
-            args.extend(["-c:v", "libvpx-vp9", "-b:v", "0"])
-            crf = "28" if video_quality == "high" else "38" if video_quality == "low" else "33"
-            args.extend(["-crf", crf])
+            # Multi-threaded fast VP9 WebM encoding:
+            # By default libvpx-vp9 runs single-threaded at cpu-used 1 which is painfully slow.
+            # Adding -deadline good -cpu-used 4-6, -row-mt 1, -threads 0, -tile-columns 2, -frame-parallel 1
+            # utilizes all CPU cores with parallel row processing, matching cloud converters (5x-10x faster).
+            cpu_used = "4" if video_quality == "high" else ("6" if video_quality == "low" else "5")
+            args.extend([
+                "-c:v", "libvpx-vp9",
+                "-deadline", "good",
+                "-cpu-used", cpu_used,
+                "-row-mt", "1",
+                "-threads", "0",
+                "-tile-columns", "2",
+                "-frame-parallel", "1",
+            ])
+            if (video_quality in ("discord25", "target_mb") or target_mb):
+                duration = media_duration or 30.0
+                mb_limit = 24.0 if video_quality == "discord25" else (target_mb or 15.0)
+                total_kbits = (mb_limit * 8192) / duration
+                audio_kbps = 96
+                video_kbps = max(100, int(total_kbits - audio_kbps))
+                args.extend(["-b:v", f"{video_kbps}k", "-crf", "36"])
+            else:
+                crf = "28" if video_quality == "high" else ("38" if video_quality == "low" else "33")
+                args.extend(["-b:v", "0", "-crf", crf])
+
             if mute_audio:
                 args.append("-an")
             else:
-                args.extend(["-c:a", "libopus", "-b:a", "96k"])
+                args.extend(["-c:a", "libopus", "-b:a", "96k", "-vbr", "on"])
 
         elif target_fmt == "animated_webp":
             args.extend([
