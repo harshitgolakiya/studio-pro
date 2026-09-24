@@ -56,6 +56,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "max_dimension": "1920",
     "scale_percent": "75",
     "strip_metadata": False,
+    "video_resolution": "Original",
+    "video_fps": "Original FPS",
     "enable_watermark": False,
     "watermark_type": "text",
     "watermark_text": "",

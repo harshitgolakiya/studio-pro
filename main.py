@@ -409,6 +409,12 @@ class WebPCompressorApp(ctk.CTk):
 
         # Video & Audio Controls
         self.video_quality_var = tk.StringVar(value="Balanced (Standard)")
+        self.video_resolution_var = tk.StringVar(
+            value=self.settings.get("video_resolution", "Original")
+        )
+        self.video_fps_var = tk.StringVar(
+            value=self.settings.get("video_fps", "Original FPS")
+        )
         self.audio_bitrate_var = tk.StringVar(value="192 kbps (Standard)")
         self.mute_audio_var = tk.BooleanVar(value=False)
         self.normalize_audio = tk.BooleanVar(value=False)
@@ -1313,60 +1319,85 @@ class WebPCompressorApp(ctk.CTk):
 
         # Dedicated Video Options Row
         self.video_options_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+
+        ctk.CTkLabel(
+            self.video_options_row,
+            text="Quality:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkOptionMenu(
+            self.video_options_row,
+            values=["Balanced (Standard)", "High Quality (Fast)", "Compact (Small Size)", "Lossless Remux (Stream Copy)"],
+            variable=self.video_quality_var,
+            width=135,
+            height=24,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(
+            self.video_options_row,
+            text="Resolution:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkOptionMenu(
+            self.video_options_row,
+            values=["Original", "1080p (FHD)", "720p (HD)", "480p (SD)", "360p"],
+            variable=self.video_resolution_var,
+            command=lambda v: update_setting("video_resolution", v),
+            width=95,
+            height=24,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(
+            self.video_options_row,
+            text="FPS:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkOptionMenu(
+            self.video_options_row,
+            values=["Original FPS", "60 fps", "30 fps", "24 fps"],
+            variable=self.video_fps_var,
+            command=lambda v: update_setting("video_fps", v),
+            width=90,
+            height=24,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+        ).pack(side="left", padx=(0, 10))
+
         ctk.CTkCheckBox(
             self.video_options_row,
-            text="Target file size:",
+            text="Target:",
             variable=self.enable_target_size,
             font=ctk.CTkFont(size=11),
         ).pack(side="left")
         ctk.CTkEntry(
-            self.video_options_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
+            self.video_options_row, width=46, height=24, textvariable=self.target_size_val, justify="center"
         ).pack(side="left", padx=4)
         ctk.CTkOptionMenu(
             self.video_options_row,
             values=["MB", "KB"],
             variable=self.target_size_unit,
-            width=62,
+            width=54,
             height=24,
             corner_radius=5,
-        ).pack(side="left", padx=(0, 16))
-
-        ctk.CTkLabel(
-            self.video_options_row,
-            text="Encoding Quality:",
-            font=ctk.CTkFont(size=11),
-            text_color=APP_MUTED,
-        ).pack(side="left", padx=(0, 4))
-        ctk.CTkOptionMenu(
-            self.video_options_row,
-            values=["Balanced (Standard)", "High Quality (Fast)", "Compact (Small Size)"],
-            variable=self.video_quality_var,
-            width=150,
-            height=24,
-            corner_radius=5,
-            font=ctk.CTkFont(size=10),
-        ).pack(side="left", padx=(0, 16))
-
-        ctk.CTkLabel(
-            self.video_options_row,
-            text="Scale %:",
-            font=ctk.CTkFont(size=11),
-            text_color=APP_MUTED,
-        ).pack(side="left", padx=(0, 4))
-        ctk.CTkEntry(
-            self.video_options_row, width=48, height=24, textvariable=self.scale_percent_text, justify="center"
-        ).pack(side="left", padx=(0, 16))
+        ).pack(side="left", padx=(0, 10))
 
         ctk.CTkCheckBox(
             self.video_options_row,
-            text="Mute Audio",
+            text="Mute",
             variable=self.mute_audio_var,
             font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=(0, 12))
+        ).pack(side="left", padx=(0, 8))
 
         ctk.CTkCheckBox(
             self.video_options_row,
-            text="Normalize Audio (Loudnorm)",
+            text="Normalize Audio",
             variable=self.normalize_audio,
             font=ctk.CTkFont(size=11),
         ).pack(side="left")
@@ -4615,7 +4646,16 @@ class WebPCompressorApp(ctk.CTk):
         filename_suffix = self.filename_suffix.get()
         normalize_audio = self.normalize_audio.get()
         vq_raw = self.video_quality_var.get().lower()
-        video_quality = "high" if "high" in vq_raw else ("low" if "compact" in vq_raw else "medium")
+        if "copy" in vq_raw or "remux" in vq_raw:
+            video_quality = "copy"
+        elif "high" in vq_raw:
+            video_quality = "high"
+        elif "compact" in vq_raw or "low" in vq_raw:
+            video_quality = "low"
+        else:
+            video_quality = "medium"
+        video_resolution = self.video_resolution_var.get()
+        video_fps = self.video_fps_var.get()
         ab_raw = self.audio_bitrate_var.get().lower()
         if "320" in ab_raw:
             audio_bitrate = "320k"
@@ -4681,6 +4721,8 @@ class WebPCompressorApp(ctk.CTk):
                 audio_bitrate,
                 mute_audio,
                 replace_source,
+                video_resolution,
+                video_fps,
             ),
             daemon=True,
         ).start()
@@ -4736,6 +4778,8 @@ class WebPCompressorApp(ctk.CTk):
         audio_bitrate: str = "192k",
         mute_audio: bool = False,
         replace_source: bool = False,
+        video_resolution: str = "Original",
+        video_fps: str = "Original FPS",
     ) -> None:
         total = len(files_snapshot)
         results: list[ConversionResult] = []
@@ -4889,6 +4933,21 @@ class WebPCompressorApp(ctk.CTk):
             effective_min_ssim = min_ssim
             effective_target_ssim = target_ssim
             effective_order = operation_order
+            effective_video_quality = (
+                str(override.get("video_quality", video_quality))
+                if use_override and "video_quality" in override
+                else video_quality
+            )
+            effective_video_resolution = (
+                str(override.get("video_resolution", video_resolution))
+                if use_override and "video_resolution" in override
+                else video_resolution
+            )
+            effective_video_fps = (
+                str(override.get("video_fps", video_fps))
+                if use_override and "video_fps" in override
+                else video_fps
+            )
             if use_override:
                 if override.get("enable_resize"):
                     raw_dim = str(override.get("max_dimension_text", "")).strip()
@@ -5001,7 +5060,7 @@ class WebPCompressorApp(ctk.CTk):
                         source_p,
                         target_dir,
                         target_format=fmt_key,
-                        video_quality=video_quality,
+                        video_quality=effective_video_quality,
                         target_mb=effective_target_mb,
                         audio_bitrate=audio_bitrate,
                         overwrite=overwrite,
@@ -5011,6 +5070,9 @@ class WebPCompressorApp(ctk.CTk):
                         filename_prefix=effective_prefix,
                         filename_suffix=effective_suffix,
                         normalize_audio=effective_normalize_audio,
+                        video_resolution=effective_video_resolution,
+                        video_fps=effective_video_fps,
+                        scale_percent=effective_scale_pct,
                         progress_callback=_media_progress,
                         cancel_check=self.cancel_event.is_set,
                         replace_source=replace_source,

@@ -276,6 +276,9 @@ def convert_media_file(
     filename_prefix: str = "",
     filename_suffix: str = "",
     normalize_audio: bool = False,
+    video_resolution: str = "Original",
+    video_fps: str = "Original",
+    scale_percent: float | None = None,
     progress_callback: Callable[[float, str], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     replace_source: bool = False,
@@ -348,44 +351,75 @@ def convert_media_file(
             str(source_path.resolve()),
         ]
 
+        # Build video filter chain (resolution downscaling and framerate capping)
+        video_filters: list[str] = []
+        res_str = str(video_resolution or "").lower()
+        if "1080" in res_str:
+            video_filters.append("scale='min(1920,iw)':-2:flags=lanczos")
+        elif "720" in res_str:
+            video_filters.append("scale='min(1280,iw)':-2:flags=lanczos")
+        elif "480" in res_str:
+            video_filters.append("scale='min(854,iw)':-2:flags=lanczos")
+        elif "360" in res_str:
+            video_filters.append("scale='min(640,iw)':-2:flags=lanczos")
+        elif scale_percent and 0 < scale_percent < 100:
+            pct = scale_percent / 100.0
+            video_filters.append(f"scale='trunc(iw*{pct}/2)*2':'trunc(ih*{pct}/2)*2':flags=lanczos")
+
+        fps_str = str(video_fps or "").lower()
+        if "60" in fps_str:
+            video_filters.append("fps=60")
+        elif "30" in fps_str:
+            video_filters.append("fps=30")
+        elif "24" in fps_str:
+            video_filters.append("fps=24")
+        elif "15" in fps_str:
+            video_filters.append("fps=15")
+
         # Configure encoding arguments based on target format
         if target_fmt == "mp4":
-            gpu_enc, _ = get_best_hardware_encoder()
-            if gpu_enc != "libx264" and not (video_quality in ("discord25", "target_mb") or target_mb):
-                args.extend(["-c:v", gpu_enc])
-                if gpu_enc == "h264_qsv":
-                    q = "20" if video_quality == "high" else ("28" if video_quality == "low" else "24")
-                    args.extend(["-global_quality", q])
-                elif gpu_enc == "h264_nvenc":
-                    cq = "19" if video_quality == "high" else ("28" if video_quality == "low" else "23")
-                    args.extend(["-cq", cq, "-preset", "p4"])
-                elif gpu_enc == "h264_amf":
-                    args.extend(["-rc", "cbr"])
-                elif gpu_enc == "h264_videotoolbox":
-                    if platform.machine() == "arm64":
-                        q = "75" if video_quality == "high" else ("45" if video_quality == "low" else "60")
-                        args.extend(["-q:v", q])
-                    else:
-                        b = "8M" if video_quality == "high" else ("2M" if video_quality == "low" else "4M")
-                        args.extend(["-b:v", b])
-                    args.extend(["-pix_fmt", "yuv420p"])
+            if video_quality in ("copy", "remux") and not video_filters:
+                args.extend(["-c:v", "copy"])
             else:
-                args.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
-                if video_quality == "high":
-                    args.extend(["-crf", "18", "-preset", "slow"])
-                elif video_quality == "low":
-                    args.extend(["-crf", "28", "-preset", "fast"])
-                elif (
-                    video_quality in ("discord25", "target_mb") or target_mb
-                ):
-                    duration = media_duration or 30.0
-                    mb_limit = 24.0 if video_quality == "discord25" else (target_mb or 15.0)
-                    total_kbits = (mb_limit * 8192) / duration
-                    audio_kbps = 96
-                    video_kbps = max(100, int(total_kbits - audio_kbps))
-                    args.extend(["-b:v", f"{video_kbps}k", "-b:a", f"{audio_kbps}k", "-preset", "veryfast"])
-                else:  # medium default
-                    args.extend(["-crf", "23", "-preset", "medium"])
+                gpu_enc, _ = get_best_hardware_encoder()
+                if gpu_enc != "libx264" and not (video_quality in ("discord25", "target_mb") or target_mb):
+                    args.extend(["-c:v", gpu_enc])
+                    if gpu_enc == "h264_qsv":
+                        q = "20" if video_quality == "high" else ("28" if video_quality == "low" else "24")
+                        args.extend(["-global_quality", q])
+                    elif gpu_enc == "h264_nvenc":
+                        cq = "19" if video_quality == "high" else ("28" if video_quality == "low" else "23")
+                        args.extend(["-cq", cq, "-preset", "p4"])
+                    elif gpu_enc == "h264_amf":
+                        args.extend(["-rc", "cbr"])
+                    elif gpu_enc == "h264_videotoolbox":
+                        if platform.machine() == "arm64":
+                            q = "75" if video_quality == "high" else ("45" if video_quality == "low" else "60")
+                            args.extend(["-q:v", q])
+                        else:
+                            b = "8M" if video_quality == "high" else ("2M" if video_quality == "low" else "4M")
+                            args.extend(["-b:v", b])
+                        args.extend(["-pix_fmt", "yuv420p"])
+                else:
+                    args.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+                    if video_quality == "high":
+                        args.extend(["-crf", "18", "-preset", "slow"])
+                    elif video_quality == "low":
+                        args.extend(["-crf", "28", "-preset", "fast"])
+                    elif (
+                        video_quality in ("discord25", "target_mb") or target_mb
+                    ):
+                        duration = media_duration or 30.0
+                        mb_limit = 24.0 if video_quality == "discord25" else (target_mb or 15.0)
+                        total_kbits = (mb_limit * 8192) / duration
+                        audio_kbps = 96
+                        video_kbps = max(100, int(total_kbits - audio_kbps))
+                        args.extend(["-b:v", f"{video_kbps}k", "-b:a", f"{audio_kbps}k", "-preset", "veryfast"])
+                    else:  # medium default
+                        args.extend(["-crf", "23", "-preset", "medium"])
+
+                if video_filters:
+                    args.extend(["-vf", ",".join(video_filters)])
 
             if mute_audio:
                 args.append("-an")
@@ -417,6 +451,9 @@ def convert_media_file(
             else:
                 crf = "28" if video_quality == "high" else ("38" if video_quality == "low" else "33")
                 args.extend(["-b:v", "0", "-crf", crf])
+
+            if video_filters:
+                args.extend(["-vf", ",".join(video_filters)])
 
             if mute_audio:
                 args.append("-an")
