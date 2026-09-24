@@ -275,6 +275,9 @@ class WebPCompressorApp(ctk.CTk):
         self.save_in_source_folder = tk.BooleanVar(
             value=self.settings.get("save_in_source_folder", False)
         )
+        self.replace_source_files = tk.BooleanVar(
+            value=self.settings.get("replace_source_files", False)
+        )
         self.target_format = tk.StringVar(
             value=self.settings.get("default_format", "WEBP")
         )
@@ -1807,6 +1810,14 @@ class WebPCompressorApp(ctk.CTk):
             text="Strip EXIF & Camera GPS Metadata",
             variable=self.strip_metadata,
             font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkCheckBox(
+            nm_row1,
+            text="Replace Source Images with WebP",
+            variable=self.replace_source_files,
+            command=self._replace_source_files_toggled,
+            font=ctk.CTkFont(size=11),
         ).pack(side="left")
 
         # ==========================================
@@ -1913,8 +1924,13 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.browse_button.grid(row=0, column=2, padx=(8, 14), pady=(10, 4))
 
+        self.output_options_frame = ctk.CTkFrame(output, fg_color="transparent")
+        self.output_options_frame.grid(
+            row=1, column=1, columnspan=2, sticky="w", pady=(2, 10)
+        )
+
         self.same_folder_checkbox = ctk.CTkCheckBox(
-            output,
+            self.output_options_frame,
             text="Save in original file's parent folder",
             variable=self.save_in_source_folder,
             command=self._save_in_source_folder_toggled,
@@ -1924,9 +1940,22 @@ class WebPCompressorApp(ctk.CTk):
             corner_radius=4,
             font=ctk.CTkFont(size=11),
         )
-        self.same_folder_checkbox.grid(
-            row=1, column=1, columnspan=2, sticky="w", pady=(2, 10)
+        self.same_folder_checkbox.pack(side="left", padx=(0, 20))
+
+        self.replace_source_checkbox = ctk.CTkCheckBox(
+            self.output_options_frame,
+            text="Replace source images with compressed WebP",
+            variable=self.replace_source_files,
+            command=self._replace_source_files_toggled,
+            checkbox_width=16,
+            checkbox_height=16,
+            border_width=2,
+            corner_radius=4,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#ea580c", "#f97316"),
+            hover_color=("#c2410c", "#ea580c"),
         )
+        self.replace_source_checkbox.pack(side="left")
 
         # Footer Frame
         footer = ctk.CTkFrame(content_inner, fg_color="transparent")
@@ -3256,12 +3285,25 @@ class WebPCompressorApp(ctk.CTk):
     def _save_in_source_folder_toggled(self) -> None:
         use_source = self.save_in_source_folder.get()
         update_setting("save_in_source_folder", use_source)
+        if not use_source and self.replace_source_files.get():
+            self.replace_source_files.set(False)
+            update_setting("replace_source_files", False)
         if use_source:
             self.output_entry.configure(state="disabled")
             self.browse_button.configure(state="disabled")
         else:
             self.output_entry.configure(state="normal")
             self.browse_button.configure(state="normal")
+
+    def _replace_source_files_toggled(self) -> None:
+        replace = self.replace_source_files.get()
+        update_setting("replace_source_files", replace)
+        if replace:
+            self.save_in_source_folder.set(True)
+            self._save_in_source_folder_toggled()
+            self.status_text.set("Replace source enabled: Converted WebP will replace original images")
+        else:
+            self.status_text.set("Replace source disabled")
 
     def _add_files(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -4355,6 +4397,10 @@ class WebPCompressorApp(ctk.CTk):
                 return
 
         use_source_folder = self.save_in_source_folder.get()
+        replace_source = self.replace_source_files.get()
+        if replace_source:
+            use_source_folder = True
+
         out_dir_str = self.output_directory.get().strip()
         if not use_source_folder and not out_dir_str:
             self.status_text.set("Choose an output folder first")
@@ -4634,6 +4680,7 @@ class WebPCompressorApp(ctk.CTk):
                 video_quality,
                 audio_bitrate,
                 mute_audio,
+                replace_source,
             ),
             daemon=True,
         ).start()
@@ -4688,6 +4735,7 @@ class WebPCompressorApp(ctk.CTk):
         video_quality: str = "medium",
         audio_bitrate: str = "192k",
         mute_audio: bool = False,
+        replace_source: bool = False,
     ) -> None:
         total = len(files_snapshot)
         results: list[ConversionResult] = []
@@ -4965,6 +5013,7 @@ class WebPCompressorApp(ctk.CTk):
                         normalize_audio=effective_normalize_audio,
                         progress_callback=_media_progress,
                         cancel_check=self.cancel_event.is_set,
+                        replace_source=replace_source,
                     )
                 else:
                     # Image engine conversion
@@ -5014,6 +5063,7 @@ class WebPCompressorApp(ctk.CTk):
                         svg_background=effective_svg_bg,
                         psd_composite_mode=override.get("psd_composite_mode", psd_composite_mode) if use_override and "psd_composite_mode" in override else psd_composite_mode,
                         psd_layer_index=int(override.get("psd_layer_index", psd_layer_index)) if use_override and "psd_layer_index" in override else int(psd_layer_index) if str(psd_layer_index).lstrip("-").isdigit() else -1,
+                        replace_source=replace_source,
                     )
 
             with counter_lock:

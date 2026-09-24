@@ -55,6 +55,7 @@ def convert_path(source: Path, output_dir: Path, settings: dict[str, Any]) -> Co
         "slugify_names": bool(settings.get("slugify_names", False)),
         "filename_prefix": str(settings.get("filename_prefix", "")),
         "filename_suffix": str(settings.get("filename_suffix", "")),
+        "replace_source": bool(settings.get("replace_source", False)),
     }
     ext = source.suffix.lower()
     if ext in SUPPORTED_DOCUMENT_EXTENSIONS:
@@ -213,6 +214,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--watch-output", type=Path, help="Destination for watched files")
     parser.add_argument("--poll-interval", type=float, default=1.5)
     parser.add_argument("--json", action="store_true", help="Emit one JSON object per result")
+    parser.add_argument("--replace-source", action="store_true", help="Replace original files with converted files")
     return parser
 
 
@@ -220,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     recipe = load_recipe(args.recipe) if args.recipe else Recipe("CLI defaults")
     settings = recipe.settings
+    if args.replace_source:
+        settings["replace_source"] = True
     if args.watch:
         from watch_folder import FolderWatcher
 

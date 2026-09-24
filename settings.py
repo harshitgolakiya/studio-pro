@@ -48,6 +48,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "System",
     "last_output_directory": "",
     "save_in_source_folder": False,
+    "replace_source_files": False,
     "default_format": "WEBP",
     "default_quality": 80,
     "play_sound": True,

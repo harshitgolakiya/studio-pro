@@ -623,6 +623,7 @@ def convert_image(
     svg_background: str = "transparent",
     psd_composite_mode: str = "merged",
     psd_layer_index: int = -1,
+    replace_source: bool = False,
 ) -> ConversionResult:
     """Convert and optimize image with format conversion, resizing, watermarking, and target size solver.
 
@@ -659,9 +660,10 @@ def convert_image(
             prefix=filename_prefix,
             suffix=filename_suffix,
         )
+        effective_overwrite = True if replace_source else overwrite
         output_path = reserve_output_path(
             output_directory / dest_filename,
-            overwrite,
+            effective_overwrite,
             reserved_paths,
         )
 
@@ -1031,6 +1033,18 @@ def convert_image(
                     temp_tracker.unregister(temporary_path)
 
         output_size = output_path.stat().st_size
+        if replace_source:
+            try:
+                resolved_source = source_path.resolve()
+                resolved_output = output_path.resolve()
+                if resolved_source != resolved_output and resolved_source.is_file():
+                    resolved_source.unlink()
+                    note = f"{note} (Replaced original)" if note else "Replaced original"
+                elif resolved_source == resolved_output:
+                    note = f"{note} (Replaced in-place)" if note else "Replaced in-place"
+            except Exception as exc:
+                note = f"{note} (Source delete error: {exc})" if note else f"Source delete error: {exc}"
+
         return ConversionResult(
             source_path,
             output_path,

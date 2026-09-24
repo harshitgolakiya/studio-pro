@@ -278,6 +278,7 @@ def convert_media_file(
     normalize_audio: bool = False,
     progress_callback: Callable[[float, str], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    replace_source: bool = False,
 ) -> ConversionResult:
     """Convert and compress video or audio files using FFmpeg with real-time progress updates."""
     ffmpeg = get_ffmpeg_path()
@@ -320,9 +321,10 @@ def convert_media_file(
             prefix=filename_prefix,
             suffix=filename_suffix,
         )
+        effective_overwrite = True if replace_source else overwrite
         output_path = reserve_output_path(
             output_directory / dest_filename,
-            overwrite,
+            effective_overwrite,
             reserved_paths,
         )
 
@@ -513,6 +515,19 @@ def convert_media_file(
         temp_tracker.unregister(temporary_file)
 
         output_size = output_path.stat().st_size
+        note = None
+        if replace_source:
+            try:
+                resolved_source = source_path.resolve()
+                resolved_output = output_path.resolve()
+                if resolved_source != resolved_output and resolved_source.is_file():
+                    resolved_source.unlink()
+                    note = "Replaced original"
+                elif resolved_source == resolved_output:
+                    note = "Replaced in-place"
+            except Exception as exc:
+                note = f"Source delete error: {exc}"
+
         return ConversionResult(
             source_path,
             output_path,
@@ -520,6 +535,7 @@ def convert_media_file(
             output_size,
             format_saved_percentage(original_size, output_size),
             "Completed",
+            note=note,
         )
     except Exception as error:
         return ConversionResult(
