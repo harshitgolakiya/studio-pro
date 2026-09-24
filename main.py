@@ -404,6 +404,12 @@ class WebPCompressorApp(ctk.CTk):
             value=self.settings.get("watermark_condition", "Always")
         )
 
+        # Video & Audio Controls
+        self.video_quality_var = tk.StringVar(value="Balanced (Standard)")
+        self.audio_bitrate_var = tk.StringVar(value="192 kbps (Standard)")
+        self.mute_audio_var = tk.BooleanVar(value=False)
+        self.normalize_audio = tk.BooleanVar(value=False)
+
         self.status_text = tk.StringVar(value="Ready to convert")
         self.estimate_text = tk.StringVar(value="Add an image to estimate output size")
         self.progress_value = tk.DoubleVar(value=0)
@@ -1151,6 +1157,8 @@ class WebPCompressorApp(ctk.CTk):
         )
         self.recipes_button.pack(side="left", padx=(0, 12))
 
+        self.preset_buttons_frame = ctk.CTkFrame(fmt_row0, fg_color="transparent")
+        self.preset_buttons_frame.pack(side="left")
         for name, q_val in (
             ("Balanced", 80),
             ("High", 90),
@@ -1158,7 +1166,7 @@ class WebPCompressorApp(ctk.CTk):
             ("Lossless", 80),
         ):
             ctk.CTkButton(
-                fmt_row0,
+                self.preset_buttons_frame,
                 text=name,
                 width=65,
                 height=26,
@@ -1176,51 +1184,51 @@ class WebPCompressorApp(ctk.CTk):
         self.format_capability_frame.pack(fill="x", pady=(0, 5))
         self._update_format_capabilities(self.target_format.get())
 
-        # Sizing / Constraints Row
-        size_row = ctk.CTkFrame(tab_format, fg_color="transparent")
-        size_row.pack(fill="x", pady=(2, 2))
+        # Sizing / Constraints Row (for Images & GIFs)
+        self.size_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        self.size_row.pack(fill="x", pady=(2, 2))
 
-        ssim_row = ctk.CTkFrame(tab_format, fg_color="transparent")
-        ssim_row.pack(fill="x", pady=(0, 2), after=size_row)
+        self.ssim_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        self.ssim_row.pack(fill="x", pady=(0, 2), after=self.size_row)
         ctk.CTkCheckBox(
-            ssim_row,
+            self.ssim_row,
             text="Protect quality: keep SSIM ≥",
             variable=self.protect_quality,
             font=ctk.CTkFont(size=11),
         ).pack(side="left")
         self.min_ssim_entry = ctk.CTkEntry(
-            ssim_row, width=50, height=24, textvariable=self.min_ssim_text, justify="center"
+            self.ssim_row, width=50, height=24, textvariable=self.min_ssim_text, justify="center"
         )
         self.min_ssim_entry.pack(side="left", padx=(4, 20))
         ctk.CTkCheckBox(
-            ssim_row,
+            self.ssim_row,
             text="Quality target instead of slider: SSIM",
             variable=self.enable_quality_target,
             font=ctk.CTkFont(size=11),
         ).pack(side="left")
         self.target_ssim_entry = ctk.CTkEntry(
-            ssim_row, width=50, height=24, textvariable=self.target_ssim_text, justify="center"
+            self.ssim_row, width=50, height=24, textvariable=self.target_ssim_text, justify="center"
         )
         self.target_ssim_entry.pack(side="left", padx=(4, 6))
         ctk.CTkLabel(
-            ssim_row,
+            self.ssim_row,
             text="(lossy image formats; 0.95 ≈ visually lossless, 0.90 = clearly compressed)",
             font=ctk.CTkFont(size=10),
             text_color=APP_MUTED,
         ).pack(side="left")
 
         ctk.CTkCheckBox(
-            size_row,
+            self.size_row,
             text="Target size solver:",
             variable=self.enable_target_size,
             font=ctk.CTkFont(size=11),
         ).pack(side="left")
         self.target_size_entry = ctk.CTkEntry(
-            size_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
+            self.size_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
         )
         self.target_size_entry.pack(side="left", padx=4)
         ctk.CTkOptionMenu(
-            size_row,
+            self.size_row,
             values=["KB", "MB"],
             variable=self.target_size_unit,
             width=62,
@@ -1229,29 +1237,29 @@ class WebPCompressorApp(ctk.CTk):
         ).pack(side="left", padx=(0, 20))
 
         ctk.CTkCheckBox(
-            size_row,
+            self.size_row,
             text="Resize max px:",
             variable=self.enable_resize,
             font=ctk.CTkFont(size=11),
         ).pack(side="left")
         self.max_dim_entry = ctk.CTkEntry(
-            size_row, width=56, height=24, textvariable=self.max_dimension_text, justify="center"
+            self.size_row, width=56, height=24, textvariable=self.max_dimension_text, justify="center"
         )
         self.max_dim_entry.pack(side="left", padx=(4, 12))
 
         ctk.CTkLabel(
-            size_row,
+            self.size_row,
             text="Scale %:",
             font=ctk.CTkFont(size=11),
             text_color=APP_MUTED,
         ).pack(side="left", padx=(0, 4))
         self.scale_entry = ctk.CTkEntry(
-            size_row, width=48, height=24, textvariable=self.scale_percent_text, justify="center"
+            self.size_row, width=48, height=24, textvariable=self.scale_percent_text, justify="center"
         )
         self.scale_entry.pack(side="left")
 
         # Quality Row (Direct input box positioned after Scale %)
-        self.quality_row = ctk.CTkFrame(size_row, fg_color="transparent")
+        self.quality_row = ctk.CTkFrame(self.size_row, fg_color="transparent")
         self.quality_row.pack(side="left", padx=(10, 0))
 
         ctk.CTkLabel(
@@ -1283,14 +1291,14 @@ class WebPCompressorApp(ctk.CTk):
         )
 
         self.when_label = ctk.CTkLabel(
-            size_row,
+            self.size_row,
             text="When:",
             font=ctk.CTkFont(size=11),
             text_color=APP_MUTED,
         )
         self.when_label.pack(side="left", padx=(10, 4))
         self.resize_cond_menu = ctk.CTkOptionMenu(
-            size_row,
+            self.size_row,
             values=["Always", "Only if larger", "Only above 4K", "Only above 2K"],
             variable=self.resize_condition,
             width=115,
@@ -1299,6 +1307,118 @@ class WebPCompressorApp(ctk.CTk):
             font=ctk.CTkFont(size=10),
         )
         self.resize_cond_menu.pack(side="left")
+
+        # Dedicated Video Options Row
+        self.video_options_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        ctk.CTkCheckBox(
+            self.video_options_row,
+            text="Target file size:",
+            variable=self.enable_target_size,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+        ctk.CTkEntry(
+            self.video_options_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
+        ).pack(side="left", padx=4)
+        ctk.CTkOptionMenu(
+            self.video_options_row,
+            values=["MB", "KB"],
+            variable=self.target_size_unit,
+            width=62,
+            height=24,
+            corner_radius=5,
+        ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkLabel(
+            self.video_options_row,
+            text="Encoding Quality:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkOptionMenu(
+            self.video_options_row,
+            values=["Balanced (Standard)", "High Quality (Fast)", "Compact (Small Size)"],
+            variable=self.video_quality_var,
+            width=150,
+            height=24,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+        ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkLabel(
+            self.video_options_row,
+            text="Scale %:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkEntry(
+            self.video_options_row, width=48, height=24, textvariable=self.scale_percent_text, justify="center"
+        ).pack(side="left", padx=(0, 16))
+
+        ctk.CTkCheckBox(
+            self.video_options_row,
+            text="Mute Audio",
+            variable=self.mute_audio_var,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=(0, 12))
+
+        ctk.CTkCheckBox(
+            self.video_options_row,
+            text="Normalize Audio (Loudnorm)",
+            variable=self.normalize_audio,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+
+        # Dedicated Audio Options Row
+        self.audio_options_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        ctk.CTkLabel(
+            self.audio_options_row,
+            text="Audio Bitrate:",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkOptionMenu(
+            self.audio_options_row,
+            values=["320 kbps (Studio)", "256 kbps (Very High)", "192 kbps (Standard)", "128 kbps (Compact)", "64 kbps (Voice)"],
+            variable=self.audio_bitrate_var,
+            width=160,
+            height=24,
+            corner_radius=5,
+            font=ctk.CTkFont(size=10),
+        ).pack(side="left", padx=(0, 18))
+
+        ctk.CTkCheckBox(
+            self.audio_options_row,
+            text="Target size solver:",
+            variable=self.enable_target_size,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+        ctk.CTkEntry(
+            self.audio_options_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
+        ).pack(side="left", padx=4)
+        ctk.CTkOptionMenu(
+            self.audio_options_row,
+            values=["MB", "KB"],
+            variable=self.target_size_unit,
+            width=62,
+            height=24,
+            corner_radius=5,
+        ).pack(side="left", padx=(0, 18))
+
+        ctk.CTkCheckBox(
+            self.audio_options_row,
+            text="Normalize Loudness (-16 LUFS)",
+            variable=self.normalize_audio,
+            font=ctk.CTkFont(size=11),
+        ).pack(side="left")
+
+        # Dedicated Document Options Row
+        self.document_options_row = ctk.CTkFrame(tab_format, fg_color="transparent")
+        ctk.CTkLabel(
+            self.document_options_row,
+            text="📄 Document Mode: Converts Markdown, Word (.docx), PDF, HTML, and text preserving document structure.",
+            font=ctk.CTkFont(size=11),
+            text_color=APP_MUTED,
+        ).pack(side="left", pady=3)
 
         # ==========================================
         # TAB 2: EDIT & TRANSFORM
@@ -2123,6 +2243,19 @@ class WebPCompressorApp(ctk.CTk):
     def _format_changed(self, new_format: str) -> None:
         fmt = new_format.upper()
         self._update_format_capabilities(new_format)
+
+        # Synchronize contextual control visibility based on chosen target format
+        if "DOCUMENT:" in fmt:
+            self._update_category_controls_visibility("document")
+        elif "VIDEO:" in fmt or fmt in ("VIDEO: MP4", "VIDEO: WEBM", "VIDEO -> ANIMATED WEBP"):
+            self._update_category_controls_visibility("video")
+        elif "AUDIO:" in fmt or "EXTRACT AUDIO:" in fmt:
+            self._update_category_controls_visibility("audio")
+        elif "GIF" in fmt:
+            self._update_category_controls_visibility("gif")
+        elif normalize_output_format(new_format) in IMAGE_OUTPUT_FORMATS:
+            self._update_category_controls_visibility("image")
+
         if "ANIMATED WEBP" in fmt:
             self.convert_button.configure(text="Convert to Animated WebP")
             self._set_quality_visibility(True)
@@ -2233,6 +2366,65 @@ class WebPCompressorApp(ctk.CTk):
         ).pack(side="left", padx=(0, 10))
         render_capability_badges(frame, entry.badges)
 
+    def _update_category_controls_visibility(self, category: str) -> None:
+        """Show only media-relevant controls for the active category (image, video, audio, document, gif)."""
+        if not hasattr(self, "video_options_row") or not hasattr(self, "size_row"):
+            return
+
+        if category == "video":
+            self.smart_trim_btn.pack(side="right", padx=(0, 4))
+            self.estimate_label.pack_forget()
+            if hasattr(self, "preset_buttons_frame"):
+                self.preset_buttons_frame.pack_forget()
+            self.size_row.pack_forget()
+            self.ssim_row.pack_forget()
+            self.audio_options_row.pack_forget()
+            self.document_options_row.pack_forget()
+            self.video_options_row.pack(fill="x", pady=(2, 2))
+
+        elif category == "audio":
+            self.smart_trim_btn.pack_forget()
+            self.estimate_label.pack_forget()
+            if hasattr(self, "preset_buttons_frame"):
+                self.preset_buttons_frame.pack_forget()
+            self.size_row.pack_forget()
+            self.ssim_row.pack_forget()
+            self.video_options_row.pack_forget()
+            self.document_options_row.pack_forget()
+            self.audio_options_row.pack(fill="x", pady=(2, 2))
+
+        elif category == "document":
+            self.smart_trim_btn.pack_forget()
+            self.estimate_label.pack_forget()
+            if hasattr(self, "preset_buttons_frame"):
+                self.preset_buttons_frame.pack_forget()
+            self.size_row.pack_forget()
+            self.ssim_row.pack_forget()
+            self.video_options_row.pack_forget()
+            self.audio_options_row.pack_forget()
+            self.document_options_row.pack(fill="x", pady=(2, 2))
+
+        elif category == "gif":
+            self.smart_trim_btn.pack_forget()
+            self.video_options_row.pack_forget()
+            self.audio_options_row.pack_forget()
+            self.document_options_row.pack_forget()
+            self.ssim_row.pack_forget()
+            if hasattr(self, "preset_buttons_frame"):
+                self.preset_buttons_frame.pack(side="left")
+            self.size_row.pack(fill="x", pady=(2, 2))
+
+        else:  # image or ready
+            self.smart_trim_btn.pack_forget()
+            self.video_options_row.pack_forget()
+            self.audio_options_row.pack_forget()
+            self.document_options_row.pack_forget()
+            self.estimate_label.pack(side="right", padx=(10, 0))
+            if hasattr(self, "preset_buttons_frame"):
+                self.preset_buttons_frame.pack(side="left")
+            self.size_row.pack(fill="x", pady=(2, 2))
+            self.ssim_row.pack(fill="x", pady=(0, 2), after=self.size_row)
+
     def _adapt_settings_to_selection(self) -> None:
         """Dynamically adapt UI format menus, presets, and conversion controls based on current selection or queue contents."""
         target_path: Path | None = None
@@ -2276,6 +2468,8 @@ class WebPCompressorApp(ctk.CTk):
         else:
             self.smart_info_label.configure(text="Select or drop media to auto-tune options")
 
+        self._update_category_controls_visibility(category)
+
         if category == self._current_smart_category:
             return
 
@@ -2287,7 +2481,6 @@ class WebPCompressorApp(ctk.CTk):
                 fg_color=("#dbeafe", "#1e3a5f"),
                 text_color=("#1d4ed8", "#93c5fd"),
             )
-            self.smart_trim_btn.pack(side="right", padx=(0, 4))
             video_formats = [
                 "Video: MP4",
                 "Video: WebM",
@@ -2966,18 +3159,32 @@ class WebPCompressorApp(ctk.CTk):
         self.status_text.set(f"Optimizer applied {codec} at quality {int(quality)}")
 
     def _open_selected_trimmer(self) -> None:
+        target_path: Path | None = None
         sel = self.table.selection()
-        if not sel:
-            return
-        item_id = sel[0]
-        path = next((p for p, r in self.row_ids.items() if r == item_id), None)
-        if path and path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+        if sel:
+            item_id = sel[0]
+            target_path = next((p for p, r in self.row_ids.items() if r == item_id), None)
+
+        if not target_path or target_path.suffix.lower() not in SUPPORTED_VIDEO_EXTENSIONS:
+            for p in self.selected_files:
+                if p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                    target_path = p
+                    break
+
+        if not target_path or target_path.suffix.lower() not in SUPPORTED_VIDEO_EXTENSIONS:
+            for p in self.row_ids.keys():
+                if p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                    target_path = p
+                    break
+
+        if target_path and target_path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
             dialog = VideoTrimmerDialog(
-                self, path, on_trim_complete=lambda p: self._ingest_image_paths([p])
+                self, target_path, on_trim_complete=lambda p: self._ingest_image_paths([p])
             )
-            dialog.focus()
+            dialog.lift()
+            dialog.focus_force()
         else:
-            messagebox.showinfo("Video Trimmer", "Please select a video file (MP4, MKV, MOV, WebM, etc.) to trim.")
+            messagebox.showinfo("Video Trimmer", "Please add or select a video file (MP4, MKV, MOV, WebM, etc.) to trim.")
 
     def _show_preview_dialog(self, path: Path) -> None:
         result = self.row_results.get(path)
@@ -4361,6 +4568,20 @@ class WebPCompressorApp(ctk.CTk):
         filename_prefix = self.filename_prefix.get()
         filename_suffix = self.filename_suffix.get()
         normalize_audio = self.normalize_audio.get()
+        vq_raw = self.video_quality_var.get().lower()
+        video_quality = "high" if "high" in vq_raw else ("low" if "compact" in vq_raw else "medium")
+        ab_raw = self.audio_bitrate_var.get().lower()
+        if "320" in ab_raw:
+            audio_bitrate = "320k"
+        elif "256" in ab_raw:
+            audio_bitrate = "256k"
+        elif "128" in ab_raw:
+            audio_bitrate = "128k"
+        elif "64" in ab_raw:
+            audio_bitrate = "64k"
+        else:
+            audio_bitrate = "192k"
+        mute_audio = self.mute_audio_var.get()
 
         threading.Thread(
             target=self._convert_batch_pool,
@@ -4410,6 +4631,9 @@ class WebPCompressorApp(ctk.CTk):
                 self.svg_background.get(),
                 self.psd_composite_mode.get(),
                 self.psd_layer_index.get(),
+                video_quality,
+                audio_bitrate,
+                mute_audio,
             ),
             daemon=True,
         ).start()
@@ -4461,6 +4685,9 @@ class WebPCompressorApp(ctk.CTk):
         svg_background: str = "Transparent",
         psd_composite_mode: str = "merged",
         psd_layer_index: str = "-1",
+        video_quality: str = "medium",
+        audio_bitrate: str = "192k",
+        mute_audio: bool = False,
     ) -> None:
         total = len(files_snapshot)
         results: list[ConversionResult] = []
@@ -4726,9 +4953,12 @@ class WebPCompressorApp(ctk.CTk):
                         source_p,
                         target_dir,
                         target_format=fmt_key,
+                        video_quality=video_quality,
                         target_mb=effective_target_mb,
+                        audio_bitrate=audio_bitrate,
                         overwrite=overwrite,
                         reserved_paths=reserved_paths,
+                        mute_audio=mute_audio,
                         slugify_names=effective_slugify,
                         filename_prefix=effective_prefix,
                         filename_suffix=effective_suffix,

@@ -42,6 +42,14 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
+        # Center dialog relative to parent window
+        try:
+            px = parent.winfo_x() + (parent.winfo_width() - 560) // 2
+            py = parent.winfo_y() + (parent.winfo_height() - 380) // 2
+            self.geometry(f"560x380+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+
         self.duration = get_media_duration(video_path) or 60.0
         self.start_val = tk.DoubleVar(value=0.0)
         self.end_val = tk.DoubleVar(value=self.duration)
@@ -50,7 +58,9 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         )
 
         self._build_ui()
-        self.grab_set()
+        self.lift()
+        self.focus_force()
+        self.after(50, lambda: self.grab_set() if self.winfo_exists() and self.winfo_viewable() else None)
 
     def _build_ui(self) -> None:
         self.configure(fg_color=("#f8f9fa", "#1a1d20"))
