@@ -4,10 +4,13 @@ import json
 import os
 from pathlib import Path
 import platform
+from collections import deque
+import queue
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Callable
 
@@ -127,6 +130,21 @@ def get_media_duration(source_path: Path) -> float | None:
     except Exception:
         pass
     return None
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    """Stop an FFmpeg child promptly, escalating when graceful exit stalls."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=1.0)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
 
 
 def trim_video_lossless(
@@ -509,52 +527,121 @@ def convert_media_file(
 
         last_cb_time = 0.0
         cancelled = False
+        stalled = False
+        # FFmpeg writes diagnostics to stderr while machine-readable progress
+        # is emitted on stdout. Windows pipes have a small buffer; reading only
+        # stdout can therefore deadlock once stderr fills (seen consistently on
+        # GitHub's Windows runners and with some hardware encoders). Drain it
+        # concurrently and retain only the tail needed for an actionable error.
+        stderr_lines: deque[str] = deque(maxlen=200)
 
-        if proc.stdout:
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                if cancel_check and cancel_check():
-                    cancelled = True
-                    try:
-                        proc.terminate()
-                        proc.wait(timeout=1.0)
-                    except Exception:
-                        proc.kill()
+        def drain_stderr() -> None:
+            if proc.stderr is None:
+                return
+            for error_line in proc.stderr:
+                stderr_lines.append(error_line)
+
+        stderr_thread = threading.Thread(
+            target=drain_stderr,
+            name="shadow-ffmpeg-stderr",
+            daemon=True,
+        )
+        stderr_thread.start()
+
+        stdout_queue: queue.Queue[str | None] = queue.Queue()
+
+        def drain_stdout() -> None:
+            try:
+                if proc.stdout is not None:
+                    for progress_line in proc.stdout:
+                        stdout_queue.put(progress_line)
+            finally:
+                stdout_queue.put(None)
+
+        stdout_thread = threading.Thread(
+            target=drain_stdout,
+            name="shadow-ffmpeg-progress",
+            daemon=True,
+        )
+        stdout_thread.start()
+        last_process_output = time.monotonic()
+
+        while True:
+            if cancel_check and cancel_check():
+                cancelled = True
+                _terminate_process(proc)
+                break
+            try:
+                line = stdout_queue.get(timeout=0.1)
+            except queue.Empty:
+                if proc.poll() is not None and not stdout_thread.is_alive():
                     break
+                if time.monotonic() - last_process_output > 120.0:
+                    stalled = True
+                    _terminate_process(proc)
+                    break
+                continue
+            if line is None:
+                if proc.poll() is not None:
+                    break
+                continue
+            last_process_output = time.monotonic()
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("out_time_us="):
+                try:
+                    us = int(line.split("=")[1])
+                    elapsed_sec = us / 1_000_000.0
+                    now = time.monotonic()
+                    if progress_callback and (now - last_cb_time >= 0.12):
+                        last_cb_time = now
+                        if media_duration and media_duration > 0:
+                            fraction = max(0.01, min(0.99, elapsed_sec / media_duration))
+                            pct_int = int(fraction * 100)
+                            elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
+                            total_m, total_s = divmod(int(media_duration), 60)
+                            msg = f"Encoding {source_path.name}: {pct_int}% ({elapsed_m:02d}:{elapsed_s:02d} / {total_m:02d}:{total_s:02d})"
+                            progress_callback(fraction, msg)
+                        else:
+                            elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
+                            msg = f"Encoding {source_path.name}: {elapsed_m:02d}:{elapsed_s:02d} elapsed"
+                            progress_callback(0.5, msg)
+                except (ValueError, IndexError):
+                    pass
+            elif line == "progress=end" and progress_callback:
+                progress_callback(1.0, f"Finishing {source_path.name}...")
 
-                if line.startswith("out_time_us="):
-                    try:
-                        us = int(line.split("=")[1])
-                        elapsed_sec = us / 1_000_000.0
-                        now = time.monotonic()
-                        if progress_callback and (now - last_cb_time >= 0.12):
-                            last_cb_time = now
-                            if media_duration and media_duration > 0:
-                                fraction = max(0.01, min(0.99, elapsed_sec / media_duration))
-                                pct_int = int(fraction * 100)
-                                elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
-                                total_m, total_s = divmod(int(media_duration), 60)
-                                msg = f"Encoding {source_path.name}: {pct_int}% ({elapsed_m:02d}:{elapsed_s:02d} / {total_m:02d}:{total_s:02d})"
-                                progress_callback(fraction, msg)
-                            else:
-                                elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
-                                msg = f"Encoding {source_path.name}: {elapsed_m:02d}:{elapsed_s:02d} elapsed"
-                                progress_callback(0.5, msg)
-                    except (ValueError, IndexError):
-                        pass
-                elif line == "progress=end":
-                    if progress_callback:
-                        progress_callback(1.0, f"Finishing {source_path.name}...")
-
-        _, stderr_text = proc.communicate()
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            _terminate_process(proc)
+        stdout_thread.join(timeout=2.0)
+        stderr_thread.join(timeout=2.0)
+        stderr_text = "".join(stderr_lines)
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
 
         if cancelled:
             temporary_file.unlink(missing_ok=True)
             temp_tracker.unregister(temporary_file)
             return ConversionResult(
                 source_path, None, original_size, None, "-", "Cancelled", "Operation cancelled"
+            )
+
+        if stalled:
+            temporary_file.unlink(missing_ok=True)
+            temp_tracker.unregister(temporary_file)
+            return ConversionResult(
+                source_path,
+                None,
+                original_size,
+                None,
+                "-",
+                "Failed",
+                "FFmpeg stopped responding for 120 seconds and was terminated",
             )
 
         if proc.returncode != 0:

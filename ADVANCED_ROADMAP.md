@@ -206,13 +206,17 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 - [x] Close the local automation server socket cleanly on stop/restart.
 - [x] Remove Pillow deprecation and leaked-image resource warnings from benchmarks and
   golden-fixture verification.
+- [x] Prevent Windows FFmpeg pipe deadlocks, keep cancellation responsive while FFmpeg
+  is quiet, and terminate stalled encoders instead of leaving the app frozen.
+- [x] Log uncaught application/worker failures and turn Tk callback exceptions into a
+  recoverable in-app error instead of silently terminating the GUI.
 - [ ] Continue the visual pass at minimum window size: responsive wrapping, keyboard
   focus order, contrast, and high-DPI checks on Windows and macOS.
 - [ ] Run packaged-app smoke tests on Windows, Intel macOS, and Apple Silicon macOS.
 
 ## Current verification baseline
 
-- Unit/integration tests: **342 passing** covering all features including:
+- Unit/integration tests: **343 passing** covering all features including:
   code signing & verification (`tests/test_code_signing.py`),
   JPEG XL engine (`tests/test_jxl_engine.py`),
   PSD compositing (`tests/test_psd_engine.py`),

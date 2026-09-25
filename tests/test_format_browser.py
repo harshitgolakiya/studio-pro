@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -202,6 +203,21 @@ class FormatBrowserIntegrationTests(unittest.TestCase):
         app._preserve_metadata_changed()
         self.assertTrue(app.preserve_metadata.get())
         self.assertFalse(app.strip_metadata.get())
+
+    def test_ui_callback_failure_is_logged_without_closing_app(self) -> None:
+        app = self.app
+        original_logger = app.log
+        app.log = MagicMock()
+        try:
+            error = RuntimeError("simulated callback failure")
+            with patch("main.messagebox.showerror") as show_error:
+                app.report_callback_exception(RuntimeError, error, None)
+            app.log.error.assert_called_once()
+            show_error.assert_called_once()
+            self.assertIn("simulated callback failure", app.status_text.get())
+            self.assertTrue(app.winfo_exists())
+        finally:
+            app.log = original_logger
 
 
 if __name__ == "__main__":

@@ -174,7 +174,7 @@ from converter import (
     estimate_image_output_size,
     normalize_output_format,
 )
-from diagnostics import export_diagnostics, setup_logging
+from diagnostics import export_diagnostics, install_exception_logging, setup_logging
 from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
 from format_browser import FormatBrowserDialog, describe_format, render_capability_badges
 from history import record_batch
@@ -475,6 +475,35 @@ class WebPCompressorApp(ctk.CTk):
         # old layout visibly overlapping the new one until something forces
         # a repaint. Debounced so this doesn't fire on every pixel of a drag.
         self.bind("<Configure>", self._on_window_configure)
+
+    def report_callback_exception(
+        self,
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        traceback_obj: object,
+    ) -> None:
+        """Keep Tk callback failures visible, logged, and non-fatal."""
+        logger = getattr(self, "log", None) or setup_logging()
+        logger.error(
+            "UI callback failed",
+            exc_info=(exc_type, exc_value, traceback_obj),
+        )
+        if hasattr(self, "status_text"):
+            self.status_text.set(f"Unexpected error: {exc_value}")
+        if getattr(self, "_showing_callback_error", False):
+            return
+        self._showing_callback_error = True
+        try:
+            messagebox.showerror(
+                "Shadow encountered an error",
+                "This action could not be completed, but the app can stay open.\n\n"
+                f"{exc_value}\n\nTechnical details were written to shadow.log.",
+                parent=self,
+            )
+        except Exception:
+            pass
+        finally:
+            self._showing_callback_error = False
 
     def _on_window_configure(self, _event: tk.Event) -> None:
         if _event.widget != self:
@@ -5565,6 +5594,7 @@ class WebPCompressorApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    install_exception_logging()
     _saved_theme = load_settings().get("theme", "System")
     ctk.set_appearance_mode(_saved_theme)
     ctk.set_default_color_theme(str(Path(__file__).resolve().parent / "assets" / "theme.json"))

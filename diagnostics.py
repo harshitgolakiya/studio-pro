@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import threading
 from typing import Any
 import zipfile
 
@@ -39,6 +40,36 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         root.setLevel(level)
     logging.getLogger("PIL").setLevel(logging.WARNING)
     return logging.getLogger("shadow")
+
+
+def install_exception_logging() -> logging.Logger:
+    """Record otherwise-unhandled main-thread and worker-thread failures."""
+    logger = setup_logging()
+    if getattr(sys.excepthook, "_shadow_exception_hook", False):
+        return logger
+
+    previous_sys_hook = sys.excepthook
+
+    def log_uncaught(exc_type: type[BaseException], exc: BaseException, tb: Any) -> None:
+        logger.critical("uncaught application exception", exc_info=(exc_type, exc, tb))
+        previous_sys_hook(exc_type, exc, tb)
+
+    log_uncaught._shadow_exception_hook = True  # type: ignore[attr-defined]
+    sys.excepthook = log_uncaught
+
+    if hasattr(threading, "excepthook"):
+        previous_thread_hook = threading.excepthook
+
+        def log_thread_failure(args: threading.ExceptHookArgs) -> None:
+            logger.critical(
+                "uncaught worker exception in %s",
+                getattr(args.thread, "name", "unknown"),
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+            previous_thread_hook(args)
+
+        threading.excepthook = log_thread_failure
+    return logger
 
 
 def _ffmpeg_version() -> str:
