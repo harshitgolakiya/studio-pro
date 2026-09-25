@@ -232,6 +232,8 @@ IMAGE_FORMAT_OPTIONS = [
     "PDF (Combined)" if fmt == "PDF" else ("JPEG / JPG" if fmt == "JPEG" else fmt)
     for fmt in IMAGE_OUTPUT_FORMATS
 ]
+LOSSLESS_TOGGLE_FORMATS = {"WEBP", "JXL"}
+TARGET_SOLVER_FORMATS = {"WEBP", "JPEG", "AVIF", "HEIC"}
 
 APP_BACKGROUND = ("#F3F6F8", "#090C10")
 APP_SURFACE = ("#FFFFFF", "#11161D")
@@ -254,6 +256,14 @@ ctk.set_widget_scaling(1.0)
 class WebPCompressorApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
+        self._destroying = False
+        self._startup_warning_job: str | None = None
+        self._process_events_job: str | None = None
+        self._queue_restore_job: str | None = None
+        self._queue_save_job: str | None = None
+        self._cli_load_job: str | None = None
+        self._theme_change_job: str | None = None
+        self._resize_redraw_job: str | None = None
         self.settings = load_settings()
         self.log = setup_logging()
         stale = temp_tracker.cleanup_stale()
@@ -266,7 +276,9 @@ class WebPCompressorApp(ctk.CTk):
         self.minsize(980, 720)
         self._apply_window_icon()
         self._show_setup_status_if_needed()
-        self.after(200, self._show_missing_runtime_warning_if_needed)
+        self._startup_warning_job = self.after(
+            200, self._show_missing_runtime_warning_if_needed
+        )
 
         self.selected_files: list[Path] = []
         self.output_directory = tk.StringVar(
@@ -449,21 +461,19 @@ class WebPCompressorApp(ctk.CTk):
         self._setup_drag_and_drop()
         self._setup_context_menu()
         self._bind_shortcuts()
-        self.after(100, self._process_events)
+        self._process_events_job = self.after(100, self._process_events)
         self._load_cli_arguments()
         self.protocol("WM_DELETE_WINDOW", self._on_app_close)
 
         self.queue_state_file = queue_state_path()
         self._queue_persistence_enabled = persistence_enabled()
-        self._queue_save_job: str | None = None
         if self._queue_persistence_enabled and len(sys.argv) <= 1:
-            self.after(300, self._offer_queue_restore)
+            self._queue_restore_job = self.after(300, self._offer_queue_restore)
 
         # A fast/large resize (dragging the window edge, or restoring from
         # maximized) can outrun Tk's redraw, leaving stale widgets from the
         # old layout visibly overlapping the new one until something forces
         # a repaint. Debounced so this doesn't fire on every pixel of a drag.
-        self._resize_redraw_job: str | None = None
         self.bind("<Configure>", self._on_window_configure)
 
     def _on_window_configure(self, _event: tk.Event) -> None:
@@ -498,7 +508,9 @@ class WebPCompressorApp(ctk.CTk):
                 elif p.is_file() and p.suffix.lower() in ALL_MEDIA_EXTENSIONS:
                     cli_paths.append(p)
             if cli_paths:
-                self.after(200, lambda: self._ingest_image_paths(cli_paths))
+                self._cli_load_job = self.after(
+                    200, lambda: self._ingest_image_paths(cli_paths)
+                )
 
     def _bind_shortcuts(self) -> None:
         self.bind("<Control-a>", lambda _e: self._select_all_rows())
@@ -1168,13 +1180,14 @@ class WebPCompressorApp(ctk.CTk):
 
         self.preset_buttons_frame = ctk.CTkFrame(fmt_row0, fg_color="transparent")
         self.preset_buttons_frame.pack(side="left")
+        self.preset_buttons: dict[str, ctk.CTkButton] = {}
         for name, q_val in (
             ("Balanced", 80),
             ("High", 90),
             ("Compact", 60),
             ("Lossless", 80),
         ):
-            ctk.CTkButton(
+            button = ctk.CTkButton(
                 self.preset_buttons_frame,
                 text=name,
                 width=65,
@@ -1187,7 +1200,9 @@ class WebPCompressorApp(ctk.CTk):
                 command=lambda q=q_val, l=(name == "Lossless"): self._apply_preset(
                     q, l
                 ),
-            ).pack(side="left", padx=2)
+            )
+            button.pack(side="left", padx=2)
+            self.preset_buttons[name] = button
 
         self.format_capability_frame = ctk.CTkFrame(tab_format, fg_color="transparent")
         self.format_capability_frame.pack(fill="x", pady=(0, 5))
@@ -1226,24 +1241,26 @@ class WebPCompressorApp(ctk.CTk):
             text_color=APP_MUTED,
         ).pack(side="left")
 
-        ctk.CTkCheckBox(
+        self.target_size_checkbox = ctk.CTkCheckBox(
             self.size_row,
             text="Target size solver:",
             variable=self.enable_target_size,
             font=ctk.CTkFont(size=11),
-        ).pack(side="left")
+        )
+        self.target_size_checkbox.pack(side="left")
         self.target_size_entry = ctk.CTkEntry(
             self.size_row, width=54, height=24, textvariable=self.target_size_val, justify="center"
         )
         self.target_size_entry.pack(side="left", padx=4)
-        ctk.CTkOptionMenu(
+        self.target_size_unit_menu = ctk.CTkOptionMenu(
             self.size_row,
             values=["KB", "MB"],
             variable=self.target_size_unit,
             width=62,
             height=24,
             corner_radius=5,
-        ).pack(side="left", padx=(0, 20))
+        )
+        self.target_size_unit_menu.pack(side="left", padx=(0, 20))
 
         ctk.CTkCheckBox(
             self.size_row,
@@ -1298,6 +1315,18 @@ class WebPCompressorApp(ctk.CTk):
         self.quality_entry.bind(
             "<KeyRelease>", lambda _event: self._on_quality_key_release()
         )
+
+        self.lossless_checkbox = ctk.CTkCheckBox(
+            self.quality_row,
+            text="Lossless",
+            variable=self.lossless,
+            command=self._lossless_changed,
+            width=72,
+            checkbox_width=16,
+            checkbox_height=16,
+            font=ctk.CTkFont(size=11),
+        )
+        self.lossless_checkbox.pack(side="left", padx=(8, 0))
 
         self.when_label = ctk.CTkLabel(
             self.size_row,
@@ -1822,34 +1851,46 @@ class WebPCompressorApp(ctk.CTk):
         nm_row1 = ctk.CTkFrame(tab_naming, fg_color="transparent")
         nm_row1.pack(fill="x", pady=(4, 2))
 
-        ctk.CTkCheckBox(
+        self.slugify_checkbox = ctk.CTkCheckBox(
             nm_row1,
             text="SEO Slugify Names (e.g. my-clean-product.webp)",
             variable=self.slugify_names,
             font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=(0, 16))
+        )
+        self.slugify_checkbox.pack(side="left", padx=(0, 16))
 
-        ctk.CTkCheckBox(
+        self.overwrite_checkbox = ctk.CTkCheckBox(
             nm_row1,
             text="Overwrite existing files",
             variable=self.overwrite,
             font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=(0, 16))
+        )
+        self.overwrite_checkbox.pack(side="left")
 
-        ctk.CTkCheckBox(
-            nm_row1,
-            text="Strip EXIF & Camera GPS Metadata",
+        nm_row2 = ctk.CTkFrame(tab_naming, fg_color="transparent")
+        nm_row2.pack(fill="x", pady=(4, 2))
+        ctk.CTkLabel(
+            nm_row2,
+            text="Metadata:",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=APP_MUTED,
+        ).pack(side="left", padx=(0, 8))
+        self.preserve_metadata_checkbox = ctk.CTkCheckBox(
+            nm_row2,
+            text="Preserve EXIF and color profile",
+            variable=self.preserve_metadata,
+            command=self._preserve_metadata_changed,
+            font=ctk.CTkFont(size=11),
+        )
+        self.preserve_metadata_checkbox.pack(side="left", padx=(0, 16))
+        self.strip_metadata_checkbox = ctk.CTkCheckBox(
+            nm_row2,
+            text="Remove all metadata (privacy)",
             variable=self.strip_metadata,
+            command=self._strip_metadata_changed,
             font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=(0, 16))
-
-        ctk.CTkCheckBox(
-            nm_row1,
-            text="Replace Source Images with WebP",
-            variable=self.replace_source_files,
-            command=self._replace_source_files_toggled,
-            font=ctk.CTkFont(size=11),
-        ).pack(side="left")
+        )
+        self.strip_metadata_checkbox.pack(side="left")
 
         # ==========================================
         # TAB 4: WATERMARK
@@ -1975,7 +2016,7 @@ class WebPCompressorApp(ctk.CTk):
 
         self.replace_source_checkbox = ctk.CTkCheckBox(
             self.output_options_frame,
-            text="Replace source images with compressed WebP",
+            text="Delete originals after successful conversion",
             variable=self.replace_source_files,
             command=self._replace_source_files_toggled,
             checkbox_width=16,
@@ -2223,6 +2264,61 @@ class WebPCompressorApp(ctk.CTk):
         self._save_queue_now()
         self.destroy()
 
+    def destroy(self) -> None:
+        """Cancel this window's pending work before tearing it down."""
+        if getattr(self, "_destroying", False):
+            return
+        self._destroying = True
+        for attribute in (
+            "_startup_warning_job",
+            "_process_events_job",
+            "_queue_restore_job",
+            "_queue_save_job",
+            "_cli_load_job",
+            "_theme_change_job",
+            "_resize_redraw_job",
+            "_estimate_after_id",
+        ):
+            callback_id = getattr(self, attribute, None)
+            if callback_id is None:
+                continue
+            try:
+                self.after_cancel(callback_id)
+            except Exception:
+                pass
+            setattr(self, attribute, None)
+        self._cancel_owned_tk_callbacks()
+        super().destroy()
+
+    def _cancel_owned_tk_callbacks(self) -> None:
+        """Cancel timers registered by this window's widget tree.
+
+        Tk keeps ``after`` timers in the shared Tcl interpreter. Destroying a
+        widget removes its Tcl command but not every third-party timer that
+        references it. Match callbacks to this tree's registered commands so
+        cleanup is complete without cancelling timers owned by another window.
+        """
+        try:
+            widgets: list[tk.Misc] = [self]
+            for widget in widgets:
+                widgets.extend(widget.winfo_children())
+            owned_commands = {
+                command
+                for widget in widgets
+                for command in (getattr(widget, "_tclCommands", None) or ())
+            }
+            for callback_id in self.tk.splitlist(self.tk.call("after", "info")):
+                details = self.tk.call("after", "info", callback_id)
+                script = details[0] if isinstance(details, tuple) else details
+                parts = self.tk.splitlist(script)
+                if parts and parts[0] in owned_commands:
+                    try:
+                        self.after_cancel(callback_id)
+                    except Exception:
+                        pass
+        except (tk.TclError, RuntimeError):
+            pass
+
     # -- queue persistence ------------------------------------------------
 
     def _schedule_queue_save(self) -> None:
@@ -2392,6 +2488,43 @@ class WebPCompressorApp(ctk.CTk):
         else:
             self.convert_button.configure(text=f"Convert to {fmt}")
             self._set_quality_visibility(True)
+
+        image_format = normalize_output_format(new_format)
+        if image_format in IMAGE_OUTPUT_FORMATS:
+            self._sync_image_format_controls(image_format)
+
+    def _sync_image_format_controls(self, image_format: str) -> None:
+        """Keep image controls honest about what the selected encoder supports."""
+        supports_lossless_toggle = image_format in LOSSLESS_TOGGLE_FORMATS
+        supports_solver = image_format in TARGET_SOLVER_FORMATS
+
+        lossless_button = getattr(self, "preset_buttons", {}).get("Lossless")
+        if lossless_button is not None:
+            lossless_button.configure(
+                state="normal" if supports_lossless_toggle else "disabled"
+            )
+
+        if supports_lossless_toggle:
+            if not self.lossless_checkbox.winfo_manager():
+                self.lossless_checkbox.pack(side="left", padx=(8, 0))
+        else:
+            self.lossless.set(False)
+            self.lossless_checkbox.pack_forget()
+
+        solver_state = "normal" if supports_solver and not self.lossless.get() else "disabled"
+        for widget in (
+            self.target_size_checkbox,
+            self.target_size_entry,
+            self.target_size_unit_menu,
+        ):
+            widget.configure(state=solver_state)
+        if not supports_solver or self.lossless.get():
+            self.enable_target_size.set(False)
+            self.protect_quality.set(False)
+            self.enable_quality_target.set(False)
+            self.ssim_row.pack_forget()
+        elif not self.ssim_row.winfo_manager():
+            self.ssim_row.pack(fill="x", pady=(0, 2), after=self.size_row)
 
     def _open_format_browser(self) -> None:
         options = list(self.format_menu.cget("values"))
@@ -2771,9 +2904,14 @@ class WebPCompressorApp(ctk.CTk):
 
     def _change_appearance_mode(self, new_mode: str) -> None:
         # Defer execution slightly so the OptionMenu popup menu dismisses and ungrabs cleanly
-        self.after(20, lambda: self._apply_appearance_mode_change(new_mode))
+        if self._theme_change_job is not None:
+            self.after_cancel(self._theme_change_job)
+        self._theme_change_job = self.after(
+            20, lambda: self._apply_appearance_mode_change(new_mode)
+        )
 
     def _apply_appearance_mode_change(self, new_mode: str) -> None:
+        self._theme_change_job = None
         ctk.set_appearance_mode(new_mode)
         update_setting("theme", new_mode)
         self._apply_table_theme()
@@ -3011,6 +3149,10 @@ class WebPCompressorApp(ctk.CTk):
 
     def _apply_preset(self, quality: int, is_lossless: bool) -> None:
         if self.conversion_running:
+            return
+        image_format = normalize_output_format(self.target_format.get())
+        if is_lossless and image_format not in LOSSLESS_TOGGLE_FORMATS:
+            self.status_text.set(f"{image_format} does not offer a lossless toggle")
             return
         self.lossless.set(is_lossless)
         self._lossless_changed()
@@ -3332,9 +3474,22 @@ class WebPCompressorApp(ctk.CTk):
         if replace:
             self.save_in_source_folder.set(True)
             self._save_in_source_folder_toggled()
-            self.status_text.set("Replace source enabled: Converted WebP will replace original images")
+            self.status_text.set(
+                "Source deletion enabled: originals are removed only after successful conversion"
+            )
         else:
-            self.status_text.set("Replace source disabled")
+            self.status_text.set("Source deletion disabled")
+
+    def _preserve_metadata_changed(self) -> None:
+        if self.preserve_metadata.get():
+            self.strip_metadata.set(False)
+        self._schedule_size_estimate()
+
+    def _strip_metadata_changed(self) -> None:
+        if self.strip_metadata.get():
+            self.preserve_metadata.set(False)
+        update_setting("strip_metadata", self.strip_metadata.get())
+        self._schedule_size_estimate()
 
     def _add_files(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -4119,11 +4274,17 @@ class WebPCompressorApp(ctk.CTk):
         self._schedule_size_estimate()
 
     def _lossless_changed(self) -> None:
+        image_format = normalize_output_format(self.target_format.get())
+        if self.lossless.get() and image_format not in LOSSLESS_TOGGLE_FORMATS:
+            self.lossless.set(False)
+            self.status_text.set(f"{image_format} does not offer a lossless toggle")
         if not self.conversion_running:
             quality_state = "disabled" if self.lossless.get() else "normal"
             if getattr(self, "quality_slider", None) is not None:
                 self.quality_slider.configure(state=quality_state)
             self.quality_entry.configure(state=quality_state)
+        if image_format in IMAGE_OUTPUT_FORMATS:
+            self._sync_image_format_controls(image_format)
         self._schedule_size_estimate()
 
     def _update_image_summary(self) -> None:
@@ -5159,6 +5320,7 @@ class WebPCompressorApp(ctk.CTk):
         )
 
     def _process_events(self) -> None:
+        self._process_events_job = None
         try:
             while True:
                 event, payload = self.events.get_nowait()
@@ -5249,7 +5411,8 @@ class WebPCompressorApp(ctk.CTk):
                         play_completion_sound()
         except queue.Empty:
             pass
-        self.after(100, self._process_events)
+        if not self._destroying:
+            self._process_events_job = self.after(100, self._process_events)
 
     def _display_result(self, result: ConversionResult) -> None:
         self.row_results[result.source_path] = result

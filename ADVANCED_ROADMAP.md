@@ -193,9 +193,26 @@ Legend: `[x]` complete and verified, `[ ]` not implemented, `[-]` in progress.
 16. Golden-image fixtures, smoke tests, crash reporting, benchmarks. [x]
 17. Windows & macOS code signing, notarization, and verification. [x]
 
+## Finishing touches / stabilization
+
+- [x] Make image controls capability-aware: lossless is offered only for WebP/JXL;
+  target-size and SSIM controls are offered only for encoders backed by the solver.
+- [x] Expose metadata preservation in the UI and make preserve/privacy modes mutually
+  exclusive.
+- [x] Remove the duplicate destructive-source option and clarify that originals are
+  deleted only after a successful conversion.
+- [x] Cancel app- and widget-owned scheduled callbacks during shutdown without touching
+  callbacks belonging to other Tk windows.
+- [x] Close the local automation server socket cleanly on stop/restart.
+- [x] Remove Pillow deprecation and leaked-image resource warnings from benchmarks and
+  golden-fixture verification.
+- [ ] Continue the visual pass at minimum window size: responsive wrapping, keyboard
+  focus order, contrast, and high-DPI checks on Windows and macOS.
+- [ ] Run packaged-app smoke tests on Windows, Intel macOS, and Apple Silicon macOS.
+
 ## Current verification baseline
 
-- Unit/integration tests: **323 passing** covering all features including:
+- Unit/integration tests: **342 passing** covering all features including:
   code signing & verification (`tests/test_code_signing.py`),
   JPEG XL engine (`tests/test_jxl_engine.py`),
   PSD compositing (`tests/test_psd_engine.py`),

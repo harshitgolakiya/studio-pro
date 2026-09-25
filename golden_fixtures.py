@@ -172,8 +172,10 @@ class GoldenFixtureRunner:
                     continue
 
                 # Compare
-                golden_img = Image.open(str(golden_path)).convert("RGB")
-                current_img = Image.open(str(result.output_path)).convert("RGB")
+                with Image.open(golden_path) as opened_golden:
+                    golden_img = opened_golden.convert("RGB")
+                with Image.open(result.output_path) as opened_current:
+                    current_img = opened_current.convert("RGB")
                 if golden_img.size != current_img.size:
                     current_img = current_img.resize(golden_img.size, Image.LANCZOS)
 

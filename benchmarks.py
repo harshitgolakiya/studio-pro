@@ -113,7 +113,7 @@ def bench_ssim(image_size: tuple[int, int] = (512, 512),
     img_a = _make_test_image(*image_size)
     img_b = img_a.copy()
     # Introduce slight difference
-    pixels = list(img_b.getdata())
+    pixels = list(img_b.get_flattened_data())
     for i in range(0, len(pixels), 10):
         r, g, b = pixels[i]
         pixels[i] = (min(r + 5, 255), g, b)

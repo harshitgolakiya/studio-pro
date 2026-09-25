@@ -164,6 +164,45 @@ class FormatBrowserIntegrationTests(unittest.TestCase):
         self.assertIn("Lossless", badges)
         self.assertIn("Alpha", badges)
 
+    def test_image_controls_follow_encoder_capabilities(self) -> None:
+        app = self.app
+
+        app.target_format.set("WEBP")
+        app._format_changed("WEBP")
+        self.assertTrue(app.lossless_checkbox.winfo_manager())
+        self.assertEqual(app.preset_buttons["Lossless"].cget("state"), "normal")
+        self.assertEqual(app.target_size_checkbox.cget("state"), "normal")
+
+        app._apply_preset(80, True)
+        self.assertTrue(app.lossless.get())
+        self.assertEqual(app.quality_entry.cget("state"), "disabled")
+        self.assertEqual(app.target_size_checkbox.cget("state"), "disabled")
+
+        app.target_format.set("PNG")
+        app._format_changed("PNG")
+        self.assertFalse(app.lossless.get())
+        self.assertFalse(app.lossless_checkbox.winfo_manager())
+        self.assertEqual(app.preset_buttons["Lossless"].cget("state"), "disabled")
+        self.assertEqual(app.target_size_checkbox.cget("state"), "disabled")
+        self.assertFalse(app.ssim_row.winfo_manager())
+
+        app.target_format.set("JPEG / JPG")
+        app._format_changed("JPEG / JPG")
+        self.assertEqual(app.target_size_checkbox.cget("state"), "normal")
+        self.assertTrue(app.ssim_row.winfo_manager())
+
+    def test_metadata_modes_are_mutually_exclusive(self) -> None:
+        app = self.app
+        app.strip_metadata.set(True)
+        app._strip_metadata_changed()
+        self.assertTrue(app.strip_metadata.get())
+        self.assertFalse(app.preserve_metadata.get())
+
+        app.preserve_metadata.set(True)
+        app._preserve_metadata_changed()
+        self.assertTrue(app.preserve_metadata.get())
+        self.assertFalse(app.strip_metadata.get())
+
 
 if __name__ == "__main__":
     unittest.main()

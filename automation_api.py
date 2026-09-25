@@ -260,9 +260,17 @@ class AutomationServer:
         self._thread.start()
 
     def stop(self) -> None:
-        if self._server is not None:
-            self._server.shutdown()
-            self._server = None
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
+        server = self._server
+        thread = self._thread
+        self._server = None
+        self._thread = None
+        if server is not None:
+            try:
+                server.shutdown()
+            finally:
+                # shutdown() stops serve_forever but intentionally does not
+                # close the listening socket. Always release it so repeated
+                # starts and test runs do not leak descriptors or hold ports.
+                server.server_close()
+        if thread is not None:
+            thread.join(timeout=5)
