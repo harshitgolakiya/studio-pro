@@ -8,6 +8,7 @@ from typing import Callable
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
 from font_loader import DISPLAY_FONT
 from settings import load_settings, update_setting
 from url_downloader import (
@@ -17,6 +18,7 @@ from url_downloader import (
     download_media_from_url,
 )
 from utils import play_completion_sound
+from ui_dispatch import TkEventBridge
 
 VIDEO_QUALITIES = [
     "1080p Full HD",
@@ -55,6 +57,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         self.download_thread: threading.Thread | None = None
         self.settings = load_settings()
         self._closed = False
+        self._ui_events = TkEventBridge(self)
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
         self.title("Media Stream Downloader (VIP)")
@@ -86,6 +89,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         self.progress_val = tk.DoubleVar(value=0.0)
 
         self._build_ui()
+        enable_keyboard_navigation(self)
         self.grab_set()
 
     def _build_ui(self) -> None:
@@ -426,7 +430,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         def worker() -> None:
             try:
                 def progress(pct: float, msg: str) -> None:
-                    self.after(0, lambda: self._update_progress(pct, msg))
+                    self._ui_events.post(lambda: self._update_progress(pct, msg))
 
                 result_path = download_media_from_url(
                     url=url,
@@ -439,16 +443,25 @@ class URLDownloaderDialog(ctk.CTkToplevel):
                     cancel_event=self.cancel_event,
                 )
 
-                self.after(0, lambda: self._on_success(result_path))
+                self._ui_events.post(lambda: self._on_success(result_path))
             except DownloadCancelledError:
-                self.after(0, lambda: self._on_cancelled())
+                self._ui_events.post(self._on_cancelled)
             except MembersOnlyError as mem_err:
-                self.after(0, lambda: self._on_members_error(str(mem_err)))
+                message = str(mem_err)
+                self._ui_events.post(lambda: self._on_members_error(message))
             except Exception as exc:
-                self.after(0, lambda: self._on_error(str(exc)))
+                message = str(exc)
+                self._ui_events.post(lambda: self._on_error(message))
 
         self.download_thread = threading.Thread(target=worker, daemon=True)
         self.download_thread.start()
+
+    def destroy(self) -> None:
+        self._closed = True
+        self.cancel_event.set()
+        if hasattr(self, "_ui_events"):
+            self._ui_events.close()
+        super().destroy()
 
     def _update_progress(self, pct: float, msg: str) -> None:
         if self._closed:

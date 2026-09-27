@@ -21,6 +21,8 @@ from utils import (
     format_file_size,
     format_saved_percentage,
     reserve_output_path,
+    publish_output_file,
+    release_output_path,
 )
 
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".wmv", ".m4v"}
@@ -219,6 +221,43 @@ def extract_video_thumbnail(
 
 
 _GPU_ENCODER_CACHE: tuple[str, str] | None = None
+_GPU_ENCODER_FAILURES: set[str] = set()
+
+
+def _software_h264_args(
+    video_quality: str,
+    target_mb: float | None,
+    media_duration: float | None,
+) -> list[str]:
+    """Return a broadly compatible H.264 software configuration."""
+    result = ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    if video_quality == "high":
+        result.extend(["-crf", "18", "-preset", "slow"])
+    elif video_quality == "low":
+        result.extend(["-crf", "28", "-preset", "fast"])
+    elif video_quality in ("discord25", "target_mb") or target_mb:
+        duration = media_duration or 30.0
+        mb_limit = 24.0 if video_quality == "discord25" else (target_mb or 15.0)
+        total_kbits = (mb_limit * 8192) / duration
+        audio_kbps = 96
+        video_kbps = max(100, int(total_kbits - audio_kbps))
+        result.extend(
+            ["-b:v", f"{video_kbps}k", "-b:a", f"{audio_kbps}k", "-preset", "veryfast"]
+        )
+    else:
+        result.extend(["-crf", "23", "-preset", "medium"])
+    return result
+
+
+def _disable_hardware_encoder(encoder: str) -> None:
+    """Avoid repeatedly selecting an encoder that failed a real conversion."""
+    global _GPU_ENCODER_CACHE
+    _GPU_ENCODER_FAILURES.add(encoder)
+    if _GPU_ENCODER_CACHE and _GPU_ENCODER_CACHE[0] == encoder:
+        _GPU_ENCODER_CACHE = (
+            "libx264",
+            "Software CPU (automatic hardware fallback)",
+        )
 
 
 def get_best_hardware_encoder() -> tuple[str, str]:
@@ -229,6 +268,10 @@ def get_best_hardware_encoder() -> tuple[str, str]:
     """
     global _GPU_ENCODER_CACHE
     if _GPU_ENCODER_CACHE is not None:
+        return _GPU_ENCODER_CACHE
+
+    if os.environ.get("SHADOW_DISABLE_GPU", "").strip().lower() in {"1", "true", "yes"}:
+        _GPU_ENCODER_CACHE = ("libx264", "Software CPU (GPU disabled)")
         return _GPU_ENCODER_CACHE
 
     ffmpeg = get_ffmpeg_path()
@@ -242,9 +285,8 @@ def get_best_hardware_encoder() -> tuple[str, str]:
         else 0
     )
     if sys.platform == "darwin":
-        # VideoToolbox is the only hardware H.264 path on macOS; it covers
-        # every Apple-chip Mac (M-series and the A18 Pro MacBook Neo) as well
-        # as Intel Macs with Quick Sync.
+        # VideoToolbox is the native hardware H.264 path on macOS. The encode
+        # probe below decides whether it is usable on this specific Mac.
         candidates = [("h264_videotoolbox", "GPU: Apple VideoToolbox")]
     else:
         candidates = [
@@ -252,15 +294,41 @@ def get_best_hardware_encoder() -> tuple[str, str]:
             ("h264_qsv", "GPU: Intel QuickSync"),
             ("h264_amf", "GPU: AMD AMF"),
         ]
+    try:
+        encoder_list = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=flags,
+        )
+        advertised_encoders = encoder_list.stdout + encoder_list.stderr
+    except Exception:
+        advertised_encoders = ""
+
     for enc, label in candidates:
+        if enc in _GPU_ENCODER_FAILURES:
+            continue
+        if advertised_encoders and enc not in advertised_encoders:
+            continue
         try:
+            # Exercise a realistic 720p yuv420p encode rather than only asking
+            # FFmpeg whether the encoder name exists.  Encoder builds are often
+            # present on machines whose driver or GPU generation cannot use them.
             cmd = [
                 ffmpeg,
                 "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
                 "-f",
                 "lavfi",
                 "-i",
-                "color=c=black:s=64x64:d=0.04",
+                "color=c=black:s=1280x720:r=30:d=0.30",
+                "-frames:v",
+                "8",
+                "-pix_fmt",
+                "yuv420p",
                 "-c:v",
                 enc,
                 "-f",
@@ -268,7 +336,7 @@ def get_best_hardware_encoder() -> tuple[str, str]:
                 "-",
             ]
             r = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=2, creationflags=flags
+                cmd, capture_output=True, text=True, timeout=8, creationflags=flags
             )
             if r.returncode == 0:
                 _GPU_ENCODER_CACHE = (enc, label)
@@ -278,6 +346,133 @@ def get_best_hardware_encoder() -> tuple[str, str]:
 
     _GPU_ENCODER_CACHE = ("libx264", "Software CPU (libx264)")
     return _GPU_ENCODER_CACHE
+
+
+def _run_ffmpeg_process(
+    args: list[str],
+    source_name: str,
+    media_duration: float | None,
+    progress_callback: Callable[[float, str], None] | None,
+    cancel_check: Callable[[], bool] | None,
+) -> tuple[int, str, bool, bool]:
+    """Run FFmpeg while draining both pipes and monitoring cancellation/stalls."""
+    flags = (
+        subprocess.CREATE_NO_WINDOW
+        if hasattr(subprocess, "CREATE_NO_WINDOW")
+        else 0
+    )
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        creationflags=flags,
+    )
+
+    last_cb_time = 0.0
+    cancelled = False
+    stalled = False
+    stderr_lines: deque[str] = deque(maxlen=200)
+
+    def drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for error_line in proc.stderr:
+            stderr_lines.append(error_line)
+
+    stderr_thread = threading.Thread(
+        target=drain_stderr,
+        name="shadow-ffmpeg-stderr",
+        daemon=True,
+    )
+    stderr_thread.start()
+
+    stdout_queue: queue.Queue[str | None] = queue.Queue()
+
+    def drain_stdout() -> None:
+        try:
+            if proc.stdout is not None:
+                for progress_line in proc.stdout:
+                    stdout_queue.put(progress_line)
+        finally:
+            stdout_queue.put(None)
+
+    stdout_thread = threading.Thread(
+        target=drain_stdout,
+        name="shadow-ffmpeg-progress",
+        daemon=True,
+    )
+    stdout_thread.start()
+    last_process_output = time.monotonic()
+
+    while True:
+        if cancel_check and cancel_check():
+            cancelled = True
+            _terminate_process(proc)
+            break
+        try:
+            line = stdout_queue.get(timeout=0.1)
+        except queue.Empty:
+            if proc.poll() is not None and not stdout_thread.is_alive():
+                break
+            if time.monotonic() - last_process_output > 120.0:
+                stalled = True
+                _terminate_process(proc)
+                break
+            continue
+        if line is None:
+            if proc.poll() is not None:
+                break
+            continue
+        last_process_output = time.monotonic()
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("out_time_us="):
+            try:
+                elapsed_sec = int(line.split("=", 1)[1]) / 1_000_000.0
+                now = time.monotonic()
+                if progress_callback and now - last_cb_time >= 0.12:
+                    last_cb_time = now
+                    if media_duration and media_duration > 0:
+                        fraction = max(0.01, min(0.99, elapsed_sec / media_duration))
+                        pct_int = int(fraction * 100)
+                        elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
+                        total_m, total_s = divmod(int(media_duration), 60)
+                        progress_callback(
+                            fraction,
+                            f"Encoding {source_name}: {pct_int}% "
+                            f"({elapsed_m:02d}:{elapsed_s:02d} / {total_m:02d}:{total_s:02d})",
+                        )
+                    else:
+                        elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
+                        progress_callback(
+                            0.5,
+                            f"Encoding {source_name}: {elapsed_m:02d}:{elapsed_s:02d} elapsed",
+                        )
+            except (ValueError, IndexError):
+                pass
+        elif line == "progress=end" and progress_callback:
+            progress_callback(1.0, f"Finishing {source_name}...")
+
+    try:
+        proc.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        _terminate_process(proc)
+    stdout_thread.join(timeout=2.0)
+    stderr_thread.join(timeout=2.0)
+    stderr_text = "".join(stderr_lines)
+    if proc.stdout is not None:
+        proc.stdout.close()
+    if proc.stderr is not None:
+        proc.stderr.close()
+    return (
+        proc.returncode if proc.returncode is not None else -1,
+        stderr_text,
+        cancelled,
+        stalled,
+    )
 
 
 def convert_media_file(
@@ -315,6 +510,7 @@ def convert_media_file(
         )
 
     original_size = None
+    output_path: Path | None = None
     try:
         if not source_path.is_file():
             raise FileNotFoundError("The selected media file no longer exists")
@@ -368,6 +564,8 @@ def convert_media_file(
             "-i",
             str(source_path.resolve()),
         ]
+        hardware_encoder_used: str | None = None
+        hardware_args_slice: tuple[int, int] | None = None
 
         # Build video filter chain (resolution downscaling and framerate capping)
         video_filters: list[str] = []
@@ -401,6 +599,8 @@ def convert_media_file(
             else:
                 gpu_enc, _ = get_best_hardware_encoder()
                 if gpu_enc != "libx264" and not (video_quality in ("discord25", "target_mb") or target_mb):
+                    hardware_encoder_used = gpu_enc
+                    hardware_args_start = len(args)
                     args.extend(["-c:v", gpu_enc])
                     if gpu_enc == "h264_qsv":
                         q = "20" if video_quality == "high" else ("28" if video_quality == "low" else "24")
@@ -418,23 +618,11 @@ def convert_media_file(
                             b = "8M" if video_quality == "high" else ("2M" if video_quality == "low" else "4M")
                             args.extend(["-b:v", b])
                         args.extend(["-pix_fmt", "yuv420p"])
+                    hardware_args_slice = (hardware_args_start, len(args))
                 else:
-                    args.extend(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
-                    if video_quality == "high":
-                        args.extend(["-crf", "18", "-preset", "slow"])
-                    elif video_quality == "low":
-                        args.extend(["-crf", "28", "-preset", "fast"])
-                    elif (
-                        video_quality in ("discord25", "target_mb") or target_mb
-                    ):
-                        duration = media_duration or 30.0
-                        mb_limit = 24.0 if video_quality == "discord25" else (target_mb or 15.0)
-                        total_kbits = (mb_limit * 8192) / duration
-                        audio_kbps = 96
-                        video_kbps = max(100, int(total_kbits - audio_kbps))
-                        args.extend(["-b:v", f"{video_kbps}k", "-b:a", f"{audio_kbps}k", "-preset", "veryfast"])
-                    else:  # medium default
-                        args.extend(["-crf", "23", "-preset", "medium"])
+                    args.extend(
+                        _software_h264_args(video_quality, target_mb, media_duration)
+                    )
 
                 if video_filters:
                     args.extend(["-vf", ",".join(video_filters)])
@@ -511,118 +699,45 @@ def convert_media_file(
 
         args.append(str(temporary_file.resolve()))
 
-        flags = (
-            subprocess.CREATE_NO_WINDOW
-            if hasattr(subprocess, "CREATE_NO_WINDOW")
-            else 0
-        )
-        proc = subprocess.Popen(
+        returncode, stderr_text, cancelled, stalled = _run_ffmpeg_process(
             args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            creationflags=flags,
+            source_path.name,
+            media_duration,
+            progress_callback,
+            cancel_check,
         )
 
-        last_cb_time = 0.0
-        cancelled = False
-        stalled = False
-        # FFmpeg writes diagnostics to stderr while machine-readable progress
-        # is emitted on stdout. Windows pipes have a small buffer; reading only
-        # stdout can therefore deadlock once stderr fills (seen consistently on
-        # GitHub's Windows runners and with some hardware encoders). Drain it
-        # concurrently and retain only the tail needed for an actionable error.
-        stderr_lines: deque[str] = deque(maxlen=200)
-
-        def drain_stderr() -> None:
-            if proc.stderr is None:
-                return
-            for error_line in proc.stderr:
-                stderr_lines.append(error_line)
-
-        stderr_thread = threading.Thread(
-            target=drain_stderr,
-            name="shadow-ffmpeg-stderr",
-            daemon=True,
-        )
-        stderr_thread.start()
-
-        stdout_queue: queue.Queue[str | None] = queue.Queue()
-
-        def drain_stdout() -> None:
-            try:
-                if proc.stdout is not None:
-                    for progress_line in proc.stdout:
-                        stdout_queue.put(progress_line)
-            finally:
-                stdout_queue.put(None)
-
-        stdout_thread = threading.Thread(
-            target=drain_stdout,
-            name="shadow-ffmpeg-progress",
-            daemon=True,
-        )
-        stdout_thread.start()
-        last_process_output = time.monotonic()
-
-        while True:
-            if cancel_check and cancel_check():
-                cancelled = True
-                _terminate_process(proc)
-                break
-            try:
-                line = stdout_queue.get(timeout=0.1)
-            except queue.Empty:
-                if proc.poll() is not None and not stdout_thread.is_alive():
-                    break
-                if time.monotonic() - last_process_output > 120.0:
-                    stalled = True
-                    _terminate_process(proc)
-                    break
-                continue
-            if line is None:
-                if proc.poll() is not None:
-                    break
-                continue
-            last_process_output = time.monotonic()
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("out_time_us="):
-                try:
-                    us = int(line.split("=")[1])
-                    elapsed_sec = us / 1_000_000.0
-                    now = time.monotonic()
-                    if progress_callback and (now - last_cb_time >= 0.12):
-                        last_cb_time = now
-                        if media_duration and media_duration > 0:
-                            fraction = max(0.01, min(0.99, elapsed_sec / media_duration))
-                            pct_int = int(fraction * 100)
-                            elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
-                            total_m, total_s = divmod(int(media_duration), 60)
-                            msg = f"Encoding {source_path.name}: {pct_int}% ({elapsed_m:02d}:{elapsed_s:02d} / {total_m:02d}:{total_s:02d})"
-                            progress_callback(fraction, msg)
-                        else:
-                            elapsed_m, elapsed_s = divmod(int(elapsed_sec), 60)
-                            msg = f"Encoding {source_path.name}: {elapsed_m:02d}:{elapsed_s:02d} elapsed"
-                            progress_callback(0.5, msg)
-                except (ValueError, IndexError):
-                    pass
-            elif line == "progress=end" and progress_callback:
-                progress_callback(1.0, f"Finishing {source_path.name}...")
-
-        try:
-            proc.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            _terminate_process(proc)
-        stdout_thread.join(timeout=2.0)
-        stderr_thread.join(timeout=2.0)
-        stderr_text = "".join(stderr_lines)
-        if proc.stdout is not None:
-            proc.stdout.close()
-        if proc.stderr is not None:
-            proc.stderr.close()
+        # A GPU can pass the startup probe and still reject a real source due
+        # to resolution, pixel format, memory pressure, driver age, or encoder
+        # session limits.  Retry the same job once with universally compatible
+        # libx264 settings and remember the failure for the rest of the session.
+        if (
+            returncode != 0
+            and not cancelled
+            and not stalled
+            and hardware_encoder_used
+            and hardware_args_slice
+        ):
+            _disable_hardware_encoder(hardware_encoder_used)
+            temporary_file.unlink(missing_ok=True)
+            start, end = hardware_args_slice
+            fallback_args = (
+                args[:start]
+                + _software_h264_args(video_quality, target_mb, media_duration)
+                + args[end:]
+            )
+            if progress_callback:
+                progress_callback(
+                    0.0,
+                    "Hardware encoding was unavailable for this file; retrying safely on CPU…",
+                )
+            returncode, stderr_text, cancelled, stalled = _run_ffmpeg_process(
+                fallback_args,
+                source_path.name,
+                media_duration,
+                progress_callback,
+                cancel_check,
+            )
 
         if cancelled:
             temporary_file.unlink(missing_ok=True)
@@ -644,7 +759,7 @@ def convert_media_file(
                 "FFmpeg stopped responding for 120 seconds and was terminated",
             )
 
-        if proc.returncode != 0:
+        if returncode != 0:
             temporary_file.unlink(missing_ok=True)
             temp_tracker.unregister(temporary_file)
             clean_err = (stderr_text or "").strip()
@@ -657,7 +772,12 @@ def convert_media_file(
             raise RuntimeError(f"FFmpeg error: {err_msg}")
 
         # Atomic rename to final output path
-        os.replace(temporary_file, output_path)
+        output_path = publish_output_file(
+            temporary_file,
+            output_path,
+            effective_overwrite,
+            reserved_paths,
+        )
         temp_tracker.unregister(temporary_file)
 
         output_size = output_path.stat().st_size
@@ -684,6 +804,8 @@ def convert_media_file(
             note=note,
         )
     except Exception as error:
+        if output_path is not None and not output_path.exists():
+            release_output_path(output_path, reserved_paths)
         return ConversionResult(
             source_path, None, original_size, None, "-", "Failed", str(error)
         )

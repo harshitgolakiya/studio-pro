@@ -5,8 +5,11 @@ import io
 import os
 from pathlib import Path
 import tempfile
+from typing import Callable
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps, ImageSequence
+from color_manager import convert_color_profile, load_target_profile
+from hdr_tone_map import apply_tone_mapping, resolve_target_bit_depth
 
 try:
     from pillow_heif import register_heif_opener
@@ -55,6 +58,8 @@ from utils import (
     format_file_size,
     format_saved_percentage,
     reserve_output_path,
+    publish_output_file,
+    release_output_path,
 )
 from watermark import apply_image_watermark, apply_text_watermark
 
@@ -77,6 +82,15 @@ SUPPORTED_EXTENSIONS = {
     ".ppm", ".pgm", ".pbm", ".pnm", ".pfm",
     ".sgi", ".rgb", ".rgba", ".bw", ".xbm", ".xpm", ".im", ".msp",
 }
+
+
+def _preserves_color_profile(mode: object) -> bool:
+    """Recognize both stored keys and the user-facing preserve label."""
+    normalized = str(mode or "").strip().lower()
+    return not normalized or normalized.startswith("preserve") or normalized in {
+        "none",
+        "untouched",
+    }
 
 # User-facing name -> (file extension, Pillow encoder name). These are the
 # general-purpose Pillow encoders that can reliably accept ordinary photos or
@@ -130,6 +144,10 @@ IMAGE_FORMAT_CAPABILITIES: dict[str, dict[str, object]] = {
 LOSSY_IMAGE_FORMATS = {"WEBP", "AVIF", "HEIC", "JPEG", "JXL"}
 
 
+class ConversionCancelled(Exception):
+    """Internal control-flow signal for cooperative image cancellation."""
+
+
 def normalize_output_format(value: str) -> str:
     """Return a canonical IMAGE_OUTPUT_FORMATS key for a UI/API value."""
     fmt = value.upper().strip()
@@ -179,6 +197,7 @@ def solve_target_size_quality(
     target_bytes: int,
     fmt: str = "WEBP",
     save_kwargs: dict | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> int:
     """Binary search over compression quality (1-95) to hit target byte size."""
     kwargs = dict(save_kwargs or {})
@@ -188,6 +207,8 @@ def solve_target_size_quality(
     smallest_size_seen: int | None = None
 
     for _ in range(7):  # 7 iterations yields 1-quality-step accuracy
+        if cancel_check and cancel_check():
+            raise ConversionCancelled
         mid = (low + high) // 2
         kwargs["quality"] = mid
         buf = io.BytesIO()
@@ -238,6 +259,7 @@ def solve_quality_for_ssim(
     target_ssim: float,
     fmt: str = "WEBP",
     save_kwargs: dict | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> tuple[int, float]:
     """Lowest quality (5-95) whose SSIM meets ``target_ssim``; if none does,
     the highest-SSIM quality tried. Returns (quality, achieved_ssim)."""
@@ -245,6 +267,8 @@ def solve_quality_for_ssim(
     best: tuple[int, float] | None = None
     highest: tuple[int, float] | None = None
     for _ in range(7):
+        if cancel_check and cancel_check():
+            raise ConversionCancelled
         mid = (low + high) // 2
         try:
             _size, ssim = _encode_and_measure(image, fmt, mid, save_kwargs)
@@ -367,10 +391,9 @@ def apply_image_transformations(
     """
 
     def step_color(im: Image.Image) -> Image.Image:
-        if not color_profile_mode or str(color_profile_mode).strip().lower() in ("preserve", "preserve_(source)", "none", "untouched"):
+        if _preserves_color_profile(color_profile_mode):
             return im
         try:
-            from color_manager import convert_color_profile
             out_im, _, _ = convert_color_profile(
                 im,
                 target_mode=color_profile_mode,
@@ -462,10 +485,10 @@ def apply_image_transformations(
         return watermark_fn(im)
 
     def step_tone_map(im: Image.Image) -> Image.Image:
-        if (not hdr_tone_mapping or str(hdr_tone_mapping).strip().lower() in ("none", "direct")) and hdr_exposure == 0.0:
+        tone_mode = str(hdr_tone_mapping or "").strip().lower()
+        if (not tone_mode or tone_mode.startswith(("none", "direct"))) and hdr_exposure == 0.0:
             return im
         try:
-            from hdr_tone_map import apply_tone_mapping
             return apply_tone_mapping(im, method=hdr_tone_mapping, exposure=hdr_exposure)
         except Exception:
             return im
@@ -624,6 +647,7 @@ def convert_image(
     psd_composite_mode: str = "merged",
     psd_layer_index: int = -1,
     replace_source: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> ConversionResult:
     """Convert and optimize image with format conversion, resizing, watermarking, and target size solver.
 
@@ -634,10 +658,16 @@ def convert_image(
     result carries a note saying the target was overshot.
     """
     original_size = None
+    output_path: Path | None = None
     width = None
     height = None
     note: str | None = None
     try:
+        def check_cancelled() -> None:
+            if cancel_check and cancel_check():
+                raise ConversionCancelled
+
+        check_cancelled()
         if source_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             raise ValueError("Unsupported image format")
         if not source_path.is_file():
@@ -695,6 +725,7 @@ def convert_image(
             image_obj = Image.open(source_path)
 
         with image_obj as image:
+            check_cancelled()
             is_animated = bool(getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1)
 
             # Resize is a stack step: its dimensions are derived from the image
@@ -707,6 +738,7 @@ def convert_image(
                 loop = image.info.get("loop", 0)
 
                 for frame in ImageSequence.Iterator(image):
+                    check_cancelled()
                     pf = _process_frame_image(
                         frame,
                         resize_spec=resize_spec,
@@ -769,7 +801,13 @@ def convert_image(
                             optimize=True,
                             disposal=2,
                         )
-                    os.replace(temporary_path, output_path)
+                    check_cancelled()
+                    output_path = publish_output_file(
+                        temporary_path,
+                        output_path,
+                        effective_overwrite,
+                        reserved_paths,
+                    )
                 finally:
                     if temporary_path is not None:
                         temporary_path.unlink(missing_ok=True)
@@ -788,6 +826,7 @@ def convert_image(
                 )
 
             image.load()
+            check_cancelled()
             try:
                 image = ImageOps.exif_transpose(image)
             except Exception:
@@ -817,8 +856,8 @@ def convert_image(
                 hdr_tone_mapping=hdr_tone_mapping,
                 hdr_exposure=hdr_exposure,
             )
+            check_cancelled()
 
-            from hdr_tone_map import resolve_target_bit_depth, apply_tone_mapping
             effective_bit_depth = resolve_target_bit_depth(image, bit_depth, fmt)
 
             # If image is high bit-depth/HDR float and output format only supports 8-bit,
@@ -848,9 +887,8 @@ def convert_image(
                     icc_profile = None
 
             # Color profile override if color management conversion was active
-            if color_profile_mode and str(color_profile_mode).strip().lower() not in ("preserve", "preserve_(source)", "none", "untouched"):
+            if not _preserves_color_profile(color_profile_mode):
                 try:
-                    from color_manager import load_target_profile
                     _, target_bytes, _ = load_target_profile(color_profile_mode, color_profile_custom)
                     if target_bytes:
                         icc_profile = target_bytes
@@ -901,7 +939,11 @@ def convert_image(
                 solver_kwargs = {"method": 6} if fmt == "WEBP" else {}
                 if target_ssim:
                     chosen_quality, achieved = solve_quality_for_ssim(
-                        image, target_ssim, fmt=fmt_target, save_kwargs=solver_kwargs
+                        image,
+                        target_ssim,
+                        fmt=fmt_target,
+                        save_kwargs=solver_kwargs,
+                        cancel_check=cancel_check,
                     )
                     note = f"quality {chosen_quality} for SSIM {achieved:.3f}"
                     if achieved < target_ssim:
@@ -909,7 +951,11 @@ def convert_image(
                 else:
                     target_bytes = target_kb * 1024
                     chosen_quality = solve_target_size_quality(
-                        image, target_bytes, fmt=fmt_target, save_kwargs=solver_kwargs
+                        image,
+                        target_bytes,
+                        fmt=fmt_target,
+                        save_kwargs=solver_kwargs,
+                        cancel_check=cancel_check,
                     )
                     if min_ssim:
                         _size, achieved = _encode_and_measure(
@@ -917,7 +963,11 @@ def convert_image(
                         )
                         if achieved < min_ssim:
                             floor_quality, floor_ssim = solve_quality_for_ssim(
-                                image, min_ssim, fmt=fmt_target, save_kwargs=solver_kwargs
+                                image,
+                                min_ssim,
+                                fmt=fmt_target,
+                                save_kwargs=solver_kwargs,
+                                cancel_check=cancel_check,
                             )
                             if floor_quality > chosen_quality:
                                 chosen_quality = floor_quality
@@ -1026,7 +1076,13 @@ def convert_image(
                 else:
                     image.save(temporary_path, format=pillow_format)
 
-                os.replace(temporary_path, output_path)
+                check_cancelled()
+                output_path = publish_output_file(
+                    temporary_path,
+                    output_path,
+                    effective_overwrite,
+                    reserved_paths,
+                )
             finally:
                 if temporary_path is not None:
                     temporary_path.unlink(missing_ok=True)
@@ -1056,7 +1112,21 @@ def convert_image(
             height=height,
             note=note,
         )
+    except ConversionCancelled:
+        if output_path is not None and not output_path.exists():
+            release_output_path(output_path, reserved_paths)
+        return ConversionResult(
+            source_path,
+            None,
+            original_size,
+            None,
+            "-",
+            "Cancelled",
+            "Operation cancelled",
+        )
     except Exception as error:
+        if output_path is not None and not output_path.exists():
+            release_output_path(output_path, reserved_paths)
         return ConversionResult(
             source_path, None, original_size, None, "-", "Failed", str(error)
         )
@@ -1087,19 +1157,42 @@ def estimate_image_output_size(
         return result.output_size
 
 
-def combine_images_to_pdf(images: list[Path], output_pdf_path: Path) -> Path:
+def combine_images_to_pdf(
+    images: list[Path],
+    output_pdf_path: Path,
+    overwrite: bool = False,
+    reserved_paths: set[Path] | None = None,
+) -> Path:
     """Combine a list of images into a single multi-page compressed PDF."""
     if not images:
         raise ValueError("No images provided to combine into PDF")
+    output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    reserved_output = reserve_output_path(output_pdf_path, overwrite, reserved_paths)
     opened_images: list[Image.Image] = []
-    for p in images:
-        img = Image.open(p)
-        if img.mode != "RGB":
-            img = flatten_to_rgb(img)
-        opened_images.append(img)
-    first = opened_images[0]
-    rest = opened_images[1:] if len(opened_images) > 1 else []
-    first.save(output_pdf_path, format="PDF", save_all=True, append_images=rest)
-    for img in opened_images:
-        img.close()
-    return output_pdf_path
+    temporary_path: Path | None = None
+    try:
+        for p in images:
+            img = Image.open(p)
+            if img.mode != "RGB":
+                img = flatten_to_rgb(img)
+            opened_images.append(img)
+        first = opened_images[0]
+        rest = opened_images[1:] if len(opened_images) > 1 else []
+        with tempfile.NamedTemporaryFile(
+            dir=output_pdf_path.parent, suffix=".tmp.pdf", delete=False
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+        temp_tracker.register(temporary_path)
+        first.save(temporary_path, format="PDF", save_all=True, append_images=rest)
+        return publish_output_file(
+            temporary_path,
+            reserved_output,
+            overwrite,
+            reserved_paths,
+        )
+    finally:
+        for img in opened_images:
+            img.close()
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+            temp_tracker.unregister(temporary_path)

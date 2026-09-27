@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import sys
+import threading
 from typing import Any
+
+
+log = logging.getLogger(__name__)
+_SETTINGS_LOCK = threading.RLock()
 
 
 def get_app_data_dir() -> Path:
@@ -73,30 +79,45 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 def load_settings() -> dict[str, Any]:
     """Load settings from JSON file or return defaults."""
-    if not SETTINGS_FILE.exists():
-        return dict(DEFAULT_SETTINGS)
-    try:
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        merged = dict(DEFAULT_SETTINGS)
-        merged.update(data)
-        merged.pop("density", None)
-        return merged
-    except Exception:
-        return dict(DEFAULT_SETTINGS)
+    with _SETTINGS_LOCK:
+        if not SETTINGS_FILE.exists():
+            return dict(DEFAULT_SETTINGS)
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("settings root must be a JSON object")
+            merged = dict(DEFAULT_SETTINGS)
+            merged.update(data)
+            merged.pop("density", None)
+            return merged
+        except Exception as exc:
+            log.warning("Could not load settings from %s: %s", SETTINGS_FILE, exc)
+            return dict(DEFAULT_SETTINGS)
 
 
-def save_settings(settings: dict[str, Any]) -> None:
-    """Save user settings to JSON file."""
-    try:
-        SETTINGS_FILE.write_text(
-            json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-    except Exception:
-        pass
+def save_settings(settings: dict[str, Any]) -> bool:
+    """Atomically save settings, returning whether persistence succeeded."""
+    temporary = SETTINGS_FILE.with_suffix(SETTINGS_FILE.suffix + ".tmp")
+    with _SETTINGS_LOCK:
+        try:
+            SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            os.replace(temporary, SETTINGS_FILE)
+            return True
+        except Exception as exc:
+            log.warning("Could not save settings to %s: %s", SETTINGS_FILE, exc)
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False
 
 
-def update_setting(key: str, value: Any) -> None:
+def update_setting(key: str, value: Any) -> bool:
     """Update a single configuration key."""
-    current = load_settings()
-    current[key] = value
-    save_settings(current)
+    with _SETTINGS_LOCK:
+        current = load_settings()
+        current[key] = value
+        return save_settings(current)

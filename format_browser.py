@@ -13,6 +13,8 @@ from typing import Any, Callable, Sequence
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
+
 from converter import IMAGE_FORMAT_CAPABILITIES, normalize_output_format
 
 
@@ -159,11 +161,11 @@ class FormatBrowserDialog(ctk.CTkToplevel):
         self.query = ctk.StringVar()
         search = ctk.CTkEntry(
             self,
-            textvariable=self.query,
             placeholder_text="Search formats, categories, or capabilities (e.g. alpha, lossless, animation)",
             height=36,
         )
         search.pack(fill="x", padx=16, pady=(16, 8))
+        search.bind("<KeyRelease>", lambda _event: self.query.set(search.get()))
         self.query.trace_add("write", lambda *_: self._render())
 
         self.count_label = ctk.CTkLabel(self, text="", anchor="w", font=ctk.CTkFont(size=10), text_color=("#607181", "#91A0AE"))
@@ -186,6 +188,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
 
         self._render()
+        enable_keyboard_navigation(self)
         search.focus_set()
         # Deferred: grabbing before the window is mapped fails on some
         # platforms. Cancelled in destroy() so a fast close can't fire it

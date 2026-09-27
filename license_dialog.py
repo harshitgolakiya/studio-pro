@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import os
+from urllib.parse import urlparse
 import webbrowser
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
 from font_loader import DISPLAY_FONT
 from licensing import activate_license, deactivate_license, get_license_info
 
-# TODO: point this at your real storefront (Gumroad/Lemon Squeezy/Stripe
-# checkout link) before shipping a paid build.
-PURCHASE_URL = "https://gumroad.com"
+# Set this in the release environment or replace the empty default with the
+# product's final checkout page.  Never send customers to a marketplace home
+# page that cannot actually complete their purchase.
+PURCHASE_URL = os.environ.get("SHADOW_PURCHASE_URL", "").strip()
+
+
+def valid_purchase_url(url: str) -> bool:
+    parsed = urlparse(url.strip())
+    return parsed.scheme == "https" and bool(parsed.netloc)
 
 
 class LicenseDialog(ctk.CTkToplevel):
@@ -19,8 +28,8 @@ class LicenseDialog(ctk.CTkToplevel):
         self.geometry("560x520")
         self.minsize(520, 480)
         self.transient(parent)
-        self.grab_set()
         self.on_status_changed = on_status_changed
+        self._grab_after_id: str | None = self.after(50, self._grab_when_viewable)
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -123,7 +132,7 @@ class LicenseDialog(ctk.CTkToplevel):
             ctk.CTkButton(
                 actions,
                 text="Buy License",
-                command=lambda: webbrowser.open(PURCHASE_URL),
+                command=self._open_purchase_page,
                 width=130,
                 height=34,
                 fg_color="transparent",
@@ -152,6 +161,36 @@ class LicenseDialog(ctk.CTkToplevel):
             border_color=("#d0d5dd", "#475467"),
             text_color=("#344054", "#f2f4f7"),
         ).pack(side="left", padx=6)
+
+        enable_keyboard_navigation(self)
+
+    def _grab_when_viewable(self) -> None:
+        self._grab_after_id = None
+        if self.winfo_exists() and self.winfo_viewable():
+            self.grab_set()
+
+    def _open_purchase_page(self) -> None:
+        if not valid_purchase_url(PURCHASE_URL):
+            self.msg_label.configure(
+                text="The purchase page has not been configured. Contact the publisher for a license.",
+                text_color="#d97706",
+            )
+            return
+        if not webbrowser.open_new_tab(PURCHASE_URL):
+            self.msg_label.configure(
+                text="Could not open the purchase page in your browser.",
+                text_color="#d92d20",
+            )
+
+    def destroy(self) -> None:
+        pending = getattr(self, "_grab_after_id", None)
+        if pending is not None:
+            self._grab_after_id = None
+            try:
+                self.after_cancel(pending)
+            except Exception:
+                pass
+        super().destroy()
 
     def _do_activate(self) -> None:
         key = self.entry.get("1.0", "end").strip()

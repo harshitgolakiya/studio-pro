@@ -6,6 +6,8 @@ from typing import Any, Callable, Sequence
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
+
 _MUTED = ("#607181", "#91A0AE")
 _ROW = ("#FFFFFF", "#11161D")
 _ROW_ACTIVE = ("#D8F3EF", "#123A36")
@@ -49,8 +51,9 @@ class CommandPalette(ctk.CTkToplevel):
         self._cursor = 0
 
         self.query = ctk.StringVar()
-        entry = ctk.CTkEntry(self, textvariable=self.query, placeholder_text="Type a command…", height=38, font=ctk.CTkFont(size=14))
+        entry = ctk.CTkEntry(self, placeholder_text="Type a command…", height=38, font=ctk.CTkFont(size=14))
         entry.pack(fill="x", padx=12, pady=(12, 6))
+        entry.bind("<KeyRelease>", lambda _event: self.query.set(entry.get()))
         self.query.trace_add("write", lambda *_: self._render())
 
         self.list_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -64,6 +67,7 @@ class CommandPalette(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
 
         self._render()
+        enable_keyboard_navigation(self)
         entry.focus_set()
         self._grab_after_id: str | None = self.after(50, self._grab)
 

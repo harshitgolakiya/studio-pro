@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -101,6 +102,18 @@ class QueueStoreTests(unittest.TestCase):
         clear_queue_state(self.state_file)
         clear_queue_state(self.state_file)
         self.assertFalse(self.state_file.exists())
+
+    def test_failed_atomic_replace_cleans_temp_and_preserves_previous_state(self) -> None:
+        source = _png(self.dir / "source.png")
+        save_queue_state(build_state([source], {}, "first"), self.state_file)
+        original = self.state_file.read_bytes()
+
+        with mock.patch("queue_store.os.replace", side_effect=OSError("disk unavailable")):
+            with self.assertRaises(OSError):
+                save_queue_state(build_state([source], {}, "second"), self.state_file)
+
+        self.assertEqual(self.state_file.read_bytes(), original)
+        self.assertFalse(self.state_file.with_suffix(".tmp").exists())
 
     def test_synthesize_result_from_disk(self) -> None:
         a = _png(self.dir / "a.png", 64)

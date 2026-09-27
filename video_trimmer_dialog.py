@@ -8,6 +8,7 @@ from typing import Callable
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
 from font_loader import DISPLAY_FONT
 from media_engine import (
     extract_video_thumbnail,
@@ -15,6 +16,7 @@ from media_engine import (
     trim_video_lossless,
 )
 from utils import play_completion_sound
+from ui_dispatch import TkEventBridge
 
 
 def format_seconds(seconds: float) -> str:
@@ -34,6 +36,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         self.video_path = video_path
         self.on_trim_complete = on_trim_complete
         self._closed = False
+        self._ui_events = TkEventBridge(self)
 
         self.title(f"Fast Video Trimmer - {video_path.name}")
         self.geometry("560x380")
@@ -58,6 +61,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         )
 
         self._build_ui()
+        enable_keyboard_navigation(self)
         self.lift()
         self.focus_force()
         self.after(50, lambda: self.grab_set() if self.winfo_exists() and self.winfo_viewable() else None)
@@ -197,9 +201,10 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         def worker() -> None:
             try:
                 extract_video_thumbnail(self.video_path, out_path, timestamp=pos_s)
-                self.after(0, lambda: self._on_capture_success(pos_s, out_path))
+                self._ui_events.post(lambda: self._on_capture_success(pos_s, out_path))
             except Exception as exc:
-                self.after(0, lambda: self._on_capture_error(str(exc)))
+                message = str(exc)
+                self._ui_events.post(lambda: self._on_capture_error(message))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -257,9 +262,10 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         def worker() -> None:
             try:
                 trim_video_lossless(self.video_path, out_path, start_s, end_s)
-                self.after(0, lambda: self._on_trim_success(out_path))
+                self._ui_events.post(lambda: self._on_trim_success(out_path))
             except Exception as exc:
-                self.after(0, lambda: self._on_trim_error(str(exc)))
+                message = str(exc)
+                self._ui_events.post(lambda: self._on_trim_error(message))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -282,3 +288,9 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
             return
         self.trim_btn.configure(state="normal", text="⚡ Trim & Add to Queue")
         messagebox.showerror("Trim Error", f"Failed to trim video:\n{err_msg}", parent=self)
+
+    def destroy(self) -> None:
+        self._closed = True
+        if hasattr(self, "_ui_events"):
+            self._ui_events.close()
+        super().destroy()

@@ -6,9 +6,11 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
 from font_loader import DISPLAY_FONT
 from utils import open_file_or_folder
 from watch_folder import FolderWatcher
+from ui_dispatch import TkEventBridge
 
 
 class WatchFolderDialog(ctk.CTkToplevel):
@@ -22,6 +24,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
         self.watcher = watcher
         self.on_watcher_changed = on_watcher_changed
         self._closed = False
+        self._ui_events = TkEventBridge(self)
 
         self.title("Auto-Watch Folder Pipeline")
         self.geometry("640x520")
@@ -45,6 +48,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
         )
 
         self._build_ui()
+        enable_keyboard_navigation(self)
         self.grab_set()
 
         if self.watcher and self.watcher.is_running:
@@ -186,16 +190,24 @@ class WatchFolderDialog(ctk.CTkToplevel):
         self.destroy()
 
     def _watcher_event(self, level: str, msg: str) -> None:
-        self.after(0, lambda: self._log(msg))
+        self._ui_events.post(lambda: self._log(msg))
+
+    def destroy(self) -> None:
+        self._closed = True
+        if self.watcher:
+            self.watcher.on_event = None
+        if hasattr(self, "_ui_events"):
+            self._ui_events.close()
+        super().destroy()
 
     def _browse_watch_dir(self) -> None:
-        folder = filedialog.askdirectory(title="Select Folder to Watch")
+        folder = filedialog.askdirectory(title="Select Folder to Watch", parent=self)
         if folder:
             self.watch_dir_var.set(folder)
             self.output_dir_var.set(str(Path(folder) / "optimized"))
 
     def _browse_output_dir(self) -> None:
-        folder = filedialog.askdirectory(title="Select Output Folder")
+        folder = filedialog.askdirectory(title="Select Output Folder", parent=self)
         if folder:
             self.output_dir_var.set(folder)
 
@@ -219,7 +231,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
             w_dir = Path(self.watch_dir_var.get().strip())
             o_dir = Path(self.output_dir_var.get().strip())
             if not w_dir.is_dir():
-                messagebox.showerror("Invalid Folder", "Watch folder does not exist.")
+                messagebox.showerror("Invalid Folder", "Watch folder does not exist.", parent=self)
                 return
 
             self.watcher = FolderWatcher(

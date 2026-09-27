@@ -80,8 +80,18 @@ class DiagnosticsTests(unittest.TestCase):
         from diagnostics import export_diagnostics, redacted_settings, setup_logging, system_report
 
         report = system_report()
-        for key in ("app_version", "python", "platform", "pillow", "ffmpeg", "pillow_features"):
+        for key in (
+            "app_version",
+            "python",
+            "platform",
+            "pillow",
+            "ffmpeg",
+            "pillow_features",
+            "video_encoder",
+        ):
             self.assertIn(key, report)
+        self.assertIn("encoder", report["video_encoder"])
+        self.assertIn("label", report["video_encoder"])
         settings = redacted_settings()
         self.assertNotIn("PRO-", str(settings.get("license_key", "")))
 

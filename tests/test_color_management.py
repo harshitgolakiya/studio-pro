@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -123,6 +124,16 @@ class PipelineColorIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(out.size, (50, 50))
         self.assertLess(out.getpixel((0, 0))[0], 255)
+
+    def test_user_facing_preserve_label_skips_color_conversion(self) -> None:
+        im = Image.new("RGB", (8, 8), "red")
+        with patch("converter.convert_color_profile") as convert:
+            out = apply_image_transformations(
+                im,
+                color_profile_mode="Preserve (Source)",
+            )
+        self.assertIs(out, im)
+        convert.assert_not_called()
 
     def test_convert_image_embeds_target_icc(self) -> None:
         out_dir = self.dir / "out"

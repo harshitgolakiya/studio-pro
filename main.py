@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import logging
 from typing import Any
 
@@ -133,6 +134,7 @@ except Exception:
 
 
 from app_bootstrap import ensure_runtime_dependencies_noisy
+from accessibility import enable_keyboard_navigation
 
 # No-op in a packaged build (see app_bootstrap.py) -- only auto-installs
 # missing pip packages for a source/dev run. Must stay that way: in a frozen
@@ -203,7 +205,13 @@ from queue_store import (
 from recipe_dialog import RecipeManagerDialog
 from recipes import RECIPE_FIELDS
 from settings import load_settings, update_setting
-from telemetry import BatchTelemetry, recommend_workers
+from telemetry import (
+    BatchTelemetry,
+    available_memory_bytes,
+    estimate_batch_peak_bytes,
+    memory_risk_is_high,
+    recommend_workers,
+)
 import temp_tracker
 from url_downloader_dialog import URLDownloaderDialog
 from video_trimmer_dialog import VideoTrimmerDialog
@@ -214,7 +222,6 @@ from utils import (
     copy_text_to_clipboard,
     export_results_to_csv,
     format_file_size,
-    next_available_output_path,
     open_file_or_folder,
     play_completion_sound,
     reveal_in_file_manager,
@@ -272,7 +279,16 @@ class WebPCompressorApp(ctk.CTk):
         self.duplicate_of: dict[Path, Path] = {}
 
         self.title("Shadow Media Studio Pro")
-        self.geometry("1180x860")
+        # Use the width the control-dense workspace actually needs while still
+        # fitting smaller displays. Vertical overflow is handled by the main
+        # scroll frame below. Give the window an explicit, stable position as
+        # well so Windows does not cascade later launches below the taskbar.
+        initial_width = min(1380, max(980, self.winfo_screenwidth() - 32))
+        initial_height = 760
+        scaled_width = round(self._apply_window_scaling(initial_width))
+        scaled_screen_width = round(self._apply_window_scaling(self.winfo_screenwidth()))
+        initial_x = max(8, (scaled_screen_width - scaled_width) // 2)
+        self.geometry(f"{initial_width}x{initial_height}+{initial_x}+16")
         self.minsize(980, 720)
         self._apply_window_icon()
         self._show_setup_status_if_needed()
@@ -457,6 +473,12 @@ class WebPCompressorApp(ctk.CTk):
 
         ctk.set_widget_scaling(1.0)
         self._build_interface()
+        self._keyboard_control_count = enable_keyboard_navigation(self)
+        # Keep the Windows title bar and resize border in the same appearance
+        # mode as CustomTkinter. Without this, DWM can retain a dark frame
+        # around an otherwise-light client area after installation/theme
+        # changes (most visibly as a black strip on the left edge).
+        self.after(0, self._sync_native_window_theme)
         self._setup_estimate_traces()
         self._setup_drag_and_drop()
         self._setup_context_menu()
@@ -521,7 +543,57 @@ class WebPCompressorApp(ctk.CTk):
             # update() also flushes pending expose/redraw events.
             self.update()
         except Exception:
-            pass
+            self.log.debug("could not redraw after window resize", exc_info=True)
+
+    def _sync_native_window_theme(self) -> None:
+        """Synchronize Windows DWM chrome with the active application theme."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+
+            # Tk's ``winfo_id`` is the client child HWND. DWM attributes must
+            # be applied to its native top-level wrapper or they report
+            # success without changing the visible frame.
+            client_hwnd = self.winfo_id()
+            hwnd = ctypes.windll.user32.GetParent(client_hwnd) or client_hwnd
+            dark = ctk.get_appearance_mode().lower() == "dark"
+            dark_value = ctypes.c_int(1 if dark else 0)
+            dwm = ctypes.windll.dwmapi
+
+            # Attribute 20 is supported on current Windows 10/11; attribute 19
+            # is the equivalent on older Windows 10 revisions.
+            for attribute in (20, 19):
+                dwm.DwmSetWindowAttribute(
+                    hwnd,
+                    attribute,
+                    ctypes.byref(dark_value),
+                    ctypes.sizeof(dark_value),
+                )
+
+            def colorref(hex_color: str) -> ctypes.c_uint:
+                value = hex_color.lstrip("#")
+                red, green, blue = (
+                    int(value[0:2], 16),
+                    int(value[2:4], 16),
+                    int(value[4:6], 16),
+                )
+                return ctypes.c_uint(red | (green << 8) | (blue << 16))
+
+            border = colorref("#27303B" if dark else "#D6DFE7")
+            caption = colorref("#090C10" if dark else "#F3F6F8")
+            text_color = colorref("#EDEFF2" if dark else "#14212B")
+            for attribute, value in ((34, border), (35, caption), (36, text_color)):
+                dwm.DwmSetWindowAttribute(
+                    hwnd,
+                    attribute,
+                    ctypes.byref(value),
+                    ctypes.sizeof(value),
+                )
+        except Exception:
+            # Unsupported DWM attributes are cosmetic and must never prevent
+            # the application from opening on older or customized Windows.
+            self.log.debug("native window theme synchronization unavailable", exc_info=True)
 
     def _load_cli_arguments(self) -> None:
         if len(sys.argv) > 1:
@@ -588,6 +660,7 @@ class WebPCompressorApp(ctk.CTk):
             messagebox.showwarning(
                 "Setup required",
                 guidance + "\n\nThis is needed for video/audio conversion and URL download features.",
+                parent=self,
             )
         except Exception:
             pass
@@ -724,7 +797,16 @@ class WebPCompressorApp(ctk.CTk):
 
         # Use the entire working canvas. The old layout intentionally pinned
         # every card to a narrow left column and left a large dead zone.
-        content_shell = ctk.CTkFrame(self, fg_color="transparent")
+        # Settings intentionally expose professional controls, so short laptop
+        # displays need a real vertical viewport instead of losing the output
+        # and Convert controls below the taskbar.
+        content_shell = ctk.CTkScrollableFrame(
+            self,
+            fg_color="transparent",
+            corner_radius=0,
+            scrollbar_button_color=APP_BORDER,
+            scrollbar_button_hover_color=APP_MUTED,
+        )
         content_shell.grid(row=1, column=0, sticky="nsew")
         content_shell.grid_rowconfigure(0, weight=1)
         content_shell.grid_columnconfigure(0, weight=1)
@@ -770,7 +852,6 @@ class WebPCompressorApp(ctk.CTk):
         # Filter entry centered/right
         self.filter_entry = ctk.CTkEntry(
             list_header,
-            textvariable=self.search_filter,
             placeholder_text="Filter by filename…",
             width=210,
             height=32,
@@ -939,42 +1020,45 @@ class WebPCompressorApp(ctk.CTk):
         self.empty_state.grid_rowconfigure(0, weight=1)
 
         empty_content = ctk.CTkFrame(self.empty_state, fg_color="transparent")
-        empty_content.grid(row=0, column=0)
+        empty_content.grid(row=0, column=0, padx=18, pady=4)
 
         ctk.CTkLabel(
             empty_content,
             text="＋",
-            width=48,
-            height=48,
-            corner_radius=14,
+            width=40,
+            height=40,
+            corner_radius=12,
             fg_color=(APP_ACCENT_SOFT, "#1e293b"),
             text_color=(APP_ACCENT, APP_ACCENT_TINT),
-            font=ctk.CTkFont(size=22, weight="bold"),
-        ).pack(pady=(12, 6))
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, rowspan=2, padx=(0, 14))
+
+        empty_copy = ctk.CTkFrame(empty_content, fg_color="transparent")
+        empty_copy.grid(row=0, column=1, rowspan=2, sticky="w")
 
         ctk.CTkLabel(
-            empty_content,
+            empty_copy,
             text="Build your conversion queue",
-            font=ctk.CTkFont(family=DISPLAY_FONT, size=18, weight="bold"),
+            font=ctk.CTkFont(family=DISPLAY_FONT, size=16, weight="bold"),
             text_color=APP_TEXT,
-        ).pack(pady=(0, 4))
+        ).pack(anchor="w", pady=(0, 4))
 
         ctk.CTkLabel(
-            empty_content,
+            empty_copy,
             text="Drop files or folders anywhere · 48 image extensions · video, audio and documents",
             text_color=APP_MUTED,
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=10),
             wraplength=820,
-        ).pack(pady=(0, 10))
+        ).pack(anchor="w")
 
         empty_buttons = ctk.CTkFrame(empty_content, fg_color="transparent")
-        empty_buttons.pack(pady=(0, 12))
+        empty_buttons.grid(row=0, column=2, rowspan=2, padx=(20, 0))
         ctk.CTkButton(
             empty_buttons,
             text="＋ Add files",
             command=self._add_files,
             width=120,
-            height=32,
+            height=30,
             corner_radius=8,
             fg_color=APP_ACCENT,
             hover_color=APP_ACCENT_DARK,
@@ -986,7 +1070,7 @@ class WebPCompressorApp(ctk.CTk):
             text="Add folder",
             command=self._add_folder,
             width=120,
-            height=32,
+            height=30,
             corner_radius=8,
             fg_color="transparent",
             border_width=1,
@@ -1065,7 +1149,7 @@ class WebPCompressorApp(ctk.CTk):
             segmented_button_selected_color=APP_ACCENT,
             segmented_button_selected_hover_color=APP_ACCENT_TINT,
             segmented_button_unselected_color=APP_ELEVATED,
-            segmented_button_unselected_hover_color="#2A2E38",
+            segmented_button_unselected_hover_color=("#D6DFE7", "#2A2E38"),
             text_color=APP_TEXT,
             height=38,
         )
@@ -2219,7 +2303,8 @@ class WebPCompressorApp(ctk.CTk):
             res = messagebox.askyesno(
                 "VIP Power Feature",
                 "Media Stream URL Downloading (YouTube, Vimeo, etc.) is a VIP Power Feature.\n\n"
-                "Would you like to open the License Manager to enter your VIP Master Key?"
+                "Would you like to open the License Manager to enter your VIP Master Key?",
+                parent=self,
             )
             if res:
                 self._open_license_manager()
@@ -2280,6 +2365,19 @@ class WebPCompressorApp(ctk.CTk):
             )
 
     def _on_app_close(self) -> None:
+        if self.conversion_running:
+            should_exit = messagebox.askyesno(
+                "Conversion in progress",
+                "Cancel the active conversion and close Shadow?\n\n"
+                "Completed outputs will be kept and unfinished items can be restored next time.",
+                parent=self,
+            )
+            if not should_exit:
+                return
+            self.cancel_event.set()
+            self.pause_event.clear()
+            self.status_text.set("Cancelling active work and closing...")
+            self.log.info("application close requested during active conversion")
         if HAS_DRAG_DROP:
             try:
                 unhook_dropfiles(self)
@@ -2373,7 +2471,7 @@ class WebPCompressorApp(ctk.CTk):
             )
             save_queue_state(state, self.queue_state_file)
         except Exception:
-            pass
+            self.log.exception("could not persist conversion queue")
 
     def _confirm_queue_restore(self, count: int, dropped: int) -> bool:
         from tkinter import messagebox
@@ -2699,7 +2797,7 @@ class WebPCompressorApp(ctk.CTk):
 
         if category == "video":
             self.smart_badge.configure(
-                text="🎬 Smart Video Mode (Hardware GPU Accelerated)",
+                text="🎬 Smart Video Mode (GPU when supported · universal CPU fallback)",
                 fg_color=("#dbeafe", "#1e3a5f"),
                 text_color=("#1d4ed8", "#93c5fd"),
             )
@@ -2891,6 +2989,7 @@ class WebPCompressorApp(ctk.CTk):
         file_selected = filedialog.askopenfilename(
             title="Select Logo Image",
             filetypes=[("PNG / WebP Images", "*.png *.webp *.jpg *.jpeg"), ("All Files", "*.*")],
+            parent=self,
         )
         if file_selected:
             self.watermark_logo_path.set(file_selected)
@@ -2944,6 +3043,8 @@ class WebPCompressorApp(ctk.CTk):
         ctk.set_appearance_mode(new_mode)
         update_setting("theme", new_mode)
         self._apply_table_theme()
+        self.update_idletasks()
+        self._sync_native_window_theme()
 
     def _apply_density(self, _density: str = "Comfortable") -> None:
         ctk.set_widget_scaling(1.0)
@@ -3073,7 +3174,7 @@ class WebPCompressorApp(ctk.CTk):
         pills = ctk.CTkFrame(card, fg_color=APP_ELEVATED, corner_radius=8)
         pills.pack(fill="x", padx=24, pady=(0, 14), ipady=3)
 
-        items = ["🔒 100% Offline", "⚡ GPU Accelerated", "🎯 SSIM Targeter", "🗂️ Multi-Threaded"]
+        items = ["🔒 100% Offline", "⚡ GPU + CPU Compatible", "🎯 SSIM Targeter", "🗂️ Multi-Threaded"]
         pills_inner = ctk.CTkFrame(pills, fg_color="transparent")
         pills_inner.pack(padx=8, pady=4)
         for item in items:
@@ -3152,6 +3253,7 @@ class WebPCompressorApp(ctk.CTk):
             command=dlg.destroy,
         ).pack(side="right")
 
+        enable_keyboard_navigation(dlg)
         dlg.after(50, lambda: dlg.grab_set() if dlg.winfo_exists() and dlg.winfo_viewable() else None)
 
     def _set_theme(self, mode: str) -> None:
@@ -3162,13 +3264,13 @@ class WebPCompressorApp(ctk.CTk):
         return HistoryDialog(self, self._apply_recipe_settings)
 
     def _export_diagnostics_bundle(self) -> None:
-        folder = filedialog.askdirectory(title="Save diagnostics bundle to…")
+        folder = filedialog.askdirectory(title="Save diagnostics bundle to…", parent=self)
         if not folder:
             return
         try:
             out = export_diagnostics(Path(folder))
         except Exception as exc:
-            messagebox.showerror("Export failed", str(exc))
+            messagebox.showerror("Export failed", str(exc), parent=self)
             return
         self.status_text.set(f"Diagnostics saved: {out.name}")
         reveal_in_file_manager(out)
@@ -3341,7 +3443,7 @@ class WebPCompressorApp(ctk.CTk):
             "• Make sure the file exists and is not locked by another application.\n"
             "• Verify you have sufficient disk space and write permissions for the destination folder."
         )
-        messagebox.showerror("Conversion Error Details", msg)
+        messagebox.showerror("Conversion Error Details", msg, parent=self)
 
     def _ctx_view_error_details(self) -> None:
         sel = self.table.selection()
@@ -3353,7 +3455,7 @@ class WebPCompressorApp(ctk.CTk):
             if res and res.status == "Failed":
                 self._show_error_dialog(path, res)
             else:
-                messagebox.showinfo("Error Details", f"'{path.name}' has not reported any conversion failure.")
+                messagebox.showinfo("Error Details", f"'{path.name}' has not reported any conversion failure.", parent=self)
 
     def _open_selected_preview(self) -> None:
         sel = self.table.selection()
@@ -3372,7 +3474,7 @@ class WebPCompressorApp(ctk.CTk):
         if path is None:
             return
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            messagebox.showinfo("Optimizer", "The optimizer compares image codecs. Select an image file to analyze.")
+            messagebox.showinfo("Optimizer", "The optimizer compares image codecs. Select an image file to analyze.", parent=self)
             return
         OptimizerDialog(self, path, self._apply_optimizer_choice)
 
@@ -3415,7 +3517,7 @@ class WebPCompressorApp(ctk.CTk):
             dialog.lift()
             dialog.focus_force()
         else:
-            messagebox.showinfo("Video Trimmer", "Please add or select a video file (MP4, MKV, MOV, WebM, etc.) to trim.")
+            messagebox.showinfo("Video Trimmer", "Please add or select a video file (MP4, MKV, MOV, WebM, etc.) to trim.", parent=self)
 
     def _show_preview_dialog(self, path: Path) -> None:
         result = self.row_results.get(path)
@@ -3532,11 +3634,12 @@ class WebPCompressorApp(ctk.CTk):
                 ("Audios", " ".join(f"*{ext}" for ext in SUPPORTED_AUDIO_EXTENSIONS)),
                 ("All files", "*.*"),
             ],
+            parent=self,
         )
         self._ingest_image_paths([Path(p) for p in paths])
 
     def _add_folder(self) -> None:
-        folder = filedialog.askdirectory(title="Choose media folder to import")
+        folder = filedialog.askdirectory(title="Choose media folder to import", parent=self)
         if not folder:
             return
         dir_path = Path(folder).resolve()
@@ -3547,6 +3650,7 @@ class WebPCompressorApp(ctk.CTk):
             messagebox.showinfo(
                 "No supported media",
                 f"No supported images or media files were found in:\n{dir_path}",
+                parent=self,
             )
             return
         self._ingest_image_paths(found)
@@ -3875,6 +3979,8 @@ class WebPCompressorApp(ctk.CTk):
         self._schedule_queue_save()
 
     def _apply_filter(self, _event: object = None) -> None:
+        if _event is not None:
+            self.search_filter.set(self.filter_entry.get())
         query = self.search_filter.get().strip().lower()
         for path in self.selected_files:
             row_id = self.row_ids.get(path)
@@ -4064,6 +4170,7 @@ class WebPCompressorApp(ctk.CTk):
         path = filedialog.askopenfilename(
             title="Choose ICC / ICM Color Profile",
             filetypes=[("Color Profiles (*.icc, *.icm)", "*.icc *.icm"), ("All Files (*.*)", "*.*")],
+            parent=self,
         )
         if path:
             self.color_profile_custom.set(path)
@@ -4284,7 +4391,7 @@ class WebPCompressorApp(ctk.CTk):
         self.status_text.set("Recipe applied")
 
     def _choose_output_directory(self) -> None:
-        directory = filedialog.askdirectory(title="Choose output folder")
+        directory = filedialog.askdirectory(title="Choose output folder", parent=self)
         if directory:
             self.output_directory.set(directory)
             update_setting("last_output_directory", directory)
@@ -4587,6 +4694,18 @@ class WebPCompressorApp(ctk.CTk):
             f"Only {format_file_size(check.free_bytes)} is free on the destination drive, but this "
             f"batch could need up to {format_file_size(check.needed_bytes)} (a pessimistic estimate).\n\n"
             "Continue anyway?",
+            parent=self,
+        )
+
+    def _confirm_high_memory(self, estimated: int, available: int) -> bool:
+        return messagebox.askyesno(
+            "Large image memory requirement",
+            f"The largest item may need about {format_file_size(estimated)} of working memory, "
+            f"while {format_file_size(available)} is currently available.\n\n"
+            "Continuing could make this computer unresponsive. For a safer conversion, enable "
+            "Resize max px or close other memory-heavy applications first.\n\n"
+            "Continue anyway?",
+            parent=self,
         )
 
     def _start_conversion(self, only: list[Path] | None = None) -> None:
@@ -4613,7 +4732,7 @@ class WebPCompressorApp(ctk.CTk):
                 f"You have {len(batch_source)} items selected.\n"
                 "Would you like to upgrade to Pro for unlimited batch conversions?"
             )
-            if messagebox.askyesno("Upgrade to Pro", msg):
+            if messagebox.askyesno("Upgrade to Pro", msg, parent=self):
                 self._open_license_manager()
                 return
 
@@ -4707,6 +4826,7 @@ class WebPCompressorApp(ctk.CTk):
                 f"{missing_names}\n\n"
                 f"They may have been deleted, moved, or reside on a disconnected drive.\n"
                 f"Please verify your files or remove them from the media queue.",
+                parent=self,
             )
             for p in missing_inputs:
                 row_id = self.row_ids.get(p)
@@ -4731,6 +4851,7 @@ class WebPCompressorApp(ctk.CTk):
                     f"Cannot write to output folder:\n{output}\n\n"
                     f"Error details: {exc}\n\n"
                     f"Please choose a writable folder or enable 'Save in original file's parent folder'.",
+                    parent=self,
                 )
                 self.status_text.set(f"Error: Output folder not writable: {exc}")
                 return
@@ -4755,6 +4876,7 @@ class WebPCompressorApp(ctk.CTk):
                     "• macOS: Open Terminal and run:\n    brew install ffmpeg\n"
                     "• Direct download: https://www.ffmpeg.org/download.html\n\n"
                     "Please install FFmpeg and restart the application.",
+                    parent=self,
                 )
                 self.status_text.set("Error: FFmpeg is missing from this device. Video/audio processing cannot proceed.")
                 return
@@ -4768,6 +4890,7 @@ class WebPCompressorApp(ctk.CTk):
                     f"The specified watermark logo image was not found on your device:\n"
                     f"{logo_path_str or '(No path specified)'}\n\n"
                     f"Please select a valid PNG logo file or disable the watermark option.",
+                    parent=self,
                 )
                 self.status_text.set("Error: Watermark logo file not found")
                 return
@@ -4781,6 +4904,7 @@ class WebPCompressorApp(ctk.CTk):
                     f"The specified custom ICC color profile file was not found:\n"
                     f"{icc_path_str or '(No path specified)'}\n\n"
                     f"Please select a valid .icc / .icm file or set Color Profile to 'Preserve original'.",
+                    parent=self,
                 )
                 self.status_text.set("Error: Custom color profile file not found")
                 return
@@ -4791,6 +4915,17 @@ class WebPCompressorApp(ctk.CTk):
             self.status_text.set(
                 f"Stopped: only {format_file_size(check.free_bytes)} free on the destination, "
                 f"batch may need up to {format_file_size(check.needed_bytes)}"
+            )
+            return
+
+
+        available_memory = available_memory_bytes()
+        estimated_memory = estimate_batch_peak_bytes(selected_batch)
+        if memory_risk_is_high(estimated_memory, available_memory) and not self._confirm_high_memory(
+            estimated_memory, available_memory
+        ):
+            self.status_text.set(
+                "Stopped to protect system memory; enable resizing or close other applications"
             )
             return
 
@@ -4974,12 +5109,27 @@ class WebPCompressorApp(ctk.CTk):
         total = len(files_snapshot)
         results: list[ConversionResult] = []
         reserved_paths: set[Path] = set()
-        reserved_lock = threading.Lock()
+        # Each engine reserves its destination atomically in
+        # utils.reserve_output_path. Keeping a lock around the entire encode
+        # accidentally serialized the thread pool and could leave every other
+        # worker waiting behind one slow codec.
+        conversion_scope = nullcontext()
         counter_lock = threading.Lock()
         completed_count = 0
         start_time = time.perf_counter()
         workers = recommend_workers(files_snapshot)
-        _, gpu_label = get_best_hardware_encoder()
+        # Hardware probing can involve starting several FFmpeg processes. Do
+        # it only for batches that can actually use H.264 acceleration; image,
+        # document, and audio-only jobs should begin immediately on every PC.
+        uses_video_encoder = any(
+            path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
+            or path.suffix.lower() == ".gif"
+            for path in files_snapshot
+        )
+        if uses_video_encoder:
+            _, gpu_label = get_best_hardware_encoder()
+        else:
+            gpu_label = "CPU media pipeline"
         telemetry = BatchTelemetry(total, workers, gpu_label)
 
         # Handle special Case: Combine images into PDF. Matched exactly (not
@@ -4996,11 +5146,11 @@ class WebPCompressorApp(ctk.CTk):
                     prefix=filename_prefix,
                     suffix=filename_suffix,
                 )
-                pdf_path = next_available_output_path(
+                pdf_path = combine_images_to_pdf(
+                    list(files_snapshot),
                     dest_dir / dest_name,
                     overwrite=overwrite,
                 )
-                combine_images_to_pdf(list(files_snapshot), pdf_path)
                 res = ConversionResult(
                     files_snapshot[0],
                     pdf_path,
@@ -5199,7 +5349,7 @@ class WebPCompressorApp(ctk.CTk):
                 or "WEBM" in effective_target_format.upper()
             )
 
-            with reserved_lock:
+            with conversion_scope:
                 self.events.put(("item_started", source_p))
                 if is_document:
                     # Document/Markdown engine conversion
@@ -5316,6 +5466,7 @@ class WebPCompressorApp(ctk.CTk):
                         psd_composite_mode=override.get("psd_composite_mode", psd_composite_mode) if use_override and "psd_composite_mode" in override else psd_composite_mode,
                         psd_layer_index=int(override.get("psd_layer_index", psd_layer_index)) if use_override and "psd_layer_index" in override else int(psd_layer_index) if str(psd_layer_index).lstrip("-").isdigit() else -1,
                         replace_source=replace_source,
+                        cancel_check=self.cancel_event.is_set,
                     )
 
             with counter_lock:
@@ -5566,20 +5717,21 @@ class WebPCompressorApp(ctk.CTk):
             folder = Path(self.output_directory.get().strip())
         if not folder.is_dir():
             messagebox.showerror(
-                "Output folder", "The output folder does not exist."
+                "Output folder", "The output folder does not exist.", parent=self
             )
             return
         open_file_or_folder(folder)
 
     def _export_csv_report(self) -> None:
         if not self.last_results:
-            messagebox.showinfo("Export Report", "No conversion results to export.")
+            messagebox.showinfo("Export Report", "No conversion results to export.", parent=self)
             return
         save_path = filedialog.asksaveasfilename(
             title="Save Conversion Report",
             defaultextension=".csv",
             filetypes=[("CSV Spreadsheet", "*.csv"), ("All Files", "*.*")],
             initialfile="shadow_report.csv",
+            parent=self,
         )
         if not save_path:
             return
@@ -5587,10 +5739,10 @@ class WebPCompressorApp(ctk.CTk):
             export_results_to_csv(self.last_results, Path(save_path))
             self.status_text.set(f"Report saved: {Path(save_path).name}")
             messagebox.showinfo(
-                "Export Complete", f"Conversion report exported to:\n{save_path}"
+                "Export Complete", f"Conversion report exported to:\n{save_path}", parent=self
             )
         except Exception as err:
-            messagebox.showerror("Export Failed", f"Could not save CSV:\n{err}")
+            messagebox.showerror("Export Failed", f"Could not save CSV:\n{err}", parent=self)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from typing import Any, Callable
 import customtkinter as ctk
 from PIL import Image
 
+from accessibility import enable_keyboard_navigation
 from optimizer import (
     DEFAULT_QUALITIES,
     DESTINATIONS,
@@ -22,6 +23,7 @@ from optimizer import (
     recommend,
     sweep,
 )
+from ui_dispatch import TkEventBridge
 from utils import format_file_size
 
 _MUTED = ("#607181", "#91A0AE")
@@ -50,6 +52,7 @@ class OptimizerDialog(ctk.CTkToplevel):
         self._recommendation: Recommendation | None = None
         self._worker: threading.Thread | None = None
         self._stop = False
+        self._ui_events = TkEventBridge(self)
 
         self.destination = tk.StringVar(value=initial_destination)
         self.min_ssim = tk.DoubleVar(value=0.95)
@@ -112,6 +115,7 @@ class OptimizerDialog(ctk.CTkToplevel):
 
         self.bind("<Escape>", lambda _e: self.destroy())
         self.protocol("WM_DELETE_WINDOW", self._close)
+        enable_keyboard_navigation(self)
 
     # -- analysis ----------------------------------------------------------
 
@@ -153,13 +157,7 @@ class OptimizerDialog(ctk.CTkToplevel):
             self._worker.start()
 
     def _post(self, fn: Callable[[], None]) -> None:
-        try:
-            if threading.current_thread() is threading.main_thread():
-                fn()
-            else:
-                self.after(0, fn)
-        except Exception:
-            pass
+        self._ui_events.post(fn)
 
     def _progress(self, done: int, total: int, label: str) -> None:
         self.progress.set(done / total if total else 0)
@@ -299,3 +297,9 @@ class OptimizerDialog(ctk.CTkToplevel):
     def _close(self) -> None:
         self._stop = True
         self.destroy()
+
+    def destroy(self) -> None:
+        self._stop = True
+        if hasattr(self, "_ui_events"):
+            self._ui_events.close()
+        super().destroy()

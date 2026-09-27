@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
 from recipes import (
     RECIPE_EXTENSION,
     Recipe,
@@ -65,6 +66,7 @@ class RecipeManagerDialog(ctk.CTkToplevel):
 
         self.bind("<Escape>", lambda _e: self.destroy())
         self.refresh()
+        enable_keyboard_navigation(self)
 
     # -- list --------------------------------------------------------------
 

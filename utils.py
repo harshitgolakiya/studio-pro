@@ -72,6 +72,55 @@ def reserve_output_path(
         return path
 
 
+def release_output_path(path: Path, reserved_paths: set[Path] | None = None) -> None:
+    """Release an in-process reservation after a job fails before publishing."""
+    if reserved_paths is None:
+        return
+    with _reserve_lock:
+        reserved_paths.discard(path)
+
+
+def publish_output_file(
+    temporary_path: Path,
+    output_path: Path,
+    overwrite: bool = False,
+    reserved_paths: set[Path] | None = None,
+) -> Path:
+    """Atomically publish a complete temporary file.
+
+    With overwrite disabled, publication never replaces an existing file—even
+    if another Shadow process or external program creates the destination after
+    this process selected its name. A numbered sibling is chosen and retried.
+    """
+    if overwrite:
+        os.replace(temporary_path, output_path)
+        return output_path
+
+    candidate = output_path
+    while True:
+        try:
+            if os.name == "nt":
+                # Windows rename is atomic and fails when the target exists.
+                os.rename(temporary_path, candidate)
+            else:
+                # POSIX rename replaces its target, so create a no-clobber hard
+                # link and then remove the temporary name from the same volume.
+                os.link(temporary_path, candidate)
+                try:
+                    temporary_path.unlink()
+                except OSError:
+                    # The final hard link is already complete and valid. The
+                    # caller's cleanup will retry removing the temp name.
+                    pass
+            return candidate
+        except FileExistsError:
+            release_output_path(candidate, reserved_paths)
+            candidate = reserve_output_path(output_path, False, reserved_paths)
+        except OSError:
+            release_output_path(candidate, reserved_paths)
+            raise
+
+
 def slugify_filename(name: str) -> str:
     """Convert filename to web-safe lowercase slug (e.g. 'My Image 2026' -> 'my-image-2026')."""
     import re

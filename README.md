@@ -28,9 +28,10 @@ A commercial-grade, native CustomTkinter desktop media conversion and compressio
   - **ICO**: Multi-resolution Windows application & website favicon generation (16x16, 32x32, 48x48, 64x64, 128x128, 256x256).
   - **PDF Binder**: Convert single images or merge an entire batch of images into a single multi-page PDF document.
 
-### 2. Video & Audio Engine (Powered by FFmpeg & Hardware GPU)
+### 2. Video & Audio Engine (Powered by FFmpeg)
 - **Input Media**: MP4, MKV, MOV, AVI, WEBM, FLV, MP3, WAV, AAC, OGG, M4A, OPUS.
-- **Hardware Acceleration**: Auto-detects Intel QuickSync (`h264_qsv`), NVIDIA NVENC (`h264_nvenc`), and AMD AMF (`h264_amf`) on Windows, and Apple VideoToolbox (`h264_videotoolbox`) on every Mac, for blazing fast encoding with graceful CPU fallback.
+- **Broad GPU Compatibility**: Capability-tests Intel QuickSync (`h264_qsv`), NVIDIA NVENC (`h264_nvenc`), AMD AMF (`h264_amf`), and Apple VideoToolbox (`h264_videotoolbox`) before use. Older, unsupported, integrated, virtual, or driver-limited GPUs automatically fall back to software H.264 (`libx264`). If a GPU fails on a real file after passing detection, that job is retried safely on the CPU.
+- **Maximum-Compatibility Mode**: Set `SHADOW_DISABLE_GPU=1` before launch to force CPU encoding on systems with unstable or restricted graphics drivers.
 - **Output Video**:
   - **WebM**: Modern VP9 video codec with Opus audio encoding for web streaming.
   - **MP4**: Universal H.264 video with AAC audio for cross-device compatibility.
@@ -125,8 +126,8 @@ A commercial-grade, native CustomTkinter desktop media conversion and compressio
 ```powershell
 git clone <repository_url>
 cd webp-compressor
-python -m venv ..\.venv
-..\.venv\Scripts\Activate.ps1
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File .\fetch_ffmpeg.ps1   # one-time, ~200MB
 ```

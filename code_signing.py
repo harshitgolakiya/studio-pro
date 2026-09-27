@@ -110,7 +110,12 @@ def _verify_windows_signature(path: Path) -> SignatureInfo:
         if proc.returncode == 0 and proc.stdout.strip():
             data = json.loads(proc.stdout.strip())
             raw_status = (data.get("Status") or "").strip()
-            status = raw_status if raw_status else "NotSigned"
+            # PowerShell reports ``UnknownError`` for ordinary files whose
+            # type has no Authenticode provider (for example .txt files).
+            # That is an inspection result, not an application error.  Keep
+            # the public status portable and preserve the native value in
+            # ``details`` for diagnostics.
+            status = "Unknown" if raw_status == "UnknownError" else (raw_status or "NotSigned")
             is_signed = status in ("Valid", "NotTrusted")
             return SignatureInfo(
                 path=str(path),

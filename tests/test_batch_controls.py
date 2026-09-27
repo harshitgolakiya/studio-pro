@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 # Real conversions run here; keep their history out of the user's real log.
@@ -109,8 +110,10 @@ class BatchControlTests(unittest.TestCase):
         bad = (self.dir / "broken.png").resolve()
         bad.write_bytes(b"\x89PNG not really")
         app._ingest_image_paths([good, bad])
-        app._start_conversion()
-        self.assertTrue(self._pump_until(lambda: not app.conversion_running, 30))
+        with patch.object(self._main, "get_best_hardware_encoder") as gpu_probe:
+            app._start_conversion()
+            self.assertTrue(self._pump_until(lambda: not app.conversion_running, 30))
+        gpu_probe.assert_not_called()
         self.assertEqual(app.row_results[good].status, "Completed")
         self.assertEqual(app.row_results[bad].status, "Failed")
         self.assertEqual(app._failed_paths(), [bad])
@@ -138,6 +141,34 @@ class BatchControlTests(unittest.TestCase):
         statuses = {r.status for r in app.row_results.values()}
         self.assertTrue(statuses <= {"Completed", "Cancelled"})
         self.assertIn("Cancelled", statuses)
+
+    def test_close_during_conversion_requires_confirmation_and_signals_cancel(self) -> None:
+        app = self.app
+        app.conversion_running = True
+        app.cancel_event.clear()
+        with (
+            patch("main.messagebox.askyesno", return_value=False),
+            patch.object(app, "destroy") as destroy,
+        ):
+            app._on_app_close()
+            destroy.assert_not_called()
+            self.assertFalse(app.cancel_event.is_set())
+
+        with (
+            patch("main.messagebox.askyesno", return_value=True),
+            patch.object(app, "destroy") as destroy,
+        ):
+            app._on_app_close()
+            destroy.assert_called_once()
+            self.assertTrue(app.cancel_event.is_set())
+        app.conversion_running = False
+        app.cancel_event.clear()
+
+    def test_high_memory_confirmation_is_owned_by_main_window(self) -> None:
+        with patch("main.messagebox.askyesno", return_value=False) as ask:
+            self.assertFalse(self.app._confirm_high_memory(3 * 1024**3, 4 * 1024**3))
+        self.assertIs(ask.call_args.kwargs["parent"], self.app)
+        self.assertIn("3.0 GB", ask.call_args.args[1])
 
 
 if __name__ == "__main__":

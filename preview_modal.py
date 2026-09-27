@@ -14,11 +14,13 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import ExifTags, Image, ImageChops, ImageDraw, ImageTk
 
+from accessibility import enable_keyboard_navigation
 from converter import ConversionResult
 from loss_audit import LossWarning, audit_conversion, display_to_source, format_probe, pixel_probe
 from metrics import block_ssim, psnr
 from optimizer import CODECS, ALPHA_CODECS
 from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
+from ui_dispatch import TkEventBridge
 
 _SEVERITY_COLOURS = {
     "high": ("#b91c1c", "#fca5a5"),
@@ -210,6 +212,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         self._variant_results: dict[int, VariantResult] = {}
         self._variant_worker: threading.Thread | None = None
         self._variant_generation_id: int = 0
+        self._ui_events = TkEventBridge(self)
 
         self._load_source_images()
         self.loss_warnings: list[LossWarning] = audit_conversion(self.source_path, self.output_path)
@@ -220,6 +223,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         self._build_header()
         self._build_content_area()
         self._build_footer()
+        enable_keyboard_navigation(self)
 
     def _load_source_images(self) -> None:
         try:
@@ -730,10 +734,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 results[idx] = res
 
             if self._variant_generation_id == gen_id:
-                try:
-                    self.after(0, lambda: self._on_variants_generated(gen_id, results))
-                except Exception:
-                    pass
+                self._ui_events.post(lambda: self._on_variants_generated(gen_id, results))
 
         self._variant_worker = threading.Thread(target=_worker, daemon=True)
         self._variant_worker.start()
@@ -1160,6 +1161,12 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             width=90,
             height=32,
         ).pack(side="right")
+
+    def destroy(self) -> None:
+        self._variant_generation_id += 1
+        if hasattr(self, "_ui_events"):
+            self._ui_events.close()
+        super().destroy()
 
     def _render_details_view(self) -> None:
         container = ctk.CTkScrollableFrame(

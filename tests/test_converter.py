@@ -557,6 +557,21 @@ class ConverterTests(unittest.TestCase):
             self.assertIsNotNone(res.output_path)
             self.assertEqual(res.output_path.name, "thumb_summer-vacation-2026_web.webp")
 
+    def test_cancelled_image_job_does_not_publish_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "large.png"
+            Image.new("RGB", (256, 256), "navy").save(source)
+            result = convert_image(
+                source,
+                root / "out",
+                target_format="WEBP",
+                cancel_check=lambda: True,
+            )
+            self.assertEqual(result.status, "Cancelled")
+            self.assertIsNone(result.output_path)
+            self.assertFalse((root / "out" / "large.webp").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

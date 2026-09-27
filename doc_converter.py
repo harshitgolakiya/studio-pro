@@ -7,7 +7,13 @@ import re
 import tempfile
 
 from converter import ConversionResult
-from utils import build_destination_filename, format_saved_percentage, reserve_output_path
+from utils import (
+    build_destination_filename,
+    format_saved_percentage,
+    publish_output_file,
+    release_output_path,
+    reserve_output_path,
+)
 
 SUPPORTED_DOCUMENT_EXTENSIONS = {".docx", ".pdf", ".html", ".htm", ".txt", ".md", ".markdown"}
 
@@ -211,6 +217,7 @@ def convert_document(
 ) -> ConversionResult:
     """Convert a document (.docx/.pdf/.html/.txt/.md) to/from Markdown."""
     original_size = None
+    output_path: Path | None = None
     try:
         ext = source_path.suffix.lower()
         if ext not in SUPPORTED_DOCUMENT_EXTENSIONS:
@@ -257,7 +264,12 @@ def convert_document(
             else:
                 raise ValueError(f"Unsupported target document format: {target_format}")
 
-            os.replace(temporary_path, output_path)
+            output_path = publish_output_file(
+                temporary_path,
+                output_path,
+                overwrite,
+                reserved_paths,
+            )
         finally:
             if temporary_path.exists():
                 temporary_path.unlink(missing_ok=True)
@@ -272,4 +284,6 @@ def convert_document(
             "Completed",
         )
     except Exception as error:
+        if output_path is not None and not output_path.exists():
+            release_output_path(output_path, reserved_paths)
         return ConversionResult(source_path, None, original_size, None, "-", "Failed", str(error))

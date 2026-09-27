@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import customtkinter as ctk
 
+from accessibility import enable_keyboard_navigation
 from diagnostics import export_diagnostics
 from history import HistoryEntry, clear_history, load_history, search_history, summarize
 from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
@@ -29,8 +30,9 @@ class HistoryDialog(ctk.CTkToplevel):
         top = ctk.CTkFrame(self, fg_color="transparent")
         top.pack(fill="x", padx=16, pady=(14, 6))
         self.query = ctk.StringVar()
-        entry = ctk.CTkEntry(top, textvariable=self.query, placeholder_text="Search by file, format, status, error or date (YYYY-MM-DD)…", height=34)
+        entry = ctk.CTkEntry(top, placeholder_text="Search by file, format, status, error or date (YYYY-MM-DD)…", height=34)
         entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        entry.bind("<KeyRelease>", lambda _event: self.query.set(entry.get()))
         self.query.trace_add("write", lambda *_: self._render())
         self.summary = ctk.CTkLabel(top, text="", text_color=_MUTED, font=ctk.CTkFont(size=11))
         self.summary.pack(side="right")
@@ -67,6 +69,7 @@ class HistoryDialog(ctk.CTkToplevel):
 
         self.bind("<Escape>", lambda _e: self.destroy())
         self.reload()
+        enable_keyboard_navigation(self)
         entry.focus_set()
 
     def reload(self) -> None:

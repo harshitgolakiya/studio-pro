@@ -87,6 +87,17 @@ def _ffmpeg_version() -> str:
         return f"error: {exc}"
 
 
+def _video_encoder() -> dict[str, str]:
+    """Report the encoder selected by the same capability test used for jobs."""
+    try:
+        from media_engine import get_best_hardware_encoder
+
+        encoder, label = get_best_hardware_encoder()
+        return {"encoder": encoder, "label": label}
+    except Exception as exc:
+        return {"encoder": "unknown", "label": f"detection error: {exc}"}
+
+
 def system_report() -> dict[str, Any]:
     from PIL import __version__ as pillow_version, features
 
@@ -100,6 +111,7 @@ def system_report() -> dict[str, Any]:
         "pillow": pillow_version,
         "pillow_features": {name: bool(features.check(name)) for name in ("webp", "avif", "jpg", "jpg_2000", "zlib")},
         "ffmpeg": _ffmpeg_version(),
+        "video_encoder": _video_encoder(),
         "app_data_dir": str(get_app_data_dir()),
     }
     try:
