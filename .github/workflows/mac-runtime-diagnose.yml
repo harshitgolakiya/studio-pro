@@ -1,0 +1,46 @@
+name: Diagnose packaged macOS runtime
+on:
+  workflow_dispatch: {}
+jobs:
+  diagnose:
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-studio.txt
+      - name: Stage native runtimes
+        run: |
+          brew install ffmpeg ghostscript
+          bash setup_studio_macos.sh
+          mkdir -p vendor/ffmpeg-mac vendor/ghostscript/bin
+          cp "$(command -v ffmpeg)" vendor/ffmpeg-mac/ffmpeg
+          cp "$(command -v ffprobe)" vendor/ffmpeg-mac/ffprobe
+          cp "$(command -v gs)" vendor/ghostscript/bin/gs
+          ditto "$(brew --prefix ghostscript)/share/ghostscript" vendor/ghostscript/share/ghostscript
+          python setup_studio_models.py
+          python -c "from model_catalog import find_entry,install; install(find_entry('whisper-base')); install(find_entry('translate-es-en'))"
+      - name: Build console diagnostic app
+        env:
+          SHADOW_MAC_CONSOLE: '1'
+        run: |
+          python -m PyInstaller --clean Shadow-mac.spec
+          mkdir -p dist/Shadow.app/Contents/Frameworks/vendor/libreoffice
+          ditto vendor/libreoffice/LibreOffice.app dist/Shadow.app/Contents/Frameworks/vendor/libreoffice/LibreOffice.app
+          codesign --force --deep -s - dist/Shadow.app
+      - name: Diagnose real packaged engines
+        timeout-minutes: 5
+        env:
+          SHADOW_SMOKE_TRACE: '1'
+        run: |
+          set -o pipefail
+          mkdir -p studio-verification
+          export SHADOW_LIBREOFFICE="$PWD/dist/Shadow.app/Contents/Frameworks/vendor/libreoffice/LibreOffice.app/Contents/MacOS/soffice"
+          dist/Shadow.app/Contents/MacOS/Shadow --studio-smoke-report "$PWD/studio-verification/diagnostic-smoke.json" 2>&1 | tee studio-verification/diagnostic-output.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macOS-runtime-diagnostic
+          path: studio-verification/*
