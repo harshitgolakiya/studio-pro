@@ -28,6 +28,7 @@ class GPUCompatibilityTests(unittest.TestCase):
 
     @patch("media_engine.get_ffmpeg_path", return_value="ffmpeg")
     @patch("media_engine.subprocess.run")
+    @patch("media_engine.sys.platform", "win32")
     def test_probe_skips_unusable_gpu_and_uses_integrated_gpu(
         self, run: MagicMock, _ffmpeg: MagicMock
     ) -> None:
@@ -45,6 +46,19 @@ class GPUCompatibilityTests(unittest.TestCase):
             any(value.startswith("color=c=black:s=1280x720") for value in probe_command)
         )
         self.assertIn("yuv420p", probe_command)
+
+    @patch("media_engine.get_ffmpeg_path", return_value="ffmpeg")
+    @patch("media_engine.subprocess.run")
+    @patch("media_engine.sys.platform", "darwin")
+    def test_macos_probes_native_videotoolbox(self, run, _ffmpeg):
+        run.side_effect = [
+            MagicMock(returncode=0, stdout="h264_videotoolbox h264_qsv", stderr=""),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        encoder, label = media_engine.get_best_hardware_encoder()
+        self.assertEqual(encoder, "h264_videotoolbox")
+        self.assertIn("Apple", label)
+        self.assertIn("h264_videotoolbox", run.call_args_list[-1].args[0])
 
     def test_real_conversion_retries_on_cpu_after_gpu_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
