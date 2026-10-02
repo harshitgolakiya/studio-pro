@@ -10,7 +10,7 @@ from accessibility import enable_keyboard_navigation
 from font_loader import DISPLAY_FONT
 from utils import open_file_or_folder
 from watch_folder import FolderWatcher
-from ui_dispatch import TkEventBridge
+from ui_dispatch import TkEventBridge, set_dialog_owner
 
 
 class WatchFolderDialog(ctk.CTkToplevel):
@@ -29,7 +29,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
         self.title("Auto-Watch Folder Pipeline")
         self.geometry("640x520")
         self.minsize(560, 440)
-        self.transient(parent)
+        set_dialog_owner(self, parent)
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
         default_watch = str(Path.home() / "Pictures")

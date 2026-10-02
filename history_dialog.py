@@ -21,7 +21,8 @@ class HistoryDialog(ctk.CTkToplevel):
         self.title("Conversion History")
         self.geometry("900x560")
         self.minsize(720, 420)
-        self.transient(master)
+        from ui_dispatch import set_dialog_owner
+        set_dialog_owner(self, master)
 
         self._apply_settings = apply_settings
         self._entries: list[HistoryEntry] = []

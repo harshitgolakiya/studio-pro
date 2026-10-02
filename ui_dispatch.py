@@ -8,6 +8,12 @@ import tkinter as tk
 from collections.abc import Callable
 
 
+def set_dialog_owner(dialog: tk.Misc, parent: tk.Misc) -> None:
+    """Avoid Aqua Tk's mapping loop for transients owned by hidden windows."""
+    if sys.platform != "darwin" or parent.winfo_viewable():
+        dialog.transient(parent)
+
+
 def cancel_widget_callbacks(root: tk.Misc) -> None:
     """Cancel only Tcl timers owned by a window and its descendants."""
     try:

@@ -27,7 +27,8 @@ class LicenseDialog(ctk.CTkToplevel):
         self.title("Shadow Media Studio Pro - License Manager")
         self.geometry("560x520")
         self.minsize(520, 480)
-        self.transient(parent)
+        from ui_dispatch import set_dialog_owner
+        set_dialog_owner(self, parent)
         self.on_status_changed = on_status_changed
         self._grab_after_id: str | None = self.after(50, self._grab_when_viewable)
 

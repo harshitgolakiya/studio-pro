@@ -23,7 +23,7 @@ from optimizer import (
     recommend,
     sweep,
 )
-from ui_dispatch import TkEventBridge
+from ui_dispatch import TkEventBridge, set_dialog_owner
 from utils import format_file_size
 
 _MUTED = ("#607181", "#91A0AE")
@@ -43,7 +43,7 @@ class OptimizerDialog(ctk.CTkToplevel):
         self.title(f"Optimize · {source_path.name}")
         self.geometry("880x640")
         self.minsize(760, 540)
-        self.transient(master)
+        set_dialog_owner(self, master)
 
         self._source_path = source_path
         self._on_apply = on_apply

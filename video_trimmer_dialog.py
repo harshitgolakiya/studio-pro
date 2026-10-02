@@ -16,7 +16,7 @@ from media_engine import (
     trim_video_lossless,
 )
 from utils import play_completion_sound
-from ui_dispatch import TkEventBridge
+from ui_dispatch import TkEventBridge, set_dialog_owner
 
 
 def format_seconds(seconds: float) -> str:
@@ -42,7 +42,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         self.geometry("560x380")
         self.minsize(500, 340)
         self.resizable(False, False)
-        self.transient(parent)
+        set_dialog_owner(self, parent)
         self.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
         # Center dialog relative to parent window

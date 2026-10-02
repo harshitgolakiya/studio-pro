@@ -37,7 +37,8 @@ class RecipeManagerDialog(ctk.CTkToplevel):
         self.title("Processing Recipes")
         self.geometry("620x520")
         self.minsize(520, 400)
-        self.transient(master)
+        from ui_dispatch import set_dialog_owner
+        set_dialog_owner(self, master)
 
         self._collect = collect_settings
         self._apply = apply_settings

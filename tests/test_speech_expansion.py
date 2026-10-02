@@ -138,6 +138,22 @@ class ModelCatalogTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("SHADOW_TEST_FULL_STUDIO") == "1", "Set SHADOW_TEST_FULL_STUDIO=1 for actual local engines")
 class LocalSpeechEngineTests(unittest.TestCase):
+    def test_isolation_repeated_normalization_is_deterministic(self):
+        import hashlib
+        from audio_tools import process_audio, voice_isolation_model
+        from speech_engine import synthesize_speech
+        if not voice_isolation_model().is_file():
+            self.skipTest("Voice isolation model is not installed")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = synthesize_speech("Hello. This is the agency studio. We create marketing campaigns.", root / "voice.wav")
+            hashes = []
+            for index in range(8):
+                output = process_audio(source, root / f"isolated-{index}.wav", isolate_voice=True)
+                self.assertGreater(output.stat().st_size, 1000)
+                hashes.append(hashlib.sha256(output.read_bytes()).hexdigest())
+            self.assertEqual(len(set(hashes)), 1, "Repeated isolation corrupted the same input")
+
     def test_voice_isolation_and_speaker_detection(self):
         import wave
         from audio_tools import process_audio, voice_isolation_model

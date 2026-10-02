@@ -20,7 +20,7 @@ from loss_audit import LossWarning, audit_conversion, display_to_source, format_
 from metrics import block_ssim, psnr
 from optimizer import CODECS, ALPHA_CODECS
 from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
-from ui_dispatch import TkEventBridge
+from ui_dispatch import TkEventBridge, set_dialog_owner
 
 _SEVERITY_COLOURS = {
     "high": ("#b91c1c", "#fca5a5"),
@@ -181,7 +181,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         self.title(f"Image Inspection & Diff - {source_path.name}")
         self.geometry("1100x740")
         self.minsize(920, 600)
-        self.transient(parent)
+        set_dialog_owner(self, parent)
 
         self.source_path = source_path
         self.result = result

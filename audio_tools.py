@@ -60,6 +60,9 @@ def process_audio(source: Path, destination: Path, fmt: str = "WAV", normalize: 
         with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".shadow-audio-") as td:
             temporary = Path(td) / ("audio" + extension)
             args = [engine, "-hide_banner", "-nostdin", "-y"]
+            if isolate_voice:
+                # Keep scheduling consistent for the stateful speech model.
+                args.extend(["-filter_threads", "1"])
             if start:
                 args.extend(["-ss", str(start)])
             args.extend(["-i", str(source.resolve()), "-map", "0:a:0", "-vn"])
@@ -67,8 +70,9 @@ def process_audio(source: Path, destination: Path, fmt: str = "WAV", normalize: 
                 args.extend(["-t", str(duration)])
             filters = []
             if isolate_voice:
-                # The speech model was trained on 48 kHz mono audio.
-                filters.append(f"aresample=48000,arnndn=m={_filter_path(voice_isolation_model())}")
+                # RNNoise consumes 480-sample frames at 48 kHz. Pad the final
+                # frame explicitly: short frames can corrupt native output.
+                filters.append(f"aresample=48000,asetnsamples=n=480:p=1,arnndn=m={_filter_path(voice_isolation_model())}")
             if denoise:
                 filters.append("afftdn=nf=-25")
             if normalize:

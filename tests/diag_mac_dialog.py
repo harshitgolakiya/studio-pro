@@ -127,6 +127,15 @@ os.environ['SHADOW_NO_QUEUE_RESTORE'] = '1'
 from main import WebPCompressorApp
 app = WebPCompressorApp(); app.update()
 """,
+    "D9 withdrawn root + ImagePreviewDialog": """
+import tempfile
+from pathlib import Path
+from PIL import Image
+from preview_modal import ImagePreviewDialog
+p = Path(tempfile.mkdtemp()) / 'a.png'; Image.new('RGB', (40, 30), 'red').save(p)
+root = ctk.CTk(); root.withdraw()
+d = ImagePreviewDialog(root, p); d.update()
+""",
 }
 
 
