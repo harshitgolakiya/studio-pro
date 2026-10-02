@@ -1,0 +1,340 @@
+"""Agency tools with local PDF and speech workflows."""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+import customtkinter as ctk
+
+from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, to_markdown
+from audio_tools import ENCODERS, process_audio
+from document_preview import DocumentPreviewDialog
+from media_engine import SUPPORTED_AUDIO_EXTENSIONS, SUPPORTED_VIDEO_EXTENSIONS, get_ffmpeg_path
+from pdf_tools import process_pdf
+from speech_engine import available_voices, default_whisper_model, synthesize_speech, transcribe_media
+from studio_runtime import StudioCancelled, find_libreoffice
+from ui_dispatch import TkEventBridge, cancel_widget_callbacks
+from utils import open_file_or_folder
+
+
+class StudioToolsDialog(ctk.CTkToplevel):
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Shadow — Studio Tools")
+        self.geometry("940x760")
+        self.minsize(740, 620)
+        self._master = master
+        self._bridge = TkEventBridge(self)
+        self._cancel = threading.Event()
+        self._busy = False
+        self._actions = []
+        self._last_output = None
+        self._pdfs: list[Path] = []
+        self._voice = None
+        self._model = None
+        self.output = tk.StringVar(value=master.output_directory.get() or str(Path.home() / "Documents" / "Shadow"))
+        self.source = tk.StringVar()
+        self.transcript_format = tk.StringVar(value="TXT")
+        self.language = tk.StringVar(value="English")
+        self.pdf_operation = tk.StringVar(value="Merge PDFs")
+        self.pages = tk.StringVar(value="all")
+        self.rotation = tk.StringVar(value="90")
+        self.speed = tk.StringVar(value="1.0")
+        self.audio_source = tk.StringVar()
+        self.audio_format = tk.StringVar(value="WAV")
+        self.audio_normalize = tk.BooleanVar(value=True)
+        self.audio_denoise = tk.BooleanVar(value=False)
+        self.audio_start = tk.StringVar(value="0")
+        self.audio_duration = tk.StringVar()
+        self.status = tk.StringVar(value="Ready. All file processing stays on this computer.")
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(self, text="Studio Tools", font=ctk.CTkFont(size=25, weight="bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 4))
+        tabs = ctk.CTkTabview(self)
+        tabs.grid(row=1, column=0, sticky="nsew", padx=20, pady=8)
+        self._documents(tabs.add("Documents"))
+        self._pdf_tools(tabs.add("PDF Tools"))
+        self._transcription(tabs.add("Audio to Text"))
+        self._synthesis(tabs.add("Text to Audio"))
+        self._audio_tools(tabs.add("Audio Tools"))
+        self._engines(tabs.add("Engines"))
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=2, column=0, sticky="ew", padx=24, pady=10)
+        footer.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(footer, text="Output folder").grid(row=0, column=0, padx=(0, 10))
+        ctk.CTkEntry(footer, textvariable=self.output).grid(row=0, column=1, sticky="ew")
+        self._button(footer, "Browse", self._browse_output).grid(row=0, column=2, padx=8)
+        self.open_output = ctk.CTkButton(footer, text="Open output", width=110, state="disabled", command=self._open_output)
+        self.open_output.grid(row=1, column=0, pady=10)
+        ctk.CTkLabel(footer, textvariable=self.status, wraplength=590, anchor="w").grid(row=1, column=1, sticky="ew", padx=10)
+        self.cancel = ctk.CTkButton(footer, text="Cancel", width=90, state="disabled", command=self._cancel.set)
+        self.cancel.grid(row=1, column=2)
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _button(self, parent, text, command):
+        button = ctk.CTkButton(parent, text=text, command=command, width=145)
+        self._actions.append(button)
+        return button
+
+    def _copy(self, parent, text):
+        ctk.CTkLabel(parent, text=text, wraplength=680, justify="left", anchor="w").pack(fill="x", padx=14, pady=(12, 8))
+
+    def _documents(self, tab):
+        self._copy(tab, "Word, PowerPoint, Excel, OpenDocument, PDF, Markdown, HTML, and text. "
+                   "Add files to the main queue, then choose a target format for batch conversion.")
+        self._button(tab, "Add documents to queue", self._add_documents).pack(anchor="w", padx=14, pady=8)
+        self._button(tab, "Open document preview", self._preview_document).pack(anchor="w", padx=14, pady=8)
+        self._copy(tab, "Office → PDF keeps the document layout through LibreOffice. Presentations stay presentations; "
+                   "spreadsheets stay spreadsheets. Text extraction to Markdown/TXT does not retain the original layout. "
+                   "PDF → DOCX produces editable text rather than reconstructing the source document.")
+        self._copy(tab, "Common workflows: client proposal DOC/DOCX → PDF · pitch PPT/PPTX → PDF · "
+                   "campaign budget XLS/XLSX → PDF or CSV · legacy Office → modern Office · meeting notes → Markdown.")
+
+    def _add_documents(self):
+        paths = filedialog.askopenfilenames(parent=self, title="Add documents", filetypes=[("Documents", " ".join(f"*{e}" for e in sorted(SUPPORTED_DOCUMENT_EXTENSIONS))), ("All files", "*.*")])
+        self._master._ingest_image_paths([Path(p) for p in paths])
+
+    def _preview_document(self):
+        name = filedialog.askopenfilename(parent=self, title="Open document", filetypes=[("Documents", " ".join(f"*{e}" for e in sorted(SUPPORTED_DOCUMENT_EXTENSIONS)))])
+        if name:
+            DocumentPreviewDialog(self, Path(name))
+
+    def _pdf_tools(self, tab):
+        self._copy(tab, "Merge documents in the order selected, extract page ranges, rotate pages, compress losslessly, "
+                   "or export pages as PNG images inside a ZIP. Originals are kept.")
+        self._button(tab, "Select PDFs", self._choose_pdfs).pack(anchor="w", padx=14, pady=6)
+        self.pdf_list = ctk.CTkTextbox(tab, height=130)
+        self.pdf_list.pack(fill="x", padx=14, pady=8)
+        self.pdf_list.configure(state="disabled")
+        ctk.CTkOptionMenu(tab, variable=self.pdf_operation, values=["Merge PDFs", "Extract pages", "Rotate pages", "Compress PDF", "Pages to PNG ZIP"]).pack(anchor="w", padx=14, pady=8)
+        row = ctk.CTkFrame(tab, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=8)
+        ctk.CTkLabel(row, text="Pages (all or 1,3-5)").pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(row, textvariable=self.pages, width=150).pack(side="left")
+        ctk.CTkLabel(row, text="Rotation").pack(side="left", padx=12)
+        ctk.CTkOptionMenu(row, variable=self.rotation, values=["90", "180", "270"], width=90).pack(side="left")
+        self._button(tab, "Process PDFs", self._process_pdf).pack(anchor="w", padx=14, pady=12)
+        self._copy(tab, "For extraction, rotation, compression, and PNG export, select one PDF. "
+                   "Compression keeps image quality; already optimized PDFs may not become smaller.")
+
+    def _choose_pdfs(self):
+        paths = filedialog.askopenfilenames(parent=self, title="Select PDFs in merge order", filetypes=[("PDF", "*.pdf")])
+        if paths:
+            self._pdfs = [Path(p) for p in paths]
+            self.pdf_list.configure(state="normal")
+            self.pdf_list.delete("1.0", "end")
+            self.pdf_list.insert("1.0", "\n".join(f"{i}. {p.name}" for i, p in enumerate(self._pdfs, 1)))
+            self.pdf_list.configure(state="disabled")
+
+    def _process_pdf(self):
+        operation = {"Merge PDFs": "merge", "Extract pages": "extract", "Rotate pages": "rotate", "Compress PDF": "compress", "Pages to PNG ZIP": "images"}[self.pdf_operation.get()]
+        if not self._pdfs:
+            self.status.set("Select PDF files first.")
+            return
+        extension = ".zip" if operation == "images" else ".pdf"
+        output = filedialog.asksaveasfilename(parent=self, title="Save PDF result", initialdir=self.output.get(), initialfile="studio-result" + extension, defaultextension=extension, filetypes=[("Output", "*" + extension)])
+        if output:
+            sources, pages, rotation = list(self._pdfs), self.pages.get(), int(self.rotation.get())
+            self._run(lambda progress: process_pdf(sources, Path(output), operation, pages, rotation, cancel_check=self._cancel.is_set))
+
+    def _transcription(self, tab):
+        self._copy(tab, "Transcribe recordings, interviews, voice notes, and video soundtracks locally. Export plain text, "
+                   "timed subtitles, or timestamped JSON. English is the default; multilingual models can be selected.")
+        row = ctk.CTkFrame(tab, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=12)
+        ctk.CTkEntry(row, textvariable=self.source).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._button(row, "Choose media", self._choose_media).pack(side="left")
+        ctk.CTkOptionMenu(tab, variable=self.transcript_format, values=["TXT", "SRT", "VTT", "JSON"]).pack(anchor="w", padx=14, pady=8)
+        ctk.CTkOptionMenu(tab, variable=self.language, values=["English", "Auto-detect"]).pack(anchor="w", padx=14, pady=8)
+        self._button(tab, "Choose local model", self._choose_model).pack(anchor="w", padx=14, pady=8)
+        self.model_label = ctk.CTkLabel(tab, text=str(default_whisper_model()), wraplength=680, anchor="w")
+        self.model_label.pack(fill="x", padx=14)
+        self._button(tab, "Transcribe", self._transcribe).pack(anchor="w", padx=14, pady=16)
+        self._copy(tab, "Review transcripts before publishing. Transcription does not identify speakers. "
+                   "Auto-detect requires a multilingual model; the bundled base.en model is English-only.")
+
+    def _choose_media(self):
+        extensions = SUPPORTED_AUDIO_EXTENSIONS | SUPPORTED_VIDEO_EXTENSIONS
+        source = filedialog.askopenfilename(parent=self, title="Choose audio or video", filetypes=[("Media", " ".join(f"*{e}" for e in sorted(extensions))), ("All files", "*.*")])
+        if source:
+            self.source.set(source)
+
+    def _choose_model(self):
+        name = filedialog.askdirectory(parent=self, title="Select faster-whisper model directory")
+        if name:
+            self._model = Path(name)
+            self.model_label.configure(text=name)
+
+    def _transcribe(self):
+        source = Path(self.source.get())
+        output, fmt, model = Path(self.output.get()), self.transcript_format.get(), self._model
+        language = "en" if self.language.get() == "English" else None
+        def work(progress):
+            result = transcribe_media(source, output, fmt, model, language, cancel_check=self._cancel.is_set, progress=progress)
+            if result.status == "Cancelled":
+                raise StudioCancelled()
+            if result.status != "Completed":
+                raise RuntimeError(result.error)
+            return result.output_path
+        self._run(work)
+
+    def _synthesis(self, tab):
+        self._copy(tab, "Create English voiceovers from scripts or extracted document text. Export a WAV master, "
+                   "then use the audio converter for MP3, AAC, or Opus delivery.")
+        self.script = ctk.CTkTextbox(tab, height=220, wrap="word")
+        self.script.pack(fill="both", expand=True, padx=14, pady=10)
+        row = ctk.CTkFrame(tab, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=8)
+        self._button(row, "Load document text", self._load_script).pack(side="left", padx=(0, 8))
+        self._button(row, "Choose voice model", self._choose_voice).pack(side="left", padx=8)
+        ctk.CTkOptionMenu(row, variable=self.speed, values=["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"], width=85).pack(side="right")
+        self.voice_label = ctk.CTkLabel(tab, text="Bundled English voice", anchor="w")
+        self.voice_label.pack(fill="x", padx=14)
+        self._button(tab, "Generate speech", self._speak).pack(anchor="w", padx=14, pady=12)
+
+    def _choose_voice(self):
+        name = filedialog.askopenfilename(parent=self, title="Select Piper voice", filetypes=[("Piper voice", "*.onnx")])
+        if name:
+            self._voice = Path(name)
+            self.voice_label.configure(text=Path(name).name)
+
+    def _load_script(self):
+        name = filedialog.askopenfilename(parent=self, title="Read script from document", filetypes=[("Documents", " ".join(f"*{e}" for e in sorted(SUPPORTED_DOCUMENT_EXTENSIONS)))])
+        if name:
+            def work(progress):
+                text = to_markdown(Path(name), self._cancel.is_set)
+                self._bridge.post(lambda: self._set_script(text))
+                return None
+            self._run(work)
+
+    def _set_script(self, text):
+        self.script.delete("1.0", "end")
+        self.script.insert("1.0", text)
+
+    def _speak(self):
+        text, voice, speed = self.script.get("1.0", "end-1c"), self._voice, float(self.speed.get())
+        output = filedialog.asksaveasfilename(parent=self, title="Save voiceover", initialdir=self.output.get(), initialfile="voiceover.wav", defaultextension=".wav", filetypes=[("WAV audio", "*.wav")])
+        if output:
+            self._run(lambda progress: synthesize_speech(text, Path(output), voice, speed, cancel_check=self._cancel.is_set, progress=progress))
+
+    def _audio_tools(self, tab):
+        self._copy(tab, "Prepare voiceovers, podcasts, and video soundtracks: normalize loudness, reduce steady background "
+                   "noise, trim a segment, and export delivery formats. Original files are kept.")
+        row = ctk.CTkFrame(tab, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=12)
+        ctk.CTkEntry(row, textvariable=self.audio_source).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._button(row, "Choose media", self._choose_audio).pack(side="left")
+        ctk.CTkOptionMenu(tab, variable=self.audio_format, values=list(ENCODERS)).pack(anchor="w", padx=14, pady=8)
+        ctk.CTkCheckBox(tab, text="Normalize loudness for spoken content", variable=self.audio_normalize).pack(anchor="w", padx=14, pady=8)
+        ctk.CTkCheckBox(tab, text="Reduce steady background noise", variable=self.audio_denoise).pack(anchor="w", padx=14, pady=8)
+        trim = ctk.CTkFrame(tab, fg_color="transparent")
+        trim.pack(fill="x", padx=14, pady=12)
+        ctk.CTkLabel(trim, text="Start (seconds)").pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(trim, textvariable=self.audio_start, width=85).pack(side="left")
+        ctk.CTkLabel(trim, text="Duration (empty = rest)").pack(side="left", padx=12)
+        ctk.CTkEntry(trim, textvariable=self.audio_duration, width=85).pack(side="left")
+        self._button(tab, "Process audio", self._process_audio).pack(anchor="w", padx=14, pady=12)
+        self._copy(tab, "Noise reduction works best on consistent hum or hiss. Listen to the output before delivery; "
+                   "strong noise and overlapping voices cannot always be cleaned completely.")
+
+    def _choose_audio(self):
+        extensions = SUPPORTED_AUDIO_EXTENSIONS | SUPPORTED_VIDEO_EXTENSIONS
+        name = filedialog.askopenfilename(parent=self, title="Choose audio or video", filetypes=[("Media", " ".join(f"*{e}" for e in sorted(extensions)))])
+        if name:
+            self.audio_source.set(name)
+
+    def _process_audio(self):
+        try:
+            start = float(self.audio_start.get())
+            duration = float(self.audio_duration.get()) if self.audio_duration.get().strip() else None
+        except ValueError:
+            self.status.set("Enter start and duration as seconds.")
+            return
+        source, fmt = Path(self.audio_source.get()), self.audio_format.get()
+        normalize, denoise = self.audio_normalize.get(), self.audio_denoise.get()
+        ext = ENCODERS[fmt][0]
+        output = filedialog.asksaveasfilename(parent=self, title="Save processed audio", initialdir=self.output.get(), initialfile="audio-master" + ext, defaultextension=ext, filetypes=[(fmt, "*" + ext)])
+        if output:
+            self._run(lambda progress: process_audio(source, Path(output), fmt, normalize, denoise, start, duration,
+                                                    cancel_check=self._cancel.is_set))
+
+    def _engines(self, tab):
+        self._copy(tab, "Engine readiness")
+        self.engine_status = ctk.CTkTextbox(tab, height=230, wrap="word")
+        self.engine_status.pack(fill="x", padx=14, pady=12)
+        self._button(tab, "Refresh engines", self._refresh_engines).pack(anchor="w", padx=14, pady=8)
+        self._copy(tab, "Source setup: run setup_studio.ps1 with your Python environment. "
+                   "It downloads LibreOffice and English speech models once. Conversions never download models or upload files.")
+        self._refresh_engines()
+
+    def _refresh_engines(self):
+        def available(name):
+            return importlib.util.find_spec(name) is not None
+        entries = [
+            ("Office engine", find_libreoffice() or "Missing — run setup_studio.ps1"),
+            ("FFmpeg", get_ffmpeg_path() or "Missing"),
+            ("PDF page viewer", "Ready" if available("pypdfium2") else "Missing package pypdfium2"),
+            ("Transcription engine", "Ready" if available("faster_whisper") else "Missing package faster-whisper"),
+            ("English transcription model", "Ready" if (default_whisper_model() / "model.bin").is_file() else "Missing — run setup_studio.ps1"),
+            ("Speech synthesis engine", "Ready" if available("piper") else "Missing package piper-tts"),
+            ("Voice models", ", ".join(p.stem for p in available_voices()) or "Missing — run setup_studio.ps1"),
+        ]
+        self.engine_status.configure(state="normal")
+        self.engine_status.delete("1.0", "end")
+        self.engine_status.insert("1.0", "\n\n".join(f"{name}: {value}" for name, value in entries))
+        self.engine_status.configure(state="disabled")
+
+    def _browse_output(self):
+        name = filedialog.askdirectory(parent=self, title="Output folder")
+        if name:
+            self.output.set(name)
+
+    def _open_output(self):
+        if self._last_output:
+            open_file_or_folder(self._last_output.parent)
+
+    def _run(self, work):
+        if self._busy:
+            return
+        self._busy = True
+        self._cancel.clear()
+        for action in self._actions:
+            action.configure(state="disabled")
+        self.cancel.configure(state="normal")
+        self.status.set("Processing locally…")
+        def progress(message):
+            self._bridge.post(lambda: self.status.set(message))
+        def worker():
+            try:
+                result = work(progress)
+                self._bridge.post(lambda: self._finish(result, None))
+            except StudioCancelled:
+                self._bridge.post(lambda: self._finish(None, "Cancelled"))
+            except Exception as exc:
+                message = str(exc)
+                self._bridge.post(lambda: self._finish(None, message))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish(self, output, error):
+        self._busy = False
+        for action in self._actions:
+            action.configure(state="normal")
+        self.cancel.configure(state="disabled")
+        if error:
+            self.status.set(error)
+            if error != "Cancelled":
+                messagebox.showerror("Studio operation failed", error, parent=self)
+        else:
+            self.status.set(f"Completed: {output.name}" if output else "Document text loaded")
+            if output:
+                self._last_output = output
+                self.open_output.configure(state="normal")
+
+    def destroy(self):
+        self._cancel.set()
+        self._bridge.close()
+        cancel_widget_callbacks(self)
+        super().destroy()

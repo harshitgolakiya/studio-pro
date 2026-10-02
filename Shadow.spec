@@ -24,6 +24,8 @@ from PyInstaller.utils.hooks import collect_submodules
 # export -- collect_submodules walks the actual package on disk instead of
 # relying on import statements.
 reportlab_barcode_modules = collect_submodules('reportlab.graphics.barcode')
+from studio_bundle import collect_studio
+studio_datas, studio_binaries, studio_imports = collect_studio()
 
 asset_datas = [
     (path, 'assets')
@@ -44,15 +46,18 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[
+        *studio_binaries,
         ('vendor/ffmpeg/ffmpeg.exe', 'bin'),
         ('vendor/ffmpeg/ffprobe.exe', 'bin'),
     ],
     datas=[
+        *studio_datas,
         *asset_datas,
         *font_datas,
         ('vendor/ffmpeg/LICENSE-ffmpeg-GPLv3.txt', 'bin'),
     ],
     hiddenimports=[
+        *studio_imports,
         'PIL',
         'PIL.Image',
         'PIL.ImageDraw',

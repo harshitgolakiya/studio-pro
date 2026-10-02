@@ -1,5 +1,10 @@
 # Shadow (v2.0.0)
 
+**Agency Studio expansion:** Office/PDF conversion and previews, PDF operations,
+English audio/video transcription, local neural text-to-speech, and audio cleanup
+are available through **Studio Tools**. See [AGENCY_STUDIO.md](AGENCY_STUDIO.md)
+for supported formats, full engine setup, packaging, and fidelity limits.
+
 A commercial-grade, native CustomTkinter desktop media conversion and compression suite for Windows. 100% offline, private, and blazingly fast.
 
 ![Shadow](assets/icon.ico)
@@ -101,14 +106,21 @@ A commercial-grade, native CustomTkinter desktop media conversion and compressio
 ### 13. Enterprise Audit & Reporting
 - Export full conversion sessions to standard **CSV spreadsheets** with original size, converted size, bytes saved, compression ratio, resolution, and output paths.
 
-### 14. Document ↔ Markdown Converter
-- Convert **DOCX, PDF, HTML, and TXT** documents into clean **Markdown**, and convert Markdown back out to **DOCX, PDF, HTML, or TXT**.
-- Preserves headings, bold/italic text, and bullet/numbered lists in both directions.
+### 14. Agency Document Studio
+- Convert **DOC/DOCX, PPT/PPTX, XLS/XLSX, OpenDocument, and RTF** files to PDF through LibreOffice's native layout exporters. Convert legacy and modern Office files within their document family.
+- Extract supported document text as **Markdown, TXT, or HTML**, and render text documents as DOCX or PDF. Text extraction/reflow does not retain the original page layout or all embedded media.
+- Preview Office/PDF pages inside the app; merge, extract, rotate, compress, and export PDF pages through **Studio Tools**.
 - PDF text extraction is best-effort (works well for normal text PDFs; scanned/image-only PDFs have no extractable text and will report an error rather than silently producing an empty file).
 - Runs through the same batch queue, destination folder, renaming, and overwrite-protection rules as image/video conversions.
 
 ### 15. Persistent Preferences
 - Automatically remembers your selected output directory, theme, quality preset, resize settings, watermark text, and audio/video preferences across app restarts in `%APPDATA%\Shadow\settings.json`.
+
+### 16. Offline Speech & Audio Tools
+- Transcribe English audio/video as **TXT, SRT, VTT, or timestamped JSON** using a local faster-whisper model.
+- Generate neural English voiceovers from typed text or extracted documents using a local Piper voice; export WAV with adjustable speaking speed.
+- Trim audio, reduce steady background noise, normalize loudness, and export **WAV, MP3, FLAC, AAC/M4A, or Opus**.
+- Setup and models are documented in [AGENCY_STUDIO.md](AGENCY_STUDIO.md). Speech generation and recognition run locally after setup.
 
 ---
 
@@ -287,12 +299,13 @@ MediaCompressor Studio Pro includes automated test coverage covering all convers
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-All 323 automated tests pass cleanly with zero external network requirements.
+The regression suite runs without network access. Real Office/speech integration
+tests can be enabled with `SHADOW_TEST_FULL_STUDIO=1` after engine/model setup.
 
 ---
 
 ## 📄 License & Privacy Guarantee
 
-- **100% Offline**: Zero telemetry, zero analytics, zero external network requests.
+- **Local processing**: Conversion, previews, transcription, and speech generation run on your device. Initial engine/model setup downloads public assets; the optional media downloader and publishing integrations contact the services you select.
 - **Secure**: All transformations occur in-memory or directly on local disk storage.
 - **Fonts**: The UI uses Inter (body text) and Outfit (headings), both bundled in `assets/fonts/` and registered as process-private fonts at startup (see `font_loader.py`) so rendering doesn't depend on what's installed on the customer's machine. Both are SIL Open Font License fonts from Google Fonts; their `OFL-*.txt` license files ship alongside them.

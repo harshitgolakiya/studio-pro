@@ -20,3 +20,9 @@ sales_log.csv
 # macOS via Homebrew in CI) -- not committed, ~100-200MB.
 vendor/ffmpeg/*.exe
 vendor/ffmpeg-mac/*
+vendor/libreoffice/
+vendor/models/
+vendor/downloads/
+build-studio/
+dist-studio/
+studio-verification/

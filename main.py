@@ -177,7 +177,7 @@ from converter import (
     normalize_output_format,
 )
 from diagnostics import export_diagnostics, install_exception_logging, setup_logging
-from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
+from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document, document_targets, normalize_document_target
 from format_browser import FormatBrowserDialog, describe_format, render_capability_badges
 from history import record_batch
 from history_dialog import HistoryDialog
@@ -778,6 +778,12 @@ class WebPCompressorApp(ctk.CTk):
             text_color=APP_MUTED,
         )
         self.history_button.pack(side="left", padx=(0, 8))
+
+        self.studio_button = ctk.CTkButton(
+            header_right, text="Studio Tools", command=self._open_studio_tools,
+            width=105, height=30, corner_radius=7,
+        )
+        self.studio_button.pack(side="left", padx=(0, 8))
 
 
         self.theme_menu = ctk.CTkOptionMenu(
@@ -1591,7 +1597,7 @@ class WebPCompressorApp(ctk.CTk):
         self.document_options_row = ctk.CTkFrame(tab_format, fg_color="transparent")
         ctk.CTkLabel(
             self.document_options_row,
-            text="📄 Document Mode: Converts Markdown, Word (.docx), PDF, HTML, and text preserving document structure.",
+            text="📄 Document Studio: Office, presentations, spreadsheets, PDF, Markdown, HTML, and text. Office → PDF preserves layout.",
             font=ctk.CTkFont(size=11),
             text_color=APP_MUTED,
         ).pack(side="left", pady=3)
@@ -2425,26 +2431,8 @@ class WebPCompressorApp(ctk.CTk):
         references it. Match callbacks to this tree's registered commands so
         cleanup is complete without cancelling timers owned by another window.
         """
-        try:
-            widgets: list[tk.Misc] = [self]
-            for widget in widgets:
-                widgets.extend(widget.winfo_children())
-            owned_commands = {
-                command
-                for widget in widgets
-                for command in (getattr(widget, "_tclCommands", None) or ())
-            }
-            for callback_id in self.tk.splitlist(self.tk.call("after", "info")):
-                details = self.tk.call("after", "info", callback_id)
-                script = details[0] if isinstance(details, tuple) else details
-                parts = self.tk.splitlist(script)
-                if parts and parts[0] in owned_commands:
-                    try:
-                        self.after_cancel(callback_id)
-                    except Exception:
-                        pass
-        except (tk.TclError, RuntimeError):
-            pass
+        from ui_dispatch import cancel_widget_callbacks
+        cancel_widget_callbacks(self)
 
     # -- queue persistence ------------------------------------------------
 
@@ -2562,6 +2550,9 @@ class WebPCompressorApp(ctk.CTk):
             self._set_quality_visibility(False)
         elif "DOCUMENT: TXT" in fmt:
             self.convert_button.configure(text="Convert to Plain Text")
+            self._set_quality_visibility(False)
+        elif fmt.startswith("DOCUMENT:"):
+            self.convert_button.configure(text=f"Convert to {fmt.split(':', 1)[1].strip()}")
             self._set_quality_visibility(False)
         elif fmt == "PDF (COMBINED)":
             self.convert_button.configure(text="Combine into PDF")
@@ -2790,7 +2781,7 @@ class WebPCompressorApp(ctk.CTk):
 
         self._update_category_controls_visibility(category)
 
-        if category == self._current_smart_category:
+        if category == self._current_smart_category and category != "document":
             return
 
         self._current_smart_category = category
@@ -2885,21 +2876,15 @@ class WebPCompressorApp(ctk.CTk):
 
         elif category == "document":
             self.smart_badge.configure(
-                text="📝 Smart Document Mode (Markdown Converter)",
+                text="📝 Document Studio",
                 fg_color=("#e0f2fe", "#0c4a6e"),
                 text_color=("#0369a1", "#7dd3fc"),
             )
             self.smart_trim_btn.pack_forget()
-            document_formats = [
-                "Document: MD",
-                "Document: DOCX",
-                "Document: PDF",
-                "Document: HTML",
-                "Document: TXT",
-            ]
+            document_formats = [f"Document: {target}" for target in document_targets(target_path)]
             self.format_menu.configure(values=document_formats)
             if self.target_format.get() not in document_formats:
-                self.target_format.set("Document: MD")
+                self.target_format.set("Document: PDF" if "Document: PDF" in document_formats else document_formats[0])
 
             document_presets = [
                 "Manual / Custom",
@@ -3078,6 +3063,7 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("Retry failed items", self._retry_failed, "Conversion", "", "rerun errors again", lambda: idle() and bool(self._failed_paths())),
             PaletteAction("Browse formats…", self._open_format_browser, "Conversion", "", "target output codec", idle),
             PaletteAction("Recipes…", self._open_recipe_manager, "Conversion", "", "presets save load settings", idle),
+            PaletteAction("Studio Tools…", self._open_studio_tools, "Studio", "", "office pdf transcription audio text speech voiceover"),
             PaletteAction("Preview & compare selected", self._open_selected_preview, "Inspect", "", "diff before after", has_sel),
             PaletteAction("Optimize selected…", self._open_selected_optimizer, "Inspect", "", "codec compare ssim pareto recommend", has_sel),
             PaletteAction("Trim selected video…", self._open_selected_trimmer, "Inspect", "", "cut clip", sel_is_video),
@@ -3262,6 +3248,16 @@ class WebPCompressorApp(ctk.CTk):
 
     def _open_history(self) -> HistoryDialog:
         return HistoryDialog(self, self._apply_recipe_settings)
+
+    def _open_studio_tools(self):
+        from studio_dialog import StudioToolsDialog
+        dialog = getattr(self, "_studio_dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.lift()
+            dialog.focus_force()
+            return dialog
+        self._studio_dialog = StudioToolsDialog(self)
+        return self._studio_dialog
 
     def _export_diagnostics_bundle(self) -> None:
         folder = filedialog.askdirectory(title="Save diagnostics bundle to…", parent=self)
@@ -3520,6 +3516,10 @@ class WebPCompressorApp(ctk.CTk):
             messagebox.showinfo("Video Trimmer", "Please add or select a video file (MP4, MKV, MOV, WebM, etc.) to trim.", parent=self)
 
     def _show_preview_dialog(self, path: Path) -> None:
+        if path.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS:
+            from document_preview import DocumentPreviewDialog
+            DocumentPreviewDialog(self, path)
+            return
         result = self.row_results.get(path)
         dialog = ImagePreviewDialog(self, path, result, on_apply=self._apply_variant_choice)
         dialog.focus()
@@ -3632,6 +3632,7 @@ class WebPCompressorApp(ctk.CTk):
                 ("SVG Vector Graphics", " ".join(f"*{ext}" for ext in sorted(SVG_EXTENSIONS))),
                 ("Videos", " ".join(f"*{ext}" for ext in SUPPORTED_VIDEO_EXTENSIONS)),
                 ("Audios", " ".join(f"*{ext}" for ext in SUPPORTED_AUDIO_EXTENSIONS)),
+                ("Documents", " ".join(f"*{ext}" for ext in sorted(SUPPORTED_DOCUMENT_EXTENSIONS))),
                 ("All files", "*.*"),
             ],
             parent=self,
@@ -5352,18 +5353,11 @@ class WebPCompressorApp(ctk.CTk):
             with conversion_scope:
                 self.events.put(("item_started", source_p))
                 if is_document:
-                    # Document/Markdown engine conversion
-                    doc_fmt_key = "MD"
-                    if "DOCX" in effective_target_format.upper():
-                        doc_fmt_key = "DOCX"
-                    elif "HTML" in effective_target_format.upper():
-                        doc_fmt_key = "HTML"
-                    elif "TXT" in effective_target_format.upper():
-                        doc_fmt_key = "TXT"
-                    elif "PDF" in effective_target_format.upper():
+                    # Preserve explicit document targets; incompatible pairs fail clearly.
+                    try:
+                        doc_fmt_key = normalize_document_target(effective_target_format)
+                    except ValueError:
                         doc_fmt_key = "PDF"
-                    elif "MD" in effective_target_format.upper() or "MARKDOWN" in effective_target_format.upper():
-                        doc_fmt_key = "MD"
 
                     res = convert_document(
                         source_p,
@@ -5374,6 +5368,8 @@ class WebPCompressorApp(ctk.CTk):
                         slugify_names=effective_slugify,
                         filename_prefix=effective_prefix,
                         filename_suffix=effective_suffix,
+                        replace_source=replace_source,
+                        cancel_check=self.cancel_event.is_set,
                     )
                 elif is_video or is_audio or is_gif_anim:
                     # Video/Audio engine conversion
@@ -5746,6 +5742,12 @@ class WebPCompressorApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    if "--studio-smoke-report" in sys.argv:
+        from studio_smoke import run
+        index = sys.argv.index("--studio-smoke-report")
+        if len(sys.argv) <= index + 1:
+            raise SystemExit("--studio-smoke-report requires a JSON report path")
+        raise SystemExit(run(Path(sys.argv[index + 1])))
     install_exception_logging()
     _saved_theme = load_settings().get("theme", "System")
     ctk.set_appearance_mode(_saved_theme)

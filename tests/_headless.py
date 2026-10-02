@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import atexit
 from tkinter import filedialog, messagebox
 
 import unittest
@@ -44,6 +45,14 @@ _TMP = Path(tempfile.gettempdir())
 os.environ.setdefault("SHADOW_NO_QUEUE_RESTORE", "1")
 os.environ.setdefault("SHADOW_HISTORY_FILE", str(_TMP / "shadow-test-history.jsonl"))
 os.environ.setdefault("SHADOW_TEMP_REGISTRY", str(_TMP / "shadow-test-temp-registry.json"))
+
+# GUI construction and control toggles read/write settings. Keep them away
+# from the user's preferences, which can otherwise change test expectations
+# (for example a previously enabled source-deletion checkbox).
+_SETTINGS_SANDBOX = tempfile.TemporaryDirectory(prefix="shadow-test-settings-")
+atexit.register(_SETTINGS_SANDBOX.cleanup)
+import settings
+settings.SETTINGS_FILE = Path(_SETTINGS_SANDBOX.name) / "settings.json"
 
 DIALOG_CALLS: list[tuple[str, tuple, dict]] = []
 

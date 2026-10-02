@@ -48,10 +48,19 @@ MEDIA_FORMAT_CAPABILITIES: dict[str, dict[str, Any]] = {
     "Audio: WAV": {"category": "Audio", "description": "Uncompressed PCM audio for editing and mastering.", "badges": ("Lossless studio", "Uncompressed master")},
     "Document: MD": {"category": "Document", "description": "Clean Markdown extracted from DOCX, PDF, HTML, or TXT.", "badges": ("Text", "Portable", "Editable")},
     "Document: DOCX": {"category": "Document", "description": "Microsoft Word document built from Markdown.", "badges": ("Office", "Editable", "Formatting")},
-    "Document: PDF": {"category": "Document", "description": "Fixed-layout PDF rendered from Markdown.", "badges": ("Document", "Portable", "Print")},
+    "Document: PDF": {"category": "Document", "description": "Layout-preserving Office export or rendered text document.", "badges": ("Document", "Portable", "Print")},
     "Document: HTML": {"category": "Document", "description": "Web page rendered from Markdown.", "badges": ("Web", "Editable", "Formatting")},
     "Document: TXT": {"category": "Document", "description": "Plain text with formatting stripped.", "badges": ("Text", "Universal", "Portable")},
 }
+
+for _target, _description in {
+    "DOC": "Legacy Microsoft Word", "ODT": "OpenDocument text", "RTF": "Rich text document",
+    "PPT": "Legacy Microsoft PowerPoint", "PPTX": "Microsoft PowerPoint presentation", "ODP": "OpenDocument presentation",
+    "XLS": "Legacy Microsoft Excel", "XLSX": "Microsoft Excel workbook", "ODS": "OpenDocument spreadsheet",
+    "CSV": "Comma-separated data from the active sheet", "TSV": "Tab-separated data from the active sheet",
+}.items():
+    MEDIA_FORMAT_CAPABILITIES[f"Document: {_target}"] = {"category": "Document", "description": _description,
+                                                        "badges": ("Office", "Local conversion")}
 
 # Badge -> (fill, text) colours as (light, dark) pairs, grouped by what the
 # badge says about the format so alpha/animation/lossless/etc. read

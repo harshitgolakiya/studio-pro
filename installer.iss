@@ -2,6 +2,18 @@
 #define MyAppVersion "2.0.0"
 #define MyAppPublisher "Shadow Media Studio"
 #define MyAppExeName "Shadow.exe"
+#ifndef MyAppSource
+  #define MyAppSource "dist\Shadow"
+#endif
+#ifndef MyAppOutputName
+  #define MyAppOutputName "Shadow-Media-Studio-Setup"
+#endif
+#ifndef MyAppCompression
+  #define MyAppCompression "lzma2"
+#endif
+#ifndef MyAppSolidCompression
+  #define MyAppSolidCompression "yes"
+#endif
 
 [Setup]
 AppId={{B8E54C55-7D35-4C78-9F26-0A8A4CF1C0E7}
@@ -20,12 +32,12 @@ MinVersion=10.0.17763
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=installer
-OutputBaseFilename=Shadow-Media-Studio-Setup
+OutputBaseFilename={#MyAppOutputName}
 SetupIconFile=assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 LicenseFile=EULA.txt
-Compression=lzma2
-SolidCompression=yes
+Compression={#MyAppCompression}
+SolidCompression={#MyAppSolidCompression}
 WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=Shadow.exe
@@ -42,7 +54,7 @@ Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription:
 Name: "contextmenu"; Description: "Add 'Compress with Shadow Media Studio' to Windows Explorer context menu"; GroupDescription: "Windows Explorer Integration:"
 
 [Files]
-Source: "dist\Shadow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyAppSource}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

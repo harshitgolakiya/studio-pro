@@ -5,6 +5,10 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from typing import Callable
+
+from office_engine import OFFICE_EXTENSIONS, office_family, office_targets, render_office
+from studio_runtime import StudioCancelled, check_cancel
 
 from converter import ConversionResult
 from utils import (
@@ -15,7 +19,7 @@ from utils import (
     reserve_output_path,
 )
 
-SUPPORTED_DOCUMENT_EXTENSIONS = {".docx", ".pdf", ".html", ".htm", ".txt", ".md", ".markdown"}
+SUPPORTED_DOCUMENT_EXTENSIONS = OFFICE_EXTENSIONS | {".pdf", ".html", ".htm", ".txt", ".md", ".markdown"}
 
 TARGET_EXT_MAP = {
     "MD": ".md",
@@ -23,7 +27,25 @@ TARGET_EXT_MAP = {
     "PDF": ".pdf",
     "HTML": ".html",
     "TXT": ".txt",
+    **{key: f".{key.lower()}" for key in ("DOC", "ODT", "RTF", "PPT", "PPTX", "ODP", "XLS", "XLSX", "ODS", "CSV", "TSV")},
 }
+
+
+def document_targets(source: Path) -> tuple[str, ...]:
+    """Return meaningful routes rather than promising every extension pair."""
+    family = office_family(source)
+    if family:
+        return tuple(dict.fromkeys((*office_targets(source), "MD", "TXT", "HTML")))
+    return ("MD", "DOCX", "PDF", "HTML", "TXT")
+
+
+def normalize_document_target(value: str) -> str:
+    target = value.split(":", 1)[-1].strip().upper()
+    if target == "MARKDOWN":
+        target = "MD"
+    if target not in TARGET_EXT_MAP:
+        raise ValueError(f"Unsupported target document format: {value}")
+    return target
 
 
 def _read_text_file(path: Path) -> str:
@@ -58,8 +80,9 @@ def _html_to_markdown(html_text: str) -> str:
     return html2md(html_text, heading_style="ATX").strip() + "\n"
 
 
-def to_markdown(source_path: Path) -> str:
+def to_markdown(source_path: Path, cancel_check: Callable[[], bool] | None = None) -> str:
     """Extract the contents of a supported document as Markdown text."""
+    check_cancel(cancel_check)
     ext = source_path.suffix.lower()
     if ext in (".md", ".markdown", ".txt"):
         return _read_text_file(source_path)
@@ -69,6 +92,40 @@ def to_markdown(source_path: Path) -> str:
         return _html_to_markdown(_docx_to_html(source_path))
     if ext == ".pdf":
         return _pdf_to_markdown(source_path)
+    if ext == ".pptx":
+        from pptx import Presentation
+        sections = []
+        for index, slide in enumerate(Presentation(str(source_path)).slides, 1):
+            check_cancel(cancel_check)
+            text = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    text.append(shape.text)
+                elif shape.has_table:
+                    text.extend(" | ".join(cell.text for cell in row.cells) for row in shape.table.rows)
+            sections.append(f"## Slide {index}\n\n" + "\n\n".join(text))
+        return "\n\n".join(sections)
+    if ext == ".xlsx":
+        from openpyxl import load_workbook
+        book = load_workbook(source_path, read_only=True, data_only=False)
+        try:
+            sections = []
+            for sheet in book.worksheets:
+                check_cancel(cancel_check)
+                rows = [" | ".join(str(v) if v is not None else "" for v in row)
+                        for row in sheet.iter_rows(values_only=True)]
+                sections.append(f"## {sheet.title}\n\n" + "\n".join(rows))
+            return "\n\n".join(sections)
+        finally:
+            book.close()
+    if ext in {".csv", ".tsv"}:
+        return _read_text_file(source_path)
+    if ext in OFFICE_EXTENSIONS:
+        canonical = {"writer": "DOCX", "presentation": "PPTX", "spreadsheet": "XLSX", "drawing": "PDF"}[office_family(source_path)]
+        with tempfile.TemporaryDirectory(prefix="shadow-extract-") as td:
+            intermediate = Path(td) / f"content.{canonical.lower()}"
+            render_office(source_path, intermediate, canonical, cancel_check)
+            return to_markdown(intermediate, cancel_check)
     raise ValueError(f"Unsupported document format: {ext}")
 
 
@@ -214,11 +271,14 @@ def convert_document(
     slugify_names: bool = False,
     filename_prefix: str = "",
     filename_suffix: str = "",
+    replace_source: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> ConversionResult:
-    """Convert a document (.docx/.pdf/.html/.txt/.md) to/from Markdown."""
+    """Convert Office layouts natively; use explicit text extraction for text routes."""
     original_size = None
     output_path: Path | None = None
     try:
+        check_cancel(cancel_check)
         ext = source_path.suffix.lower()
         if ext not in SUPPORTED_DOCUMENT_EXTENSIONS:
             raise ValueError("Unsupported document format")
@@ -228,8 +288,10 @@ def convert_document(
         original_size = source_path.stat().st_size
         output_directory.mkdir(parents=True, exist_ok=True)
 
-        fmt = target_format.upper().strip()
-        dest_ext = TARGET_EXT_MAP.get(fmt, ".md")
+        fmt = normalize_document_target(target_format)
+        if fmt not in document_targets(source_path):
+            raise ValueError(f"{ext} cannot be converted to {fmt}. Choose: {', '.join(document_targets(source_path))}")
+        dest_ext = TARGET_EXT_MAP[fmt]
 
         dest_filename = build_destination_filename(
             stem=source_path.stem,
@@ -238,15 +300,19 @@ def convert_document(
             prefix=filename_prefix,
             suffix=filename_suffix,
         )
-        output_path = reserve_output_path(output_directory / dest_filename, overwrite, reserved_paths)
-
-        md_text = to_markdown(source_path)
+        proposed = output_directory / dest_filename
+        # Never overwrite the input before conversion has safely completed.
+        output_path = reserve_output_path(proposed, overwrite and proposed.resolve() != source_path.resolve(), reserved_paths)
+        native = fmt in office_targets(source_path) and fmt not in {"TXT", "HTML"}
+        md_text = "" if native else to_markdown(source_path, cancel_check)
 
         temp_fd, temp_name = tempfile.mkstemp(suffix=f".tmp{dest_ext}", dir=str(output_directory))
         os.close(temp_fd)
         temporary_path = Path(temp_name)
         try:
-            if fmt == "MD":
+            if native:
+                render_office(source_path, temporary_path, fmt, cancel_check)
+            elif fmt == "MD":
                 temporary_path.write_text(md_text, encoding="utf-8")
             elif fmt == "TXT":
                 temporary_path.write_text(_markdown_to_txt(md_text), encoding="utf-8")
@@ -254,7 +320,7 @@ def convert_document(
                 body = _markdown_to_html(md_text)
                 temporary_path.write_text(
                     "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">"
-                    f"<title>{source_path.stem}</title></head><body>\n{body}\n</body></html>",
+                    f"<title>{html_module.escape(source_path.stem)}</title></head><body>\n{body}\n</body></html>",
                     encoding="utf-8",
                 )
             elif fmt == "DOCX":
@@ -264,6 +330,7 @@ def convert_document(
             else:
                 raise ValueError(f"Unsupported target document format: {target_format}")
 
+            check_cancel(cancel_check)
             output_path = publish_output_file(
                 temporary_path,
                 output_path,
@@ -275,6 +342,15 @@ def convert_document(
                 temporary_path.unlink(missing_ok=True)
 
         output_size = output_path.stat().st_size
+        note = "Layout-preserving Office conversion" if native else "Text conversion; original page layout and embedded media are not retained"
+        if fmt in {"CSV", "TSV"}:
+            note += "; delimited export includes the active sheet only"
+        if replace_source and source_path.resolve() != output_path.resolve():
+            try:
+                source_path.unlink()
+                note += "; original removed after successful conversion"
+            except OSError as exc:
+                note += f"; could not remove original: {exc}"
         return ConversionResult(
             source_path,
             output_path,
@@ -282,7 +358,12 @@ def convert_document(
             output_size,
             format_saved_percentage(original_size, output_size),
             "Completed",
+            note=note,
         )
+    except StudioCancelled:
+        if output_path is not None:
+            release_output_path(output_path, reserved_paths)
+        return ConversionResult(source_path, None, original_size, None, "-", "Cancelled")
     except Exception as error:
         if output_path is not None and not output_path.exists():
             release_output_path(output_path, reserved_paths)

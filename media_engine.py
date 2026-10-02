@@ -25,8 +25,8 @@ from utils import (
     release_output_path,
 )
 
-SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".wmv", ".m4v"}
-SUPPORTED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
+SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".wmv", ".m4v", ".flv", ".mpeg", ".mpg", ".m2v", ".mts", ".m2ts", ".ts", ".mxf", ".vob", ".3gp", ".3g2", ".ogv", ".asf"}
+SUPPORTED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".aif", ".aiff", ".aifc", ".amr", ".caf", ".ac3", ".m4b", ".ape", ".mka"}
 
 
 _EXE_SUFFIX = ".exe" if sys.platform == "win32" else ""

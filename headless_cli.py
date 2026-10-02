@@ -13,7 +13,7 @@ import time
 from typing import Any, Callable
 
 from converter import SUPPORTED_EXTENSIONS, ConversionResult, convert_image, normalize_output_format
-from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document
+from doc_converter import SUPPORTED_DOCUMENT_EXTENSIONS, convert_document, normalize_document_target, to_markdown
 from media_engine import SUPPORTED_AUDIO_EXTENSIONS, SUPPORTED_VIDEO_EXTENSIONS, convert_media_file
 from recipes import Recipe, load_recipe
 from utils import scan_directory_for_images
@@ -58,11 +58,29 @@ def convert_path(source: Path, output_dir: Path, settings: dict[str, Any]) -> Co
         "replace_source": bool(settings.get("replace_source", False)),
     }
     ext = source.suffix.lower()
+    if target.upper().startswith("TRANSCRIPT:"):
+        from speech_engine import transcribe_media
+        return transcribe_media(source, output_dir, target.split(":", 1)[1].strip(),
+                                model_path=Path(str(settings["speech_model"])) if settings.get("speech_model") else None,
+                                language=str(settings.get("speech_language", "en")) or None,
+                                overwrite=common["overwrite"])
+    if target.upper() == "SPEECH: WAV":
+        from speech_engine import synthesize_speech
+        from utils import format_saved_percentage
+        try:
+            size = source.stat().st_size
+            output = synthesize_speech(to_markdown(source), output_dir / f"{source.stem}-voice.wav",
+                                       voice_path=Path(str(settings["speech_voice"])) if settings.get("speech_voice") else None,
+                                       speed=float(settings.get("speech_speed", 1)), overwrite=common["overwrite"])
+            return ConversionResult(source, output, size, output.stat().st_size,
+                                    format_saved_percentage(size, output.stat().st_size), "Completed")
+        except Exception as exc:
+            return ConversionResult(source, None, None, None, "-", "Failed", str(exc))
     if ext in SUPPORTED_DOCUMENT_EXTENSIONS:
-        document_format = next(
-            (key for key in ("DOCX", "PDF", "HTML", "TXT", "MD") if key in target.upper()),
-            "MD",
-        )
+        try:
+            document_format = normalize_document_target(target)
+        except ValueError:
+            return ConversionResult(source, None, None, None, "-", "Failed", f"Choose a document target instead of {target}")
         return convert_document(source, output_dir, target_format=document_format, **common)
     if ext in SUPPORTED_AUDIO_EXTENSIONS or ext in SUPPORTED_VIDEO_EXTENSIONS:
         media_format = "mp4"
@@ -209,6 +227,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("paths", nargs="*", help="Files or directories to convert")
     parser.add_argument("--output", type=Path, help="Destination directory")
     parser.add_argument("--recipe", type=Path, help="Portable .shadow-recipe.json file")
+    parser.add_argument("--format", help="Output format, e.g. PDF, PPTX, Transcript: SRT, or Speech: WAV")
+    parser.add_argument("--speech-model", type=Path, help="Local faster-whisper model directory")
+    parser.add_argument("--voice", type=Path, help="Local Piper .onnx voice")
+    parser.add_argument("--language", default="en", help="Transcription language code; use auto for multilingual detection")
     parser.add_argument("--rules", type=Path, help="JSON watched-folder routing rules")
     parser.add_argument("--watch", type=Path, help="Watch a folder until interrupted")
     parser.add_argument("--watch-output", type=Path, help="Destination for watched files")
@@ -222,6 +244,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     recipe = load_recipe(args.recipe) if args.recipe else Recipe("CLI defaults")
     settings = recipe.settings
+    if args.format:
+        settings["target_format"] = args.format
+    if args.speech_model:
+        settings["speech_model"] = str(args.speech_model)
+    if args.voice:
+        settings["speech_voice"] = str(args.voice)
+    settings["speech_language"] = "" if args.language == "auto" else args.language
     if args.replace_source:
         settings["replace_source"] = True
     if args.watch:

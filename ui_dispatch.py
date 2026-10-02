@@ -8,6 +8,26 @@ import tkinter as tk
 from collections.abc import Callable
 
 
+def cancel_widget_callbacks(root: tk.Misc) -> None:
+    """Cancel only Tcl timers owned by a window and its descendants."""
+    try:
+        widgets = [root]
+        for widget in widgets:
+            widgets.extend(widget.winfo_children())
+        commands = {command: widget for widget in widgets for command in (getattr(widget, "_tclCommands", None) or ())}
+        for callback_id in root.tk.splitlist(root.tk.call("after", "info")):
+            details = root.tk.call("after", "info", callback_id)
+            script = details[0] if isinstance(details, tuple) else details
+            parts = root.tk.splitlist(script)
+            if parts and parts[0] in commands:
+                # Tk deletes the callback's Tcl command. Calling after_cancel
+                # on its actual owner also removes it from that widget's
+                # _tclCommands list, avoiding a second deletion at destroy.
+                commands[parts[0]].after_cancel(callback_id)
+    except (tk.TclError, RuntimeError):
+        pass
+
+
 class TkEventBridge:
     """Queue worker callbacks and execute them from Tk's owning thread."""
 
