@@ -48,6 +48,7 @@ jobs:
           chmod +x vendor/ffmpeg-mac/ffmpeg vendor/ffmpeg-mac/ffprobe
           mkdir -p vendor/ghostscript/bin vendor/libreoffice
           cp "$(command -v gs)" vendor/ghostscript/bin/gs
+          ditto "$(brew --prefix ghostscript)/share/ghostscript" vendor/ghostscript/share/ghostscript
 
       - name: Stage speech and translation assets
         run: |

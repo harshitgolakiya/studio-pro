@@ -30,6 +30,8 @@ def collect_studio():
         binaries.append(("vendor/ghostscript/bin/gs", "vendor/ghostscript/bin"))
     if Path("THIRD_PARTY_NOTICES.md").is_file():
         datas.append(("THIRD_PARTY_NOTICES.md", "."))
+    for license_file in Path("licenses").glob("*.txt"):
+        datas.append((str(license_file), "licenses"))
     if Path("vendor/models").is_dir():
         missing = [name for name in ("faster_whisper", "piper") if importlib.util.find_spec(name) is None]
         if missing:

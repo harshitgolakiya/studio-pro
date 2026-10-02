@@ -25,8 +25,14 @@ def _gs(source, destination, extra=None, cancel_check=None):
     engine = ghostscript_path()
     if not engine:
         raise RuntimeError("Ghostscript is missing. Run setup_print.py or set SHADOW_GHOSTSCRIPT.")
+    resource_args = []
+    if sys.platform == "darwin":
+        share = resource_root() / "vendor" / "ghostscript" / "share"
+        paths = [str(p) for p in share.rglob("*") if p.is_dir() and p.name in {"Init", "Font", "lib"}]
+        if paths:
+            resource_args = ["-I" + os.pathsep.join(paths)]
     run_engine([engine, "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pdfwrite",
-                *(extra or []), f"-sOutputFile={destination}", "-f", str(source.resolve())],
+                *resource_args, *(extra or []), f"-sOutputFile={destination}", "-f", str(source.resolve())],
                timeout=600, cancel_check=cancel_check)
 
 
