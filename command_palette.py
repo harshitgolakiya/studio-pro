@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 from typing import Any, Callable, Sequence
 
 import customtkinter as ctk
@@ -42,7 +43,8 @@ class CommandPalette(ctk.CTkToplevel):
         self.title("Command Palette")
         self.geometry("560x440")
         self.minsize(420, 300)
-        self.transient(master)
+        if sys.platform != "darwin" or master.winfo_viewable():
+            self.transient(master)
         self.overrideredirect(False)
 
         self._actions = list(actions)

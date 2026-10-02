@@ -14,6 +14,8 @@ PRELUDE = """
 import faulthandler, sys
 faulthandler.dump_traceback_later(20, exit=True, file=sys.stderr)
 sys.path.insert(0, '.')
+sys.path.insert(0, 'tests')
+import _headless
 import customtkinter as ctk
 from format_browser import FormatBrowserDialog
 from command_palette import CommandPalette, PaletteAction
