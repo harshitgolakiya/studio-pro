@@ -10,7 +10,8 @@ Open **Studio Tools > More Tools** for the expanded controls.
 - [x] Print/design import adapters, font inspection, PDF preflight, and CMYK delivery.
 - [x] Client projects, brand kits, export presets, naming, and reusable deliveries.
 - [x] Plugin SDK, hooks, loopback API, and publishing controls.
-- [ ] Final installer verification and macOS Apple Silicon/Intel regression matrix.
+- [x] Windows full-model installer and clean installed runtime verification.
+- [ ] Packaged macOS Apple Silicon/Intel regression matrix.
 
 The shared dispatcher exposes **40 actions**. The original conversion queue,
 Office/PDF tools, voice generation, and media conversion remain available.
@@ -140,12 +141,24 @@ The release receipt includes a SHA256 for each part.
 
 ### Verification recorded on 2026-10-03
 
-The full Windows source suite passed 438 tests in 356.881 seconds, with two skips
-for the absent seller-only key generator. All 11 packaged runtime checks passed.
+The full Windows source suite passed 439 tests in 375.812 seconds, with two skips
+for the absent seller-only key generator. Five GPU tests subsequently passed,
+including the additional macOS VideoToolbox case. All 11 packaged and clean
+installed runtime checks passed. The installed CLI confirms 53 of 56 catalog
+entries are present; the three larger Whisper models are optional.
 The packaged UI exposes all 40 actions; local publishing, loopback API conversion,
 and packaged Python hooks passed. The screen-scaling correction passed the six
 focused UI/dispatcher tests and was checked in the final executable.
 
 The macOS setup now uses setup_studio_macos.sh: pinned LibreOffice downloads
 from a reachable mirror, SHA256 checks, and verification of the app signature.
-Installer installation and macOS platform reports are still pending.
+The corrected Windows installer installed successfully to
+`D:\Shadow-Agency-Studio`; a Shadow Agency Studio desktop shortcut opens it.
+Installed local publishing, API conversion, Python hooks, and eight repeated
+voice-isolation runs passed. The isolation fix also passed 30 source runs with
+identical output hashes. Windows CI completed successfully:
+https://github.com/harshitgolakiya/studio-pro/actions/runs/37065925499
+
+Both macOS source suites and app builds have passed. Packaged Mac runtime checks
+are still under investigation; their progress and thread traces are recorded in
+the verification artifacts. Do not infer Mac packaged readiness from source tests.
