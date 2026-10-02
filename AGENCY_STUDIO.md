@@ -137,3 +137,15 @@ after the installer and CI runs complete.
 Large full-model Windows releases use an installer executable with adjacent .bin
 parts to avoid executable size limits. Keep every installer part together.
 The release receipt includes a SHA256 for each part.
+
+### Verification recorded on 2026-10-03
+
+The full Windows source suite passed 438 tests in 356.881 seconds, with two skips
+for the absent seller-only key generator. All 11 packaged runtime checks passed.
+The packaged UI exposes all 40 actions; local publishing, loopback API conversion,
+and packaged Python hooks passed. The screen-scaling correction passed the six
+focused UI/dispatcher tests and was checked in the final executable.
+
+The macOS setup now uses setup_studio_macos.sh: pinned LibreOffice downloads
+from a reachable mirror, SHA256 checks, and verification of the app signature.
+Installer installation and macOS platform reports are still pending.
