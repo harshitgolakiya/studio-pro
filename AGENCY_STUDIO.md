@@ -133,3 +133,7 @@ after the installer and CI runs complete.
   sidecar. The installer cannot include Adobe's proprietary application.
 - Third-party runtime/model assets retain their own license terms. See
   THIRD_PARTY_NOTICES.md and the bundled model notices.
+
+Large full-model Windows releases use an installer executable with adjacent .bin
+parts to avoid executable size limits. Keep every installer part together.
+The release receipt includes a SHA256 for each part.

@@ -14,6 +14,9 @@
 #ifndef MyAppSolidCompression
   #define MyAppSolidCompression "yes"
 #endif
+#ifndef MyAppDiskSpanning
+  #define MyAppDiskSpanning "no"
+#endif
 
 [Setup]
 AppId={{B8E54C55-7D35-4C78-9F26-0A8A4CF1C0E7}
@@ -38,6 +41,7 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 LicenseFile=EULA.txt
 Compression={#MyAppCompression}
 SolidCompression={#MyAppSolidCompression}
+DiskSpanning={#MyAppDiskSpanning}
 WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=Shadow.exe

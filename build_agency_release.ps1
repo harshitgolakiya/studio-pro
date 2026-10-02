@@ -1,6 +1,7 @@
 param(
     [string]$WorkRoot = (Join-Path $PSScriptRoot 'agency-build'),
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
 $taskProject = [IO.Path]::GetFullPath($PSScriptRoot)
@@ -24,7 +25,9 @@ try {
     }
     $taskDist = Join-Path $taskRoot 'dist'
     $taskBuild = Join-Path $taskRoot 'build'
-    Invoke-AgencyProcess $taskPython @('-m', 'PyInstaller', '--noconfirm', '--distpath', ('"' + $taskDist + '"'), '--workpath', ('"' + $taskBuild + '"'), 'Shadow.spec') 'pyinstaller'
+    if (-not $SkipBuild) {
+        Invoke-AgencyProcess $taskPython @('-m', 'PyInstaller', '--noconfirm', '--distpath', ('"' + $taskDist + '"'), '--workpath', ('"' + $taskBuild + '"'), 'Shadow.spec') 'pyinstaller'
+    }
     $taskApp = Join-Path $taskDist 'Shadow\Shadow.exe'
     $taskSmokePath = Join-Path $taskReportDir 'packaged-smoke.json'
     Invoke-AgencyProcess $taskApp @('--studio-smoke-report', ('"' + $taskSmokePath + '"')) 'packaged-smoke'
@@ -34,11 +37,16 @@ try {
     if (-not $taskIscc) { throw 'Inno Setup 6 was not found.' }
     $taskInstallerDir = Join-Path $taskRoot 'installer'
     New-Item -ItemType Directory -Force -Path $taskInstallerDir | Out-Null
-    Invoke-AgencyProcess $taskIscc @(('/DMyAppSource="' + (Join-Path $taskDist 'Shadow') + '"'), '/DMyAppOutputName=Shadow-Agency-Studio-Setup', ('/O"' + $taskInstallerDir + '"'), 'installer.iss') 'installer'
+    $taskBundleBytes = (Get-ChildItem -LiteralPath (Join-Path $taskDist 'Shadow') -File -Recurse | Measure-Object -Property Length -Sum).Sum
+    $taskSpanning = if ($taskBundleBytes -gt 3GB) { 'yes' } else { 'no' }
+    Invoke-AgencyProcess $taskIscc @(('/DMyAppSource="' + (Join-Path $taskDist 'Shadow') + '"'), '/DMyAppOutputName=Shadow-Agency-Studio-Setup', ("/DMyAppDiskSpanning=" + $taskSpanning), ('/O"' + $taskInstallerDir + '"'), 'installer.iss') 'installer'
     $taskInstaller = Join-Path $taskInstallerDir 'Shadow-Agency-Studio-Setup.exe'
     $taskHash = Get-FileHash -LiteralPath $taskInstaller -Algorithm SHA256
     Set-Content -LiteralPath ($taskInstaller + '.sha256') -Value ($taskHash.Hash.ToLowerInvariant() + '  Shadow-Agency-Studio-Setup.exe') -Encoding ASCII
-    $taskReceipt = @{ installer = $taskInstaller; bytes = (Get-Item -LiteralPath $taskInstaller).Length; sha256 = $taskHash.Hash.ToLowerInvariant(); packaged_checks = $taskSmoke.checks }
+    $taskParts = @(Get-ChildItem -LiteralPath $taskInstallerDir -File | Where-Object { $_.Name -match '^Shadow-Agency-Studio-Setup(?:-\d+)?\.(exe|bin)$' } | ForEach-Object {
+        @{ name = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    })
+    $taskReceipt = @{ installer = $taskInstaller; bytes = (Get-Item -LiteralPath $taskInstaller).Length; sha256 = $taskHash.Hash.ToLowerInvariant(); files = $taskParts; packaged_checks = $taskSmoke.checks }
     $taskReceipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $taskReportDir 'release-receipt.json') -Encoding UTF8
     Write-Output "Verified installer: $taskInstaller"
 } finally {
