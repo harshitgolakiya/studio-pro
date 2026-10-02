@@ -11,7 +11,7 @@ Open **Studio Tools > More Tools** for the expanded controls.
 - [x] Client projects, brand kits, export presets, naming, and reusable deliveries.
 - [x] Plugin SDK, hooks, loopback API, and publishing controls.
 - [x] Windows full-model installer and clean installed runtime verification.
-- [ ] Packaged macOS Apple Silicon/Intel regression matrix.
+- [x] Packaged macOS Apple Silicon/Intel regression matrix.
 
 The shared dispatcher exposes **40 actions**. The original conversion queue,
 Office/PDF tools, voice generation, and media conversion remain available.
@@ -113,9 +113,10 @@ CI workflows perform source and packaged checks for Windows and both macOS
 architectures before uploading installers. Reports establish readiness for each
 specific artifact; source tests alone do not establish packaged readiness.
 
-Current verification reports are under `studio-verification` and the release
-work root's `verification` directory. The final platform status will be updated
-after the installer and CI runs complete.
+Verification reports are under `studio-verification` and the release work root's
+`verification` directory. Full Windows installer parts, checksums, and the
+distribution ZIP are under `D:\Shadow-Agency-Studio-Build\release`; Mac DMGs are
+in its `macos` directory.
 
 ## Practical boundaries
 
@@ -159,6 +160,21 @@ voice-isolation runs passed. The isolation fix also passed 30 source runs with
 identical output hashes. Windows CI completed successfully:
 https://github.com/harshitgolakiya/studio-pro/actions/runs/37065925499
 
-Both macOS source suites and app builds have passed. Packaged Mac runtime checks
-are still under investigation; their progress and thread traces are recorded in
-the verification artifacts. Do not infer Mac packaged readiness from source tests.
+The Windows installer was rebuilt with the frozen-worker startup correction and
+installed into a fresh application directory. All 11 installed engine checks,
+53 installed catalog entries, local publishing, API conversion, Python hooks,
+eight deterministic isolation runs, and a spawned multiprocessing worker passed.
+The desktop shortcut opens `D:\Shadow-Agency-Studio\Shadow.exe`.
+
+Both macOS architectures passed the 440-test source suite and all 11 source and
+packaged engine checks. Frozen multiprocessing initialization now runs before
+application imports, so helper processes perform their own work and the packaged
+app exits cleanly after its checks. The successful matrix is recorded at:
+https://github.com/harshitgolakiya/studio-pro/actions/runs/37070302401
+
+The Mac builds bundle LibreOffice, FFmpeg, Ghostscript, base English/multilingual
+transcription, an English voice, speaker/isolation models, a CMYK profile, and
+Spanish-to-English translation. Additional voices, OCR scripts, translation
+pairs, and larger transcription models can be installed through Models.
+Mac apps are ad-hoc signed. Apple Developer signing and notarization require
+the account's certificate and credentials, which are not configured in this repo.
