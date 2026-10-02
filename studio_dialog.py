@@ -24,8 +24,13 @@ class StudioToolsDialog(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Shadow — Studio Tools")
-        self.geometry("940x760")
-        self.minsize(740, 620)
+        scale = self._get_window_scaling()
+        width = min(940, max(640, int((self.winfo_screenwidth() - 80) / scale)))
+        height = min(760, max(480, int((self.winfo_screenheight() - 100) / scale)))
+        left = max(0, int((self.winfo_screenwidth() - width * scale) / 2))
+        top = max(0, int((self.winfo_screenheight() - height * scale - 80) / 2))
+        self.geometry(f"{width}x{height}+{left}+{top}")
+        self.minsize(min(740, width), min(620, height))
         self._master = master
         self._bridge = TkEventBridge(self)
         self._cancel = threading.Event()
