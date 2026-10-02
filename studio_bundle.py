@@ -7,7 +7,9 @@ def collect_studio():
     from PyInstaller.utils.hooks import collect_all
     datas, binaries, imports = [], [], []
     # Include native engines, voice data, CT2/ONNX DLLs, and PDFium resources.
-    for package in ("pypdfium2", "pypdfium2_raw", "faster_whisper", "ctranslate2", "onnxruntime", "piper", "av", "tokenizers"):
+    for package in ("pypdfium2", "pypdfium2_raw", "faster_whisper", "ctranslate2", "onnxruntime", "piper", "av", "tokenizers",
+                    "rapidocr", "sherpa_onnx", "sentencepiece", "py7zr", "pdfplumber", "pdfminer", "pyhanko",
+                    "pyhanko_certvalidator", "jsonschema", "jsonschema_specifications"):
         if importlib.util.find_spec(package) is not None:
             data, native, hidden = collect_all(package)
             datas.extend(data)
@@ -23,5 +25,7 @@ def collect_studio():
         missing = [name for name in ("faster_whisper", "piper") if importlib.util.find_spec(name) is None]
         if missing:
             raise RuntimeError(f"Models exist but Studio packages are missing: {missing}. Install requirements-studio.txt")
-    imports.extend(["studio_dialog", "studio_smoke", "studio_runtime", "office_engine", "speech_engine", "audio_tools", "pdf_tools", "document_preview", "pptx", "openpyxl"])
+    imports.extend(["studio_dialog", "studio_smoke", "studio_runtime", "office_engine", "speech_engine", "audio_tools", "pdf_tools", "document_preview", "pptx", "openpyxl",
+                    "ocr_engine", "pdf_advanced", "office_edit", "data_tools", "archive_tools", "model_catalog",
+                    "translation_engine", "subtitle_tools", "yaml", "defusedxml", "cv2"])
     return datas, binaries, imports

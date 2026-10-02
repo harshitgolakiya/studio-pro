@@ -7,3 +7,13 @@ faster-whisper>=1.2.1,<2
 # faster-whisper 1.2 uses PyAV's metadata_errors argument, removed in newer PyAV.
 av>=16.1.0,<17
 piper-tts>=1.8.0,<2
+# OCR, PDF tables and signatures, data tools, archives, translation, speaker labels.
+rapidocr>=3.9,<4
+pdfplumber>=0.11,<1
+pyHanko>=0.37,<1
+jsonschema>=4.26,<5
+PyYAML>=6.0,<7
+defusedxml>=0.7.1,<1
+py7zr>=1.1,<2
+sentencepiece>=0.2.2,<1
+sherpa-onnx>=1.13,<2

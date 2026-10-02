@@ -33,20 +33,21 @@ def parse_pages(value: str, count: int) -> list[int]:
     return result
 
 
-def read_pdf(path: Path):
+def read_pdf(path: Path, password: str | None = None):
     from pypdf import PdfReader
     reader = PdfReader(path)
-    if reader.is_encrypted and not reader.decrypt(""):
-        raise ValueError("This PDF is password-protected. Open an unlocked copy first.")
+    if reader.is_encrypted and not reader.decrypt(password or ""):
+        raise ValueError("The password is incorrect." if password else
+                         "This PDF is password-protected. Enter its password, or unlock it in PDF Tools first.")
     return reader
 
 
-def render_pdf_page(source: Path | bytes, index: int = 0, scale: float = 1.4):
+def render_pdf_page(source: Path | bytes, index: int = 0, scale: float = 1.4, password: str | None = None):
     import pypdfium2 as pdfium
     if not 0.1 <= scale <= 4:
         raise ValueError("Render scale must be between 0.1 and 4")
     with _render_lock:
-        with pdfium.PdfDocument(str(source) if isinstance(source, Path) else source) as document:
+        with pdfium.PdfDocument(str(source) if isinstance(source, Path) else source, password=password) as document:
             count = len(document)
             if index < 0 or index >= count:
                 raise ValueError("Page number is out of range")

@@ -9,7 +9,7 @@ import tempfile
 from typing import Callable
 
 from media_engine import get_ffmpeg_path
-from studio_runtime import check_cancel, run_engine
+from studio_runtime import check_cancel, model_directory, run_engine
 from utils import publish_output_file, release_output_path, reserve_output_path
 
 ENCODERS = {
@@ -21,9 +21,21 @@ ENCODERS = {
 }
 
 
+def voice_isolation_model() -> Path:
+    return model_directory() / "denoise" / "sh.rnnn"
+
+
+def _filter_path(path: Path) -> str:
+    """Quote a file path for use inside an FFmpeg filter argument."""
+    return "'" + str(path.resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'") + "'"
+
+
 def process_audio(source: Path, destination: Path, fmt: str = "WAV", normalize: bool = True,
                   denoise: bool = False, start: float = 0, duration: float | None = None,
-                  overwrite: bool = False, cancel_check: Callable[[], bool] | None = None) -> Path:
+                  overwrite: bool = False, cancel_check: Callable[[], bool] | None = None,
+                  isolate_voice: bool = False) -> Path:
+    """``isolate_voice`` keeps speech and suppresses everything else with a neural
+    filter; ``denoise`` only reduces steady hum and hiss."""
     if not source.is_file():
         raise FileNotFoundError("Choose an existing audio or video file")
     if fmt not in ENCODERS:
@@ -38,6 +50,9 @@ def process_audio(source: Path, destination: Path, fmt: str = "WAV", normalize: 
     engine = get_ffmpeg_path()
     if not engine:
         raise RuntimeError("FFmpeg is missing. Run fetch_ffmpeg.ps1")
+    if isolate_voice and not voice_isolation_model().is_file():
+        raise RuntimeError("The voice isolation model is not installed. Add it in Studio Tools → Models, "
+                           "or run setup_studio.ps1.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     reservations: set[Path] = set()
     output = reserve_output_path(destination, overwrite, reservations)
@@ -51,6 +66,9 @@ def process_audio(source: Path, destination: Path, fmt: str = "WAV", normalize: 
             if duration is not None:
                 args.extend(["-t", str(duration)])
             filters = []
+            if isolate_voice:
+                # The speech model was trained on 48 kHz mono audio.
+                filters.append(f"aresample=48000,arnndn=m={_filter_path(voice_isolation_model())}")
             if denoise:
                 filters.append("afftdn=nf=-25")
             if normalize:

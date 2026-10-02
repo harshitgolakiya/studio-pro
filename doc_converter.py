@@ -7,8 +7,8 @@ import re
 import tempfile
 from typing import Callable
 
-from office_engine import OFFICE_EXTENSIONS, office_family, office_targets, render_office
-from studio_runtime import StudioCancelled, check_cancel
+from office_engine import OFFICE_EXTENSIONS, PDF_IMPORT_FILTERS, office_family, office_targets, render_office
+from studio_runtime import StudioCancelled, check_cancel, find_libreoffice
 
 from converter import ConversionResult
 from utils import (
@@ -36,6 +36,9 @@ def document_targets(source: Path) -> tuple[str, ...]:
     family = office_family(source)
     if family:
         return tuple(dict.fromkeys((*office_targets(source), "MD", "TXT", "HTML")))
+    if source.suffix.lower() == ".pdf":
+        # Layout import for Word/PowerPoint families; detected tables for Excel.
+        return ("MD", "DOCX", "ODT", "PPTX", "ODP", "XLSX", "PDF", "HTML", "TXT")
     return ("MD", "DOCX", "PDF", "HTML", "TXT")
 
 
@@ -60,7 +63,7 @@ def _docx_to_html(path: Path) -> str:
     return result.value
 
 
-def _pdf_to_markdown(path: Path) -> str:
+def _pdf_to_markdown(path: Path, cancel_check: Callable[[], bool] | None = None) -> str:
     from pypdf import PdfReader
 
     reader = PdfReader(str(path))
@@ -70,7 +73,15 @@ def _pdf_to_markdown(path: Path) -> str:
         if text:
             paragraphs.append(text)
     if not paragraphs:
-        raise ValueError("No extractable text found in this PDF (it may be a scanned image).")
+        # A scan has no text layer; read it with the local OCR engine instead.
+        try:
+            from ocr_engine import extract_text
+            records = extract_text(path, cancel_check=cancel_check)
+        except (ImportError, RuntimeError) as exc:
+            raise ValueError(f"No extractable text found in this PDF (it may be a scanned image). {exc}")
+        paragraphs = [record["text"].strip() for record in records if record["text"].strip()]
+        if not paragraphs:
+            raise ValueError("No text could be extracted or recognized in this PDF.")
     return "\n\n".join(paragraphs)
 
 
@@ -91,7 +102,7 @@ def to_markdown(source_path: Path, cancel_check: Callable[[], bool] | None = Non
     if ext == ".docx":
         return _html_to_markdown(_docx_to_html(source_path))
     if ext == ".pdf":
-        return _pdf_to_markdown(source_path)
+        return _pdf_to_markdown(source_path, cancel_check)
     if ext == ".pptx":
         from pptx import Presentation
         sections = []
@@ -304,14 +315,21 @@ def convert_document(
         # Never overwrite the input before conversion has safely completed.
         output_path = reserve_output_path(proposed, overwrite and proposed.resolve() != source_path.resolve(), reserved_paths)
         native = fmt in office_targets(source_path) and fmt not in {"TXT", "HTML"}
-        md_text = "" if native else to_markdown(source_path, cancel_check)
+        # PDF pages keep their layout through the Office engine. Without it,
+        # DOCX still works as plain text reflow.
+        layout_import = ext == ".pdf" and fmt in PDF_IMPORT_FILTERS and (fmt != "DOCX" or find_libreoffice() is not None)
+        pdf_tables = ext == ".pdf" and fmt == "XLSX"
+        md_text = "" if native or layout_import or pdf_tables else to_markdown(source_path, cancel_check)
 
         temp_fd, temp_name = tempfile.mkstemp(suffix=f".tmp{dest_ext}", dir=str(output_directory))
         os.close(temp_fd)
         temporary_path = Path(temp_name)
         try:
-            if native:
+            if native or layout_import:
                 render_office(source_path, temporary_path, fmt, cancel_check)
+            elif pdf_tables:
+                from pdf_advanced import extract_tables
+                extract_tables(source_path, temporary_path, overwrite=True, cancel_check=cancel_check)
             elif fmt == "MD":
                 temporary_path.write_text(md_text, encoding="utf-8")
             elif fmt == "TXT":
@@ -342,7 +360,14 @@ def convert_document(
                 temporary_path.unlink(missing_ok=True)
 
         output_size = output_path.stat().st_size
-        note = "Layout-preserving Office conversion" if native else "Text conversion; original page layout and embedded media are not retained"
+        if native:
+            note = "Layout-preserving Office conversion"
+        elif layout_import:
+            note = "PDF layout import; text and graphics are placed as on the page — review before editing"
+        elif pdf_tables:
+            note = "Tables detected in the PDF, one sheet per table; other page content is not included"
+        else:
+            note = "Text conversion; original page layout and embedded media are not retained"
         if fmt in {"CSV", "TSV"}:
             note += "; delimited export includes the active sheet only"
         if replace_source and source_path.resolve() != output_path.resolve():

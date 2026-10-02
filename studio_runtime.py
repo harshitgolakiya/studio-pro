@@ -45,6 +45,35 @@ def check_cancel(cancel_check: Callable[[], bool] | None) -> None:
         raise StudioCancelled("Cancelled")
 
 
+class StagedOutput:
+    """A temporary file beside its destination, published atomically on success."""
+
+    def __init__(self, destination: Path, overwrite: bool = False):
+        self.destination = destination
+        self.overwrite = overwrite
+        self.output: Path | None = None
+        self._reservations: set[Path] = set()
+
+    def __enter__(self) -> "StagedOutput":
+        from utils import reserve_output_path
+        self.destination.parent.mkdir(parents=True, exist_ok=True)
+        self._reserved = reserve_output_path(self.destination, self.overwrite, self._reservations)
+        self._directory = tempfile.TemporaryDirectory(dir=self.destination.parent, prefix=".shadow-stage-")
+        self.path = Path(self._directory.name) / ("result" + self.destination.suffix)
+        return self
+
+    def __exit__(self, kind, error, traceback) -> None:
+        from utils import publish_output_file, release_output_path
+        try:
+            if kind is None:
+                if not self.path.is_file():
+                    raise RuntimeError("The operation produced no output")
+                self.output = publish_output_file(self.path, self._reserved, self.overwrite, self._reservations)
+        finally:
+            self._directory.cleanup()
+            release_output_path(self._reserved, self._reservations)
+
+
 def run_engine(args: list[str], timeout: float = 180,
                cancel_check: Callable[[], bool] | None = None) -> str:
     """Drain output to disk, cap diagnostics, and terminate the owned process tree."""

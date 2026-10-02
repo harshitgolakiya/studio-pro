@@ -108,15 +108,27 @@ does not establish macOS runtime compatibility.
 
 ## Further agency / IT expansion
 
-These are future work, not implemented features:
+Status key: **engine** means the tested Python module exists; it is not yet
+reachable from Studio Tools or the headless CLI unless stated. Unchecked items
+are not started.
 
-- [ ] OCR for scans/screenshots, searchable PDFs, and multilingual text extraction.
-- [ ] PDF password handling, redaction, forms, signatures, repair, and structured table extraction.
-- [ ] Higher-fidelity PDF → Office reconstruction and native document editing.
-- [ ] Spreadsheet data tooling: CSV/JSON/XML/YAML, schema validation, multi-sheet export, cleanup.
-- [ ] Safe ZIP/7z/TAR archive workflows, manifests, checksums, and client delivery packages.
-- [ ] Subtitle editing, translation, speaker labels, voice isolation, and speech batch queues.
-- [ ] Multilingual speech models and a voice/model management interface.
+- [x] OCR for scans/screenshots, searchable PDFs, multilingual text — engine (`ocr_engine.py`).
+      Scanned PDFs in the main queue now fall back to OCR for text targets.
+- [x] PDF passwords, redaction, forms, signatures, repair, table extraction — engine (`pdf_advanced.py`).
+      Redacted pages are flattened to images; self-signed signatures show as untrusted in readers.
+- [x] PDF → DOCX/ODT/PPTX/ODP with page layout and PDF → XLSX tables — available in the main queue.
+      Find/replace and document properties — engine (`office_edit.py`). There is no in-app
+      visual editor; `open_in_editor` hands the file to the bundled LibreOffice.
+- [x] Data tooling: CSV/TSV/JSON/JSONL/XML/YAML/XLSX, schema validation, multi-sheet export,
+      cleanup — engine (`data_tools.py`).
+- [x] Safe ZIP/7z/TAR extraction and creation, manifests, checksums, delivery packages — engine
+      (`archive_tools.py`).
+- [x] Subtitle editing and translation (`subtitle_tools.py`, `translation_engine.py`), speaker
+      labels, speech-to-English, batch transcription (`speech_engine.py`), voice isolation
+      (`audio_tools.py`) — engines.
+- [x] Multilingual transcription models, 13 voices, extra OCR scripts, translation pairs:
+      download/remove catalog — engine (`model_catalog.py`).
+- [ ] Studio Tools tabs and headless CLI options for all of the engines above.
 - [ ] Print and design tools: EPS/AI/INDD import adapters, font inspection, PDF preflight, CMYK delivery.
 - [ ] Client projects, brand kits, social/export presets, naming templates, and reusable delivery workflows.
 - [ ] Integration of the existing plugin SDK, hooks, API, and publishing adapters into the app UI.

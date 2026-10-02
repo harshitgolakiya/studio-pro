@@ -41,10 +41,25 @@ def office_targets(path: Path) -> tuple[str, ...]:
     return tuple(FILTERS.get(office_family(path), {}))
 
 
+# PDF pages opened as positioned text and graphics, then saved as Office files.
+# target -> (import filter, export filter)
+PDF_IMPORT_FILTERS = {
+    "DOCX": ("writer_pdf_import", "docx:Office Open XML Text"),
+    "ODT": ("writer_pdf_import", "odt:writer8"),
+    "PPTX": ("impress_pdf_import", "pptx:Impress MS PowerPoint 2007 XML"),
+    "ODP": ("impress_pdf_import", "odp:impress8"),
+}
+
+
 def render_office(source: Path, destination: Path, target: str,
                   cancel_check: Callable[[], bool] | None = None) -> None:
-    family = office_family(source)
-    filter_name = FILTERS.get(family, {}).get(target)
+    import_filter = None
+    if source.suffix.lower() == ".pdf":
+        if target not in PDF_IMPORT_FILTERS:
+            raise ValueError(f"PDF layout import supports: {', '.join(PDF_IMPORT_FILTERS)}")
+        import_filter, filter_name = PDF_IMPORT_FILTERS[target]
+    else:
+        filter_name = FILTERS.get(office_family(source), {}).get(target)
     if not filter_name:
         raise ValueError(f"{source.suffix} cannot be converted to {target}. Choose: {', '.join(office_targets(source))}")
     engine = find_libreoffice()
@@ -57,6 +72,7 @@ def render_office(source: Path, destination: Path, target: str,
         # LibreOffice session from intercepting this conversion.
         diagnostic = run_engine([engine, f"-env:UserInstallation={(root / 'profile').as_uri()}",
                                  "--headless", "--nologo", "--nodefault", "--norestore",
+                                 *([f"--infilter={import_filter}"] if import_filter else []),
                                  "--convert-to", filter_name, "--outdir", str(root), str(source.resolve())],
                                 cancel_check=cancel_check)
         generated = root / f"{source.stem}.{target.lower()}"

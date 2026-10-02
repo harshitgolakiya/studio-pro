@@ -24,6 +24,13 @@ def main() -> None:
             temporary.replace(destination)
         finally:
             temporary.unlink(missing_ok=True)
+    # Small models behind speaker labels, voice isolation, and CMYK delivery.
+    from model_catalog import find_entry, install, is_installed
+    for key in ("diarization-segmentation", "diarization-embedding", "denoise-speech", "color-cmyk"):
+        entry = find_entry(key)
+        if not is_installed(entry):
+            print(f"Downloading {entry.label}…", flush=True)
+            install(entry)
     print(f"Models ready: {root}", flush=True)
 
 
