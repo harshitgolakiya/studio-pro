@@ -21,8 +21,10 @@ sales_log.csv
 vendor/ffmpeg/*.exe
 vendor/ffmpeg-mac/*
 vendor/libreoffice/
+vendor/ghostscript/
 vendor/models/
 vendor/downloads/
 build-studio/
 dist-studio/
 studio-verification/
+agency-build/

@@ -1,143 +1,135 @@
-# Shadow Agency Studio
+﻿# Shadow Agency Studio
 
-The app now combines its image/video studio with Office documents, PDF tools,
-English speech recognition, neural voice generation, and audio preparation.
-Open **Studio Tools** in the header or command palette to access the new tools.
+Agency Studio combines the original image/video converter with Office, PDF,
+OCR, data, speech, print, project delivery, and integration workflows.
+Open **Studio Tools > More Tools** for the expanded controls.
 
-## Available workflows
+## Implementation status
 
-| Team / workflow | Inputs | Outputs / actions |
-| --- | --- | --- |
-| Accounts and proposals | DOC, DOCX, DOCM, ODT, OTT, RTF, WPS, FODT | PDF, DOC, DOCX, ODT, RTF; extracted Markdown, TXT, HTML |
-| Strategy and presentations | PPT, PPTX, PPTM, PPS, PPSX, ODP, OTP, FODP | PDF, PPT, PPTX, ODP; extracted slide text |
-| Finance and reporting | XLS, XLSX, XLSM, ODS, OTS, CSV, TSV, FODS | PDF, XLS, XLSX, ODS, CSV, TSV; extracted sheet contents |
-| Document delivery | PDF | Merge, extract ranges, rotate, lossless stream compression, page PNGs in ZIP |
-| Document inspection | Office / PDF / Markdown / HTML / TXT | Native page preview and extracted text; open in default app |
-| Interviews and meetings | Audio recordings and video soundtracks | English TXT, SRT, VTT, timestamped JSON transcripts |
-| Voiceovers and scripts | Typed text or extracted document text | Local neural speech in WAV; adjustable speaking speed |
-| Audio delivery | Audio / video | WAV, MP3, FLAC, AAC/M4A, Opus; trim, loudness normalization, steady-noise reduction |
-| Design and production | Existing supported image/video formats | Existing compression, conversion, RAW/SVG/PSD workflows, recipes, previews, and batch processing |
+- [x] Integrate the expansion engines into Studio Tools and the headless CLI.
+- [x] Print/design import adapters, font inspection, PDF preflight, and CMYK delivery.
+- [x] Client projects, brand kits, export presets, naming, and reusable deliveries.
+- [x] Plugin SDK, hooks, loopback API, and publishing controls.
+- [ ] Final installer verification and macOS Apple Silicon/Intel regression matrix.
 
-The file picker also recognizes professional media containers such as MXF,
-MTS/M2TS, MPEG, FLV, AIFF, CAF, and AC3. Their actual codecs must be readable
-by the bundled FFmpeg build.
+The shared dispatcher exposes **40 actions**. The original conversion queue,
+Office/PDF tools, voice generation, and media conversion remain available.
 
-## Source setup (Windows)
+## Workflows
 
-Use the project's existing Python environment:
+| Area | Available operations |
+| --- | --- |
+| Office | Native DOC/DOCX/ODT, PPT/PPTX/ODP, XLS/XLSX/ODS conversions through bundled LibreOffice; PDF export; find/replace; document properties; open in the editor |
+| PDF | Page operations, rendering, positioned editable export, tables, passwords, flattened redaction, form inspection/fill, identity creation, signing/verification, repair |
+| OCR | Images and scanned PDFs to text or searchable PDF; page ranges, DPI, language scripts, force recognition |
+| Data | CSV/TSV/JSON/JSONL/XML/YAML/XLSX, cleanup, schemas, validation, all-sheet export |
+| Archives | ZIP/7z/TAR creation, encrypted 7z, safe extraction, inspection |
+| Delivery | Packages with manifests/checksums, verification, folder manifests and integrity checks |
+| Speech | English/multilingual transcription, subtitles, speaker labels, speech-to-English, batch transcription, neural voices |
+| Audio/subtitles | Media exports, loudness/steady-noise processing, speech isolation, subtitle edits and offline translation |
+| Print | EPS/PS/AI import, conditional INDD adapter, font inspection, image-DPI/font preflight, ICC-based CMYK PDF/TIFF |
+| Projects | Saved client profiles, brand colors/fonts/logo, naming templates, reusable export presets, delivery ZIP and brand-kit metadata |
+| Integrations | Plugin discovery/exporters/hooks, local website assets, cloud storage, WordPress, design assets, loopback HTTP API |
 
-```powershell
-cd C:\projects\webp\webp-compressor
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_studio.ps1 -Python '..\.venv\Scripts\python.exe'
-..\.venv\Scripts\python.exe main.py
-```
+The More Tools category menu includes OCR, Data, Archives & Delivery,
+Advanced workflows, Models, Projects & Brand kits, and Integrations & API.
+Advanced workflows expose typed options, password fields, file/folder browsing,
+and JSON mappings where needed. Results show output paths and detailed reports.
 
-The setup downloads a checksum-verified LibreOffice Windows x64 MSI and extracts
-it into `vendor/libreoffice` without installing it system-wide. It also downloads
-the English faster-whisper `base.en` model and the Piper Lessac medium voice into
-`vendor/models`. Setup needs internet access; file processing uses local engines
-and does not download models or upload media.
+## Runtime assets
 
-`-SkipOffice` and `-SkipModels` let you reuse existing engines. To use an installed
-LibreOffice, set `SHADOW_LIBREOFFICE` to `soffice.com`/`soffice.exe`. Set
-`SHADOW_MODEL_DIR` to a different local model directory if needed. Custom local
-Whisper directories and Piper `.onnx` voices can also be chosen in Studio Tools.
-Keep a Piper voice's matching `.onnx.json` file beside the model.
+The complete Windows build stages LibreOffice, FFmpeg, Ghostscript, and **53
+catalog model entries**: English and multilingual base transcription, 13 voices,
+additional OCR scripts, 25 translation pairs, speaker models, isolation, and CMYK
+profile assets. Larger Whisper small/medium/large-v3 models remain optional in
+Models. Installed assets run locally; selecting Install explicitly downloads a
+model. Model cards, provenance, and upstream notices are retained.
 
-## Batch use
-
-Add documents with the normal file picker, drag and drop, or Studio Tools.
-The target menu adapts to the selected document family. Selecting a presentation
-shows presentation outputs; selecting a spreadsheet shows spreadsheet outputs.
-Each conversion runs in the existing background batch queue. An individual
-failure does not stop other files. Output publication is atomic, originals are
-kept by default, and name collisions receive numbered filenames.
-
-For mixed document families, choose PDF or apply per-file recipe overrides.
+## Source setup on Windows
 
 ```powershell
-..\.venv\Scripts\python.exe -m headless_cli .\proposal.doc --output .\out --format PDF --json
-..\.venv\Scripts\python.exe -m headless_cli .\pitch.pptx --output .\out --format PDF --json
-..\.venv\Scripts\python.exe -m headless_cli .\meeting.mp4 --output .\out --format 'Transcript: SRT' --json
-..\.venv\Scripts\python.exe -m headless_cli .\script.txt --output .\out --format 'Speech: WAV' --json
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-studio.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_studio.ps1 -Python '.\.venv\Scripts\python.exe'
+.\.venv\Scripts\python.exe setup_full_models.py
+.\.venv\Scripts\python.exe setup_model_notices.py
+.\.venv\Scripts\python.exe main.py
 ```
 
-`--speech-model`, `--voice`, and `--language` select local speech assets. The bundled
-model is English-only. Auto language detection requires a multilingual model.
+Print runtime setup uses 7-Zip to unpack the verified Ghostscript distribution.
+The Windows setup supports a verified LibreOffice mirror if the primary download
+fails. Assets can live on another drive through directory junctions.
 
-## Full Windows package
-
-Install `requirements-studio.txt` and run setup before building. Both PyInstaller
-specs collect installed speech/PDF dependencies and staged engine/model files.
-The Windows installer includes the whole application directory.
+## CLI and automation
 
 ```powershell
-..\.venv\Scripts\python.exe -m PyInstaller --noconfirm --distpath dist-studio --workpath build-studio Shadow.spec
-.\dist-studio\Shadow\Shadow.exe --studio-smoke-report .\studio-verification\packaged-smoke.json
+.\.venv\Scripts\python.exe -m headless_cli .\scan.pdf --studio-action ocr --output .\out --format PDF --pages '1-3' --json
+.\.venv\Scripts\python.exe -m headless_cli .\leads.csv --studio-action data-clean --output .\out --format JSON --drop-duplicates --normalize-headers --json
+.\.venv\Scripts\python.exe -m headless_cli .\budget.xlsx --studio-action data-export-sheets --output .\out --format CSV --json
+.\.venv\Scripts\python.exe -m headless_cli .\deliverables --studio-action delivery-create --output .\out --format ZIP --client Acme --project Launch --json
+.\.venv\Scripts\python.exe -m headless_cli .\out\deliverables-delivery.zip --studio-action delivery-verify --output .\out --json
+.\.venv\Scripts\python.exe -m headless_cli .\proposal.pdf --studio-action pdf-protect --output .\out --options .\password-options.json --json
+.\.venv\Scripts\python.exe -m headless_cli --models list --json
 ```
 
-The smoke command creates a JSON report and exits nonzero if a bundled engine
-fails. It tests actual Office exports, PDF rendering, speech synthesis followed by
-transcription, and audio processing. It does not download missing dependencies.
+`--options` reads a JSON object for the selected action; UI fields use the same
+option definitions. `--models install --model-key KEY` and `--models remove
+--model-key KEY` manage catalog assets. Archive password options enable encrypted
+7z. Verification failures return nonzero. Originals are preserved and generated
+files use collision-safe names.
 
-The package is a folder build. Keep `Shadow.exe` and `_internal` together; copying
-only the EXE does not include the engines. The full runtime can exceed 1 GB.
+The packaged executable accepts `--cli` followed by the same arguments.
+`--cli-report PATH` captures JSON/text output for the windowed Windows app.
+Integrations & API starts/stops a server restricted to loopback. It exposes
+`GET /studio/actions` and `POST /studio/run`, alongside the original API routes.
+Conversion hooks also run in packaged builds when explicitly enabled.
 
-To compile an installer from this separate build directory:
+## Projects and publishing
+
+Project profiles keep client/project, brand colors, font, optional logo, preset,
+and a validated naming template. Social presets produce 1080x1080, 1080x1350,
+or 1080x1920 images. Other presets cover web, print, documents, audio, and video.
+Successful deliveries contain converted assets, brand-kit metadata when supplied,
+and a checksum-backed ZIP. Failed batches report individual errors.
+
+Publishing runs only when the user selects Publish. Provider configuration is
+entered in the integration controls; saved project/brand metadata excludes private
+absolute paths. Local website delivery confines assets to the chosen project root.
+
+## Verification and packaging
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" /DMyAppSource=dist-studio\Shadow /DMyAppOutputName=Shadow-Agency-Studio-Setup /Ostudio-verification\installer installer.iss
+$env:SHADOW_TEST_FULL_STUDIO='1'
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_*.py' -v
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_agency_release.ps1 -WorkRoot 'D:\Shadow-Agency-Studio-Build\release'
 ```
 
-macOS needs native LibreOffice and a build performed on macOS; Windows validation
-does not establish macOS runtime compatibility.
+The release script builds the executable, requires all 11 packaged engine checks
+to pass, compiles the Inno Setup installer, and writes a SHA256 and JSON receipt.
+Checks exercise real Office export, PDF rendering and signing, speech, audio, OCR,
+translation, structured data, encrypted archives, print, and project delivery.
+CI workflows perform source and packaged checks for Windows and both macOS
+architectures before uploading installers. Reports establish readiness for each
+specific artifact; source tests alone do not establish packaged readiness.
 
-## Fidelity and supported boundaries
+Current verification reports are under `studio-verification` and the release
+work root's `verification` directory. The final platform status will be updated
+after the installer and CI runs complete.
 
-- Office → PDF uses LibreOffice's native exporters rather than extracting text.
-  Font substitution, unsupported Office features, embedded objects, animations,
-  and complex layout differences can still affect fidelity. Inspect Pages before delivery.
-- PDF → DOCX is text reflow. It does not reconstruct the original Word document.
-- Scanned PDFs need OCR; OCR is not included in this expansion.
-- CSV/TSV export includes the active spreadsheet sheet, not every sheet.
-- Password-protected, DRM-restricted, corrupt, and unsupported files return errors.
-- Transcripts need human review. Speaker diarization and translation are not included.
-- Audio denoising reduces steady noise; it is not a voice isolation engine.
-- Layout or editable conversion between unrelated families (e.g. PPT → XLSX) is
-  not a meaningful route and is rejected.
+## Practical boundaries
 
-## Further agency / IT expansion
-
-Status key: **engine** means the tested Python module exists; it is not yet
-reachable from Studio Tools or the headless CLI unless stated. Unchecked items
-are not started.
-
-- [x] OCR for scans/screenshots, searchable PDFs, multilingual text — engine (`ocr_engine.py`).
-      Scanned PDFs in the main queue now fall back to OCR for text targets.
-- [x] PDF passwords, redaction, forms, signatures, repair, table extraction — engine (`pdf_advanced.py`).
-      Redacted pages are flattened to images; self-signed signatures show as untrusted in readers.
-- [x] PDF → DOCX/ODT/PPTX/ODP with page layout and PDF → XLSX tables — available in the main queue.
-      Find/replace and document properties — engine (`office_edit.py`). There is no in-app
-      visual editor; `open_in_editor` hands the file to the bundled LibreOffice.
-- [x] Data tooling: CSV/TSV/JSON/JSONL/XML/YAML/XLSX, schema validation, multi-sheet export,
-      cleanup — engine (`data_tools.py`).
-- [x] Safe ZIP/7z/TAR extraction and creation, manifests, checksums, delivery packages — engine
-      (`archive_tools.py`).
-- [x] Subtitle editing and translation (`subtitle_tools.py`, `translation_engine.py`), speaker
-      labels, speech-to-English, batch transcription (`speech_engine.py`), voice isolation
-      (`audio_tools.py`) — engines.
-- [x] Multilingual transcription models, 13 voices, extra OCR scripts, translation pairs:
-      download/remove catalog — engine (`model_catalog.py`).
-- [ ] Studio Tools tabs and headless CLI options for all of the engines above.
-- [ ] Print and design tools: EPS/AI/INDD import adapters, font inspection, PDF preflight, CMYK delivery.
-- [ ] Client projects, brand kits, social/export presets, naming templates, and reusable delivery workflows.
-- [ ] Integration of the existing plugin SDK, hooks, API, and publishing adapters into the app UI.
-- [ ] Full packaged regression matrix across Windows and both macOS architectures.
-
-## Engine references and bundled notices
-
-The integration uses the documented [LibreOffice command-line parameters](https://help.libreoffice.org/latest/en-US/text/shared/guide/start_parameters.html),
-[faster-whisper](https://github.com/SYSTRAN/faster-whisper), and
-[Piper](https://github.com/OHF-Voice/piper1-gpl). LibreOffice's license/notice files
-and the voice model card are kept with their staged resources. Third-party
-components and model assets retain their own licenses.
+- Office fidelity depends on fonts and supported document features. Inspect
+  rendered pages before client delivery. PDF editable export uses positioned
+  content and cannot recover original authoring structure perfectly.
+- OCR, transcripts, translations, and speaker labels need human review.
+- Redaction flattens affected pages; regions use page/left/top/right/bottom
+  coordinates. Self-signed signatures can be valid while untrusted by readers.
+- CSV/TSV queue export uses the active sheet. The all-sheet workflow exports each
+  sheet separately. Data cleanup preserves cell strings.
+- Print preflight checks font embedding and image DPI. It does not certify PDF/X,
+  bleed, trapping, separations, or a printer's production specification. Choose
+  the printer's ICC profile when required; the bundled profile is generic.
+- INDD export requires installed Adobe InDesign on Windows or a matching PDF
+  sidecar. The installer cannot include Adobe's proprietary application.
+- Third-party runtime/model assets retain their own license terms. See
+  THIRD_PARTY_NOTICES.md and the bundled model notices.

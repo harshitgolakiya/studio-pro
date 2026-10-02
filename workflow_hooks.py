@@ -70,7 +70,8 @@ def _run_script_hook(script: Path, context: dict[str, Any]) -> dict[str, Any]:
     context_json = json.dumps(context, default=str)
     try:
         if script.suffix == ".py":
-            cmd = [sys.executable, str(script)]
+            cmd = ([sys.executable, "--run-hook-script", str(script)] if getattr(sys, "frozen", False)
+                   else [sys.executable, str(script)])
         elif script.suffix == ".ps1":
             cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script)]
         elif script.suffix == ".bat":

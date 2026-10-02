@@ -5108,6 +5108,8 @@ class WebPCompressorApp(ctk.CTk):
         video_fps: str = "Original FPS",
     ) -> None:
         total = len(files_snapshot)
+        from agency_integrations import before_conversion, after_conversion, batch_event
+        batch_event("before_batch", sources=files_snapshot, settings={"target_format": target_format_raw})
         results: list[ConversionResult] = []
         reserved_paths: set[Path] = set()
         # Each engine reserves its destination atomically in
@@ -5338,6 +5340,7 @@ class WebPCompressorApp(ctk.CTk):
 
             target_dir = source_p.parent if use_source_folder else output
             assert target_dir is not None
+            before_conversion(source_p, {"target_format": effective_target_format, "quality": effective_quality})
 
             is_video = source_p.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS
             is_audio = source_p.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
@@ -5465,6 +5468,7 @@ class WebPCompressorApp(ctk.CTk):
                         cancel_check=self.cancel_event.is_set,
                     )
 
+            after_conversion(source_p, res)
             with counter_lock:
                 completed_count += 1
                 current = completed_count
@@ -5491,6 +5495,7 @@ class WebPCompressorApp(ctk.CTk):
             self.events.put(("error", str(error)))
 
         elapsed = time.perf_counter() - start_time
+        batch_event("after_batch", results=results)
         self.events.put(
             ("complete", (results, self.cancel_event.is_set(), elapsed))
         )
@@ -5742,6 +5747,27 @@ class WebPCompressorApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    if "--cli" in sys.argv:
+        from headless_cli import main as cli_main
+        # A windowed executable has no console; an explicit report makes batch
+        # automation observable without depending on its parent's handles.
+        arguments = sys.argv[sys.argv.index("--cli") + 1:]
+        if "--cli-report" in arguments:
+            import contextlib
+            index = arguments.index("--cli-report")
+            destination = Path(arguments[index + 1])
+            del arguments[index:index + 2]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("w", encoding="utf-8") as stream, contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+                raise SystemExit(cli_main(arguments))
+        raise SystemExit(cli_main(arguments))
+    if "--run-hook-script" in sys.argv:
+        import runpy
+        index = sys.argv.index("--run-hook-script")
+        script = Path(sys.argv[index + 1]).resolve()
+        sys.argv = [str(script)]
+        runpy.run_path(str(script), run_name="__main__")
+        raise SystemExit(0)
     if "--studio-smoke-report" in sys.argv:
         from studio_smoke import run
         index = sys.argv.index("--studio-smoke-report")

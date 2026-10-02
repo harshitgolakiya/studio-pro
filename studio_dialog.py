@@ -60,6 +60,8 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self._transcription(tabs.add("Audio to Text"))
         self._synthesis(tabs.add("Text to Audio"))
         self._audio_tools(tabs.add("Audio Tools"))
+        from studio_expansion_ui import build_expansion_tabs
+        build_expansion_tabs(self, tabs.add("More Tools"))
         self._engines(tabs.add("Engines"))
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.grid(row=2, column=0, sticky="ew", padx=24, pady=10)
@@ -89,7 +91,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self._button(tab, "Open document preview", self._preview_document).pack(anchor="w", padx=14, pady=8)
         self._copy(tab, "Office → PDF keeps the document layout through LibreOffice. Presentations stay presentations; "
                    "spreadsheets stay spreadsheets. Text extraction to Markdown/TXT does not retain the original layout. "
-                   "PDF → DOCX produces editable text rather than reconstructing the source document.")
+                   "PDF → DOCX uses positioned content; inspect layout and fonts before delivery.")
         self._copy(tab, "Common workflows: client proposal DOC/DOCX → PDF · pitch PPT/PPTX → PDF · "
                    "campaign budget XLS/XLSX → PDF or CSV · legacy Office → modern Office · meeting notes → Markdown.")
 
@@ -282,6 +284,18 @@ class StudioToolsDialog(ctk.CTkToplevel):
             ("Speech synthesis engine", "Ready" if available("piper") else "Missing package piper-tts"),
             ("Voice models", ", ".join(p.stem for p in available_voices()) or "Missing — run setup_studio.ps1"),
         ]
+        from ocr_engine import available_ocr_languages
+        from translation_engine import installed_pairs
+        from speech_engine import diarization_models
+        from audio_tools import voice_isolation_model
+        from print_tools import ghostscript_path
+        entries.extend([
+            ("OCR scripts", ", ".join(available_ocr_languages()) if available("rapidocr") else "Missing rapidocr"),
+            ("Translation pairs", ", ".join(f"{a}-{b}" for a, b in installed_pairs()) or "Install pairs in More Tools > Models"),
+            ("Speaker labels", "Ready" if all(p.is_file() for p in diarization_models()) else "Install speaker models"),
+            ("Voice isolation", "Ready" if voice_isolation_model().is_file() else "Install isolation model"),
+            ("Print engine", ghostscript_path() or "Missing Ghostscript"),
+        ])
         self.engine_status.configure(state="normal")
         self.engine_status.delete("1.0", "end")
         self.engine_status.insert("1.0", "\n\n".join(f"{name}: {value}" for name, value in entries))
@@ -294,7 +308,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
 
     def _open_output(self):
         if self._last_output:
-            open_file_or_folder(self._last_output.parent)
+            open_file_or_folder(self._last_output if self._last_output.is_dir() else self._last_output.parent)
 
     def _run(self, work):
         if self._busy:
@@ -328,13 +342,16 @@ class StudioToolsDialog(ctk.CTkToplevel):
             if error != "Cancelled":
                 messagebox.showerror("Studio operation failed", error, parent=self)
         else:
-            self.status.set(f"Completed: {output.name}" if output else "Document text loaded")
+            self.status.set(f"Completed: {output.name}" if output else "Completed")
             if output:
                 self._last_output = output
                 self.open_output.configure(state="normal")
 
     def destroy(self):
         self._cancel.set()
+        server = getattr(self, "_automation_server", None)
+        if server:
+            server.stop()
         self._bridge.close()
         cancel_widget_callbacks(self)
         super().destroy()

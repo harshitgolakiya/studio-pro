@@ -17,3 +17,8 @@ defusedxml>=0.7.1,<1
 py7zr>=1.1,<2
 sentencepiece>=0.2.2,<1
 sherpa-onnx>=1.13,<2
+fonttools>=4.60,<5
+boto3>=1.40,<2
+google-cloud-storage>=3,<4
+azure-storage-blob>=12,<13
+pywin32>=311; sys_platform == 'win32'

@@ -1,7 +1,8 @@
 # Shadow (v2.0.0)
 
 **Agency Studio expansion:** Office/PDF conversion and previews, PDF operations,
-English audio/video transcription, local neural text-to-speech, and audio cleanup
+English audio/video transcription, local neural text-to-speech, audio cleanup,
+OCR, data conversion/cleanup, and archive/delivery packaging
 are available through **Studio Tools**. See [AGENCY_STUDIO.md](AGENCY_STUDIO.md)
 for supported formats, full engine setup, packaging, and fidelity limits.
 
@@ -110,7 +111,7 @@ A commercial-grade, native CustomTkinter desktop media conversion and compressio
 - Convert **DOC/DOCX, PPT/PPTX, XLS/XLSX, OpenDocument, and RTF** files to PDF through LibreOffice's native layout exporters. Convert legacy and modern Office files within their document family.
 - Extract supported document text as **Markdown, TXT, or HTML**, and render text documents as DOCX or PDF. Text extraction/reflow does not retain the original page layout or all embedded media.
 - Preview Office/PDF pages inside the app; merge, extract, rotate, compress, and export PDF pages through **Studio Tools**.
-- PDF text extraction is best-effort (works well for normal text PDFs; scanned/image-only PDFs have no extractable text and will report an error rather than silently producing an empty file).
+- PDF text extraction uses the existing text layer and falls back to local OCR for scanned pages. **Studio Tools > More Tools > OCR** also exports searchable PDFs.
 - Runs through the same batch queue, destination folder, renaming, and overwrite-protection rules as image/video conversions.
 
 ### 15. Persistent Preferences

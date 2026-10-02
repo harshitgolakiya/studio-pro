@@ -24,7 +24,8 @@ import unittest
 # stack and exit, so CI shows *where* instead of timing out silently. The
 # slowest test takes ~20 s locally. Between tests the timer is re-armed at
 # twice the limit so a stall in setUpClass/tearDownClass is caught too.
-_WATCHDOG_SECONDS = int(os.environ.get("SHADOW_TEST_WATCHDOG_SECONDS", "150"))
+_WATCHDOG_SECONDS = int(os.environ.get("SHADOW_TEST_WATCHDOG_SECONDS",
+                                     "300" if os.environ.get("SHADOW_TEST_FULL_STUDIO") == "1" else "150"))
 faulthandler.enable()
 
 if not getattr(unittest.TestCase, "_shadow_watchdog", False):

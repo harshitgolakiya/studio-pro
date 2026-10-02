@@ -99,7 +99,9 @@ def _engine(language: str):
             from rapidocr import RapidOCR
         except ImportError as exc:
             raise RuntimeError("OCR engine is missing. Install requirements-studio.txt") from exc
-        params: dict[str, object] = {"Global.log_level": "error"}
+        params: dict[str, object] = {"Global.log_level": "error",
+                                     "EngineConfig.onnxruntime.intra_op_num_threads": 4,
+                                     "EngineConfig.onnxruntime.inter_op_num_threads": 1}
         name = OCR_LANGUAGES[language]
         if name is not None:
             model = ocr_model_directory() / name

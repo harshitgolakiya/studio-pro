@@ -38,9 +38,13 @@ terms below.
    download, and grants no rights to any third-party copyrighted content.
 
 4. PRIVACY
-   The Software performs all image, audio, and video processing locally
-   on your device. It does not upload your files anywhere, and does not
-   collect telemetry or analytics.
+   File processing runs locally on your device. Optional model setup
+   downloads selected assets. Optional publishing adapters upload only
+   the files you select to the destinations you configure. The Software
+   does not collect telemetry or analytics.
+
+   Third-party runtimes and models retain their own licenses. See
+   THIRD_PARTY_NOTICES.md and the notices shipped with their resources.
 
 5. NO WARRANTY
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS

@@ -12,7 +12,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -21,26 +21,54 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-studio.txt
+
+      - name: Install archive extractor
+        shell: powershell
+        run: choco install 7zip --no-progress
 
       - name: Fetch bundled FFmpeg binaries
         shell: powershell
         run: |
           .\fetch_ffmpeg.ps1
 
+      - name: Stage Office, speech, print, and translation runtimes
+        shell: powershell
+        run: |
+          .\setup_studio.ps1 -Python python
+          python -c "from model_catalog import find_entry,install; install(find_entry('whisper-base')); install(find_entry('translate-es-en'))"
+
+      - name: Source runtime regression
+        run: python -c "from pathlib import Path; from studio_smoke import run; raise SystemExit(run(Path('studio-verification/source-smoke.json')))"
+
       - name: Run automated tests
-        timeout-minutes: 12
+        timeout-minutes: 25
+        env:
+          SHADOW_TEST_FULL_STUDIO: "1"
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v
 
       - name: Build Shadow.exe with PyInstaller
         run: |
           python -m PyInstaller --clean -y Shadow.spec
+
+      - name: Packaged runtime regression
+        shell: powershell
+        run: |
+          $taskSmoke = Start-Process -FilePath .\dist\Shadow\Shadow.exe -ArgumentList @('--studio-smoke-report', 'studio-verification\packaged-smoke.json') -WindowStyle Hidden -Wait -PassThru
+          if ($taskSmoke.ExitCode -ne 0) { throw 'Packaged Studio regression failed' }
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Agency-Studio-verification-Windows
+          path: studio-verification/*.json
 
       - name: Install Inno Setup
         shell: powershell

@@ -35,18 +35,26 @@ def _target_kb(settings: dict[str, Any]) -> int | None:
 
 
 def _optional_int(value: object, enabled: bool) -> int | None:
-    if not enabled:
+    if not enabled or value is None:
         return None
     return int(str(value).replace("°", "").strip() or "0")
 
 
 def _optional_float(value: object, enabled: bool) -> float | None:
-    if not enabled:
+    if not enabled or value is None:
         return None
     return float(str(value).strip())
 
 
 def convert_path(source: Path, output_dir: Path, settings: dict[str, Any]) -> ConversionResult:
+    from agency_integrations import before_conversion, after_conversion
+    before_conversion(source, settings)
+    result = _convert_path(source, output_dir, settings)
+    after_conversion(source, result)
+    return result
+
+
+def _convert_path(source: Path, output_dir: Path, settings: dict[str, Any]) -> ConversionResult:
     """Convert one supported path using recipe-style settings."""
     output_dir.mkdir(parents=True, exist_ok=True)
     target = str(settings.get("target_format", "WEBP"))
@@ -237,11 +245,84 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-interval", type=float, default=1.5)
     parser.add_argument("--json", action="store_true", help="Emit one JSON object per result")
     parser.add_argument("--replace-source", action="store_true", help="Replace original files with converted files")
+    from studio_actions import ACTION_LABELS
+    parser.add_argument("--studio-action", choices=list(ACTION_LABELS), help="Run an expanded Studio workflow; inputs are explicit files/folders")
+    parser.add_argument("--sheet", help="Workbook sheet for data conversion or cleanup")
+    parser.add_argument("--ocr-language", help="OCR script label, e.g. Arabic or Cyrillic")
+    parser.add_argument("--pages", default="all", help="OCR PDF pages, e.g. 1,3-5")
+    parser.add_argument("--dpi", type=int, default=200, help="OCR resolution, 72-600")
+    parser.add_argument("--force-ocr", action="store_true", help="Recognize pages that already contain text")
+    parser.add_argument("--drop-duplicates", action="store_true", help="Remove duplicate data rows")
+    parser.add_argument("--normalize-headers", action="store_true", help="Normalize data column names")
+    parser.add_argument("--client", default="", help="Delivery package client")
+    parser.add_argument("--project", default="", help="Delivery package project")
+    parser.add_argument("--options", type=Path, help="JSON options file for advanced Studio actions")
+    parser.add_argument("--models", choices=["list", "install", "remove"], help="Manage local engine models")
+    parser.add_argument("--model-key", help="Catalog key to install/remove")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.models:
+        from model_catalog import catalog, find_entry, install, remove, is_installed
+        try:
+            if args.models != "list":
+                if not args.model_key:
+                    _parser().error("--model-key is required for model installation/removal")
+                entry = find_entry(args.model_key)
+                if args.models == "install":
+                    install(entry)
+                else:
+                    remove(entry)
+            models = [{"key": e.key, "kind": e.kind, "label": e.label,
+                       "installed": is_installed(e), "size_mb": e.size_mb} for e in catalog()]
+            if args.json:
+                _event_json("models", models=models)
+            else:
+                for item in models:
+                    print(f"{item['key']}: {'Installed' if item['installed'] else 'Available'} ({item['size_mb']} MB)")
+            return 0
+        except Exception as exc:
+            if args.json:
+                _event_json("result", status="Failed", error=str(exc))
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+    if args.studio_action:
+        if not args.output or (not args.paths and args.studio_action != "pdf-identity"):
+            _parser().error("--studio-action requires input paths and --output")
+        if args.watch or args.recipe or args.replace_source:
+            _parser().error("Studio actions cannot use --watch, --recipe, or --replace-source")
+        from studio_actions import run_action
+        if args.json:
+            _event_json("started", action=args.studio_action, total=len(args.paths))
+        try:
+            result = run_action(args.studio_action, [Path(p).resolve() for p in args.paths], args.output,
+                                options=json.loads(args.options.read_text(encoding="utf-8")) if args.options else None,
+                                fmt=args.format, sheet=args.sheet, language=args.ocr_language,
+                                pages=args.pages, dpi=args.dpi, force=args.force_ocr,
+                                drop_duplicates=args.drop_duplicates, normalize_headers=args.normalize_headers,
+                                client=args.client, project=args.project)
+            code = 0 if result.ok else 1
+            if args.json:
+                _event_json("result", action=args.studio_action, status="Completed" if result.ok else "Failed",
+                            outputs=[str(p) for p in result.outputs], details=result.details)
+            else:
+                print("Completed" if result.ok else "Verification failed")
+                for output in result.outputs:
+                    print(output)
+                if result.details:
+                    print(json.dumps(result.details, ensure_ascii=False))
+        except Exception as exc:
+            code = 1
+            if args.json:
+                _event_json("result", action=args.studio_action, status="Failed", error=str(exc))
+            else:
+                print(str(exc), file=sys.stderr)
+        if args.json:
+            _event_json("finished", exit_code=code)
+        return code
     recipe = load_recipe(args.recipe) if args.recipe else Recipe("CLI defaults")
     settings = recipe.settings
     if args.format:
@@ -287,10 +368,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     exit_code = 0
     total = len(paths)
+    from agency_integrations import batch_event
+    batch_event("before_batch", sources=paths, settings=settings)
+    results = []
     if args.json:
         _event_json("started", total=total, output=str(args.output))
     for index, source in enumerate(paths, start=1):
         result = convert_path(source, args.output, settings)
+        results.append(result)
         if args.json:
             _event_json("progress", completed=index, total=total, source=str(source), status=result.status)
             print(json.dumps(_result_json(result)))
@@ -300,6 +385,7 @@ def main(argv: list[str] | None = None) -> int:
             exit_code = 1
     if args.json:
         _event_json("finished", total=total, exit_code=exit_code)
+    batch_event("after_batch", results=results)
     return exit_code
 
 

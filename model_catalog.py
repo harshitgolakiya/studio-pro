@@ -142,10 +142,10 @@ def catalog() -> list[ModelEntry]:
         ModelEntry("denoise-speech", "denoise", "Speech isolation (RNNoise)", "Any language", 1, "denoise", "sh.rnnn",
                    files=(("https://raw.githubusercontent.com/GregorR/rnnoise-models/master/"
                            "somnolent-hogwash-2018-09-01/sh.rnnn", "sh.rnnn"),)),
-        ModelEntry("color-cmyk", "color", "CMYK press profile (CGATS TR 001)", "Print", 1, "color",
-                   "CGATS001Compat-v2-micro.icc",
-                   files=(("https://raw.githubusercontent.com/saucecontrol/Compact-ICC-Profiles/master/profiles/"
-                           "CGATS001Compat-v2-micro.icc", "CGATS001Compat-v2-micro.icc"),)),
+        ModelEntry("color-cmyk", "color", "Generic CMYK press profile (Ghostscript)", "Print", 1, "color",
+                   "default_cmyk.icc",
+                   files=(("https://raw.githubusercontent.com/ArtifexSoftware/ghostpdl/master/iccprofiles/"
+                           "default_cmyk.icc", "default_cmyk.icc"),)),
     ]
     return entries
 

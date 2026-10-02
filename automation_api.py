@@ -58,11 +58,12 @@ class _AutomationHandler(BaseHTTPRequestHandler):
         self._json_response({"error": message}, status)
 
     def _read_json_body(self) -> dict[str, Any] | None:
-        length = int(self.headers.get("Content-Length", 0))
-        if length <= 0:
-            return None
         try:
-            return json.loads(self.rfile.read(length))
+            length = int(self.headers.get("Content-Length", 0))
+            if not 0 < length <= 4 * 1024 * 1024:
+                return None
+            data = json.loads(self.rfile.read(length))
+            return data if isinstance(data, dict) else None
         except (json.JSONDecodeError, ValueError):
             return None
 
@@ -88,6 +89,11 @@ class _AutomationHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._error(500, str(e))
 
+        elif route == "/studio/actions":
+            from studio_actions import ACTION_LABELS
+            from studio_workflows import WORKFLOWS
+            from dataclasses import asdict
+            self._json_response({"actions": ACTION_LABELS, "options": {k: [asdict(f) for f in d[2]] for k, d in WORKFLOWS.items()}})
         else:
             self._error(404, f"Unknown endpoint: {route}")
 
@@ -101,6 +107,20 @@ class _AutomationHandler(BaseHTTPRequestHandler):
             self._handle_batch()
         elif route == "/recipe/apply":
             self._handle_recipe_apply()
+        elif route == "/studio/run":
+            body = self._read_json_body()
+            if not isinstance(body, dict):
+                self._error(400, "Provide a JSON action, sources, output_dir, and options")
+                return
+            try:
+                from studio_actions import run_action
+                result = run_action(body["action"], [Path(p) for p in body.get("sources", [])],
+                                    Path(body["output_dir"]), options=body.get("options", {}), fmt=body.get("format"))
+                self._json_response({"ok": result.ok, "outputs": [str(p) for p in result.outputs], "details": result.details}, 200 if result.ok else 422)
+            except (ValueError, KeyError, TypeError) as exc:
+                self._error(400, str(exc))
+            except Exception as exc:
+                self._error(500, str(exc))
         else:
             self._error(404, f"Unknown endpoint: {route}")
 
@@ -255,7 +275,10 @@ class AutomationServer:
     def start(self) -> None:
         if self.is_running:
             return
+        if self.host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("The automation API only binds to loopback")
         self._server = HTTPServer((self.host, self.port), _AutomationHandler)
+        self.port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 

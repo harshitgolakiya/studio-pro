@@ -22,7 +22,12 @@ try {
         if (-not (Test-Path -LiteralPath $msi)) {
             Write-Host "Downloading the Office engine…"
             $ProgressPreference = "SilentlyContinue"
-            Invoke-WebRequest -Uri $url -OutFile $msi
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $msi -TimeoutSec 120
+            } catch {
+                Write-Host "Trying the LibreOffice mirror..."
+                Invoke-WebRequest -Uri 'https://mirrors.ibiblio.org/libreoffice/stable/26.2.6/win/x86_64/LibreOffice_26.2.6_Win_x86-64.msi' -OutFile $msi -TimeoutSec 600
+            }
         }
         if ((Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
             throw "LibreOffice download checksum mismatch; remove the downloaded MSI and retry."
@@ -39,6 +44,8 @@ try {
         & $Python setup_studio_models.py
         if ($LASTEXITCODE -ne 0) { throw "Speech model setup failed" }
     }
+    & $Python setup_print.py
+    if ($LASTEXITCODE -ne 0) { throw "Print engine setup failed" }
     Write-Host "Studio engines ready. Run: $Python main.py"
 } finally {
     Pop-Location

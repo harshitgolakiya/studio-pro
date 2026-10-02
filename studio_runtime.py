@@ -29,6 +29,7 @@ def find_libreoffice() -> str | None:
     for base in (resource_root(), Path(__file__).resolve().parent):
         candidates.extend(base / "vendor" / "libreoffice" / "program" / name
                           for name in ("soffice.com", "soffice.exe", "soffice"))
+        candidates.append(base / "vendor" / "libreoffice" / "LibreOffice.app" / "Contents" / "MacOS" / "soffice")
     for env in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
         if os.environ.get(env):
             candidates.extend(Path(os.environ[env]) / "LibreOffice" / "program" / name
