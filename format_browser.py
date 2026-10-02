@@ -9,6 +9,7 @@ owning a format list of its own.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 from typing import Any, Callable, Sequence
 
 import customtkinter as ctk
@@ -155,7 +156,10 @@ class FormatBrowserDialog(ctk.CTkToplevel):
         self.title("Choose Output Format")
         self.geometry("640x560")
         self.minsize(520, 420)
-        self.transient(master)
+        # Aqua Tk can keep dispatching map events forever when a transient's
+        # owner is withdrawn. A hidden owner needs an independent window.
+        if sys.platform != "darwin" or master.winfo_viewable():
+            self.transient(master)
 
         self._entries = build_catalog(options)
         self._on_select = on_select
