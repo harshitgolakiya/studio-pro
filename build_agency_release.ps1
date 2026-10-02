@@ -39,7 +39,9 @@ try {
     New-Item -ItemType Directory -Force -Path $taskInstallerDir | Out-Null
     $taskBundleBytes = (Get-ChildItem -LiteralPath (Join-Path $taskDist 'Shadow') -File -Recurse | Measure-Object -Property Length -Sum).Sum
     $taskSpanning = if ($taskBundleBytes -gt 3GB) { 'yes' } else { 'no' }
-    Invoke-AgencyProcess $taskIscc @(('/DMyAppSource="' + (Join-Path $taskDist 'Shadow') + '"'), '/DMyAppOutputName=Shadow-Agency-Studio-Setup', ("/DMyAppDiskSpanning=" + $taskSpanning), ('/O"' + $taskInstallerDir + '"'), 'installer.iss') 'installer'
+    $taskCompression = if ($taskSpanning -eq 'yes') { 'zip/1' } else { 'lzma2' }
+    $taskSolid = if ($taskSpanning -eq 'yes') { 'no' } else { 'yes' }
+    Invoke-AgencyProcess $taskIscc @(('/DMyAppSource="' + (Join-Path $taskDist 'Shadow') + '"'), '/DMyAppOutputName=Shadow-Agency-Studio-Setup', ("/DMyAppDiskSpanning=" + $taskSpanning), ("/DMyAppCompression=" + $taskCompression), ("/DMyAppSolidCompression=" + $taskSolid), ('/O"' + $taskInstallerDir + '"'), 'installer.iss') 'installer'
     $taskInstaller = Join-Path $taskInstallerDir 'Shadow-Agency-Studio-Setup.exe'
     $taskHash = Get-FileHash -LiteralPath $taskInstaller -Algorithm SHA256
     Set-Content -LiteralPath ($taskInstaller + '.sha256') -Value ($taskHash.Hash.ToLowerInvariant() + '  Shadow-Agency-Studio-Setup.exe') -Encoding ASCII
