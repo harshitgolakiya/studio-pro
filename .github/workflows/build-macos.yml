@@ -38,7 +38,7 @@ jobs:
       - name: Install FFmpeg via Homebrew
         run: |
           brew install ffmpeg ghostscript
-          brew install --cask libreoffice
+          bash setup_studio_macos.sh
 
       - name: Stage bundled FFmpeg binaries
         run: |
@@ -48,7 +48,6 @@ jobs:
           chmod +x vendor/ffmpeg-mac/ffmpeg vendor/ffmpeg-mac/ffprobe
           mkdir -p vendor/ghostscript/bin vendor/libreoffice
           cp "$(command -v gs)" vendor/ghostscript/bin/gs
-          cp -R /Applications/LibreOffice.app vendor/libreoffice/LibreOffice.app
 
       - name: Stage speech and translation assets
         run: |
