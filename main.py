@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# Frozen worker/resource-tracker subprocesses must be diverted before loading
+# GUI modules or engines. macOS uses spawn for multiprocessing by default.
+if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+
 from contextlib import nullcontext
 import logging
 from typing import Any
