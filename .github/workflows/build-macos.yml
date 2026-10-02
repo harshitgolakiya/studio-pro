@@ -72,16 +72,25 @@ jobs:
           codesign --force --deep -s - dist/Shadow.app
 
       - name: Packaged runtime regression
+        timeout-minutes: 8
         run: |
-          SHADOW_LIBREOFFICE="$PWD/dist/Shadow.app/Contents/Frameworks/vendor/libreoffice/LibreOffice.app/Contents/MacOS/soffice" \
-          dist/Shadow.app/Contents/MacOS/Shadow --studio-smoke-report "$PWD/studio-verification/packaged-smoke.json"
+          export SHADOW_LIBREOFFICE="$PWD/dist/Shadow.app/Contents/Frameworks/vendor/libreoffice/LibreOffice.app/Contents/MacOS/soffice"
+          export SHADOW_SMOKE_TRACE=1
+          dist/Shadow.app/Contents/MacOS/Shadow --studio-smoke-report "$PWD/studio-verification/packaged-smoke.json" &
+          task_smoke_pid=$!
+          while kill -0 "$task_smoke_pid" 2>/dev/null; do
+            if [[ -f studio-verification/packaged-smoke.json ]]; then cat studio-verification/packaged-smoke.json; fi
+            if [[ -f studio-verification/packaged-smoke.trace.txt ]]; then tail -40 studio-verification/packaged-smoke.trace.txt; fi
+            sleep 15
+          done
+          wait "$task_smoke_pid"
 
       - name: Upload verification reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Agency-Studio-verification-${{ matrix.arch_label }}
-          path: studio-verification/*.json
+          path: studio-verification/*
 
       - name: Import Apple Developer Certificate
         if: env.APPLE_CERTIFICATE_BASE64 != ''

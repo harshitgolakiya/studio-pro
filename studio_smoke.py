@@ -3,13 +3,25 @@ from pathlib import Path
 import json
 import tempfile
 import traceback
+import os
+import sys
+import faulthandler
 
 
 def run(destination: Path) -> int:
     checks = []
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    trace = None
+    if os.environ.get("SHADOW_SMOKE_TRACE") == "1":
+        trace = destination.with_suffix(".trace.txt").open("w", encoding="utf-8")
+        faulthandler.enable(file=trace)
+        faulthandler.dump_traceback_later(60, repeat=True, file=trace)
     with tempfile.TemporaryDirectory(prefix="shadow-studio-smoke-") as td:
         root = Path(td)
         def check(name, action):
+            destination.write_text(json.dumps({"passed": False, "status": "running", "current": name, "checks": checks}, indent=2), encoding="utf-8")
+            if sys.stdout is not None:
+                print(f"Checking: {name}", flush=True)
             try:
                 action()
                 checks.append({"name": name, "passed": True})
@@ -178,7 +190,9 @@ def run(destination: Path) -> int:
         check("Installed offline translation pairs", translation)
         check("EPS import, print preflight, and ICC CMYK delivery", print_delivery)
         check("Project presets, naming, and delivery package", projects)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    if trace:
+        faulthandler.cancel_dump_traceback_later()
+        trace.close()
     passed = all(check["passed"] for check in checks)
     destination.write_text(json.dumps({"passed": passed, "checks": checks}, indent=2), encoding="utf-8")
     return 0 if passed else 1
