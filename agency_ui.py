@@ -56,6 +56,7 @@ class ProjectsPanel:
         dialog._button(row,'Export campaign',self.run).pack(side='left',padx=(0,5))
         dialog._button(row,'Retry unfinished',self.retry).pack(side='left',padx=(0,5))
         dialog._button(row,'Resume export',self.resume).pack(side='left',padx=(0,5))
+        dialog._button(body,'Review this export',self.review_export).pack(anchor='w',padx=12,pady=5)
         self.report = ctk.CTkLabel(body, text="No delivery inputs selected", wraplength=650, justify="left", anchor="w")
         self.report.pack(fill="x", padx=12, pady=8)
         self.refresh()
@@ -139,6 +140,12 @@ class ProjectsPanel:
 
     def run(self):
         self._export()
+
+    def review_export(self):
+        if not self.last_receipt:
+            self.dialog.status.set('Export a campaign first, or open Reviews to select an earlier export receipt.')
+            return
+        self.dialog.show_page('Reviews');self.dialog.panels['Reviews'].import_export(self.last_receipt)
 
     def preview(self):
         from campaign_exports import plan_exports

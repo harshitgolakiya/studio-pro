@@ -41,6 +41,15 @@ into actual tools, not access restrictions. All teams retain the full catalog.
   Retry/resume skips verified successful outputs and rejects changed sources.
   Optional delivery ZIPs retain variant folders and include a public index plus
   checksums; internal source paths and project settings stay out of the ZIP.
+- Local reviews now keep snapshot versions, version-specific comments and
+  reviewer-attributed Draft/Needs changes/Approved decisions. The campaign
+  board counts current statuses; adding a revision resets its status to Draft.
+  Delivery packages include only approved current versions with verified hashes.
+  Changed or missing snapshots cannot retain a usable approval. Names are
+  entered locally; these are not authenticated identities or signed approvals.
+- The Office preview runtime now prepares its own profile in the background
+  and reuses it within the app process. Export conversions retain isolated
+  profiles. This reduces repeated initialization without changing sources.
 
 Bundled LibreOffice provides offline layout rendering. Exact Microsoft Office
 pixel parity, font substitutions, animation playback and advanced workbook
@@ -61,6 +70,9 @@ original-application viewing. Marketing must describe these limits accurately.
 3. **Local review and handoff.** Package files and a review index with stable
    version IDs/checksums. Export/import review comments locally; approvals must
    be attributable and show which version was reviewed. No public uploads.
+   Local version reviews and approved-only packaging are implemented; portable
+   comment exchange, authenticated reviewer identities and multi-machine
+   collaboration remain future work.
 4. **Developer and IT readiness.** Document the existing local API with working
    examples, keep it bound to loopback by default, and provide configuration
    backup, diagnostics, upgrade rollback and a clean-install test.

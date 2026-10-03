@@ -31,7 +31,7 @@ COLLECTION_GROUPS = {
                        ('Read & listen', ('preview','speak'))],
     'Data': [('Convert & clean', ('data-convert','data-clean','data-export-sheets')), ('Inspect & validate', ('data-schema','data-validate'))],
     'Archives & delivery': [('Pack & extract', ('archive-create','archive-extract','archive-inspect')), ('Deliver & verify', ('delivery-create','delivery-verify','folder-manifest','folder-verify'))],
-    'Workspace': [('Projects & presets', ('projects','recipes','project-delivery')), ('Automation & publishing', ('watch','download','integrations','publish-file'))],
+    'Workspace': [('Projects & presets', ('projects','reviews','recipes','project-delivery')), ('Automation & publishing', ('watch','download','integrations','publish-file'))],
     'Settings': [('Application', ('models','engines','license','about'))],
 }
 TOOL_LABELS = {'speech-batch':'Batch transcription', 'subtitle-edit':'Edit subtitles',
@@ -715,3 +715,10 @@ def install_workspace(app, parent, queue, header, output, footer, header_right):
     app.table.configure(height=3)
     for button in (app.preview_button, app.optimize_button, app.watch_folder_button, app.vip_downloader_button):button.pack_forget()
     app.add_button.configure(text='+ Add files')
+    import threading
+    preview_cancel=threading.Event()
+    app.bind('<Destroy>',lambda event:preview_cancel.set() if event.widget is app else None,add='+')
+    def warm_preview():
+        from document_cache import warm_preview_runtime
+        warm_preview_runtime(preview_cancel.is_set)
+    app.after(1500,warm_preview)

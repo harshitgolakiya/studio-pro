@@ -92,7 +92,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         for title, label in (("Documents", "Documents"), ("PDF Tools", "PDF pages"), ("Audio to Text", "Audio to text"),
                              ("Text to Audio", "Text to audio"), ("Audio Tools", "Audio tools"), ("OCR", "OCR / scans"),
                              ("Data", "Data / sheets"), ("Archives", "Archives / delivery"), ("Advanced workflows", "Advanced tools"),
-                             ("Projects", "Projects / brands"), ("Integrations", "Integrations / API"), ("Models", "Voices / models"), ("Engines", "Engine status")):
+                             ("Projects", "Projects / brands"), ("Reviews", "Reviews / approvals"), ("Integrations", "Integrations / API"), ("Models", "Voices / models"), ("Engines", "Engine status")):
             button = ctk.CTkButton(navigation, text=label, width=150, height=34, anchor="w", fg_color="transparent",
                                   text_color=("#777785", "#aaa7b8"), hover_color=("#EEEEF4", "#292932"), command=lambda name=title: self.show_page(name))
             button.pack(fill="x", pady=3)
@@ -155,12 +155,15 @@ class StudioToolsDialog(ctk.CTkToplevel):
                     self._bridge.post(lambda: self._set_script(text))
                 self._run(work)
         else:
-            page = {"models": "Models", "projects": "Projects", "integrations": "Integrations", "engines": "Engines"}[key]
+            page = {"models": "Models", "projects": "Projects", "reviews":"Reviews", "integrations": "Integrations", "engines": "Engines"}[key]
             self.show_page(page)
             if key == "projects" and paths:
                 panel = self.panels[page]
                 panel.sources = paths
                 panel.report.configure(text="\n".join(str(p) for p in paths))
+            if key=='reviews' and paths:
+                self.panels[page].sources=paths
+                self.panels[page].summary.configure(text=f'{len(paths)} files selected · create a campaign to start reviewing')
         self.lift()
 
     def _button(self, parent, text, command, width=145):

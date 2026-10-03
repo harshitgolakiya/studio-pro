@@ -18,12 +18,13 @@ class DocumentCacheTests(unittest.TestCase):
     def test_reopen_uses_cache_and_source_change_invalidates_it(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);source=root/'report.docx';source.write_bytes(b'first')
-            def render(source,destination,*args):destination.write_bytes(b'%PDF fixture')
+            def render(source,destination,*args,**kwargs):destination.write_bytes(b'%PDF fixture')
             with patch('document_cache.get_app_data_dir',return_value=root/'cache'),patch('document_cache.render_office',side_effect=render) as convert:
                 self.assertFalse(preview_pdf(source)[1]);self.assertTrue(preview_pdf(source)[1])
                 self.assertEqual(convert.call_count,1)
                 source.write_bytes(b'changed source')
                 self.assertFalse(preview_pdf(source)[1]);self.assertEqual(convert.call_count,2)
+                self.assertEqual(convert.call_args_list[0].kwargs['profile_directory'],convert.call_args_list[1].kwargs['profile_directory'])
 
 
 class DocumentViewerTests(unittest.TestCase):

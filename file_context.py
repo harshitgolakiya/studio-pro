@@ -94,6 +94,7 @@ def tool_catalog() -> list[Tool]:
                           overrides.get(key, tags_by_group[group]), key in {'speech-batch', 'project-delivery'}, key == 'pdf-identity'))
     for key, title, group, description in (
         ('projects', 'Projects & campaigns', 'Projects', 'Plan campaign export sets, save client presets, and prepare delivery packages.'),
+        ('reviews', 'Campaign reviews & approvals', 'Projects', 'Comment on file versions, track changes, and package approved deliverables locally.'),
         ('integrations', 'Publishing & automation', 'Integrations', 'Manage publishing adapters, plugins, hooks, and the local API.'),
         ('models', 'Voices & language models', 'Setup', 'Install or manage local speech, OCR, and translation models.'),
         ('engines', 'Engine readiness', 'Setup', 'Check the local engines and models.'),

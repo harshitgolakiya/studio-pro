@@ -52,7 +52,7 @@ PDF_IMPORT_FILTERS = {
 
 
 def render_office(source: Path, destination: Path, target: str,
-                  cancel_check: Callable[[], bool] | None = None) -> None:
+                  cancel_check: Callable[[], bool] | None = None, *, profile_directory: Path | None = None) -> None:
     import_filter = None
     if source.suffix.lower() == ".pdf":
         if target not in PDF_IMPORT_FILTERS:
@@ -70,7 +70,8 @@ def render_office(source: Path, destination: Path, target: str,
         root = Path(td)
         # A unique writable profile prevents parallel jobs or an open desktop
         # LibreOffice session from intercepting this conversion.
-        diagnostic = run_engine([engine, f"-env:UserInstallation={(root / 'profile').as_uri()}",
+        profile = Path(profile_directory).resolve() if profile_directory else root/'profile'
+        diagnostic = run_engine([engine, f"-env:UserInstallation={profile.as_uri()}",
                                  "--headless", "--nologo", "--nodefault", "--norestore",
                                  *([f"--infilter={import_filter}"] if import_filter else []),
                                  "--convert-to", filter_name, "--outdir", str(root), str(source.resolve())],

@@ -483,3 +483,48 @@ under `release/ui-fix/campaign-update-backup`. The installed executable passed
 the same campaign preview, saved-profile dispatch, image dimensions, ZIP checksums
 and resume checks. The installation receipt is `campaign-update-manifest.json`
 under `release/verification` in the build directory.
+
+### Local version reviews and approvals
+
+Explore tools > Campaign reviews & approvals opens a local campaign board.
+Choose files and create a named review campaign, or select an export receipt.
+Projects also offers Review this export after a campaign export. Review campaigns
+persist under app data with separate immutable-by-convention file snapshots.
+
+Comments and attributed status decisions belong to an exact version ID and
+SHA-256 hash. The current file can be Draft, Needs changes or Approved. Adding
+a revision starts it as Draft and preserves earlier comments/decisions. Version
+history stays viewable; only the current version can change status. The board
+counts current statuses, including Changed/Missing snapshot errors. Decisions
+require a reviewer name, entered locally; there is no identity authentication
+or cryptographic signature in this feature.
+
+Package approved versions includes only approved current snapshots whose
+contents still match their hashes. Old approvals cannot approve a new revision.
+The package contains an approved-files index with approver, timestamp, version
+ID and hash, plus existing delivery checksums. Unapproved versions, private
+comments, internal review records and original source paths are excluded.
+Local mutations use an OS file lock and atomic JSON updates so two local app
+instances cannot overwrite simultaneous status/comment changes.
+
+Document previews now reuse a preview-only temporary Office profile within each
+app process. Background startup preparation initializes it before opening a
+document where possible. Preview conversion is serialized; export jobs and
+other app instances keep separate profiles. Closing the main window cancels
+startup preparation. Large files and first-time PDF/spreadsheet library loading
+can still take time; exact Microsoft Office rendering remains outside the
+bundled third-party renderer's guarantees.
+
+Validation passed 49 focused review, preview, campaign, project and workspace
+tests (two optional engine skips), including simultaneous comment updates from
+two processes. Staged and installed native checks verified the campaign label,
+comment/status controls, approved-only ZIP contents and checksums, and rejection
+of changed snapshots. The Word fixture opened in 4.85 seconds in staging and
+4.59 seconds installed after background preparation; these sample measurements
+include library loading and do not guarantee performance on every file/machine.
+
+The installed update replaced two runtime files (37,032,029 bytes), with rollback
+copies under `release/ui-fix/reviews-update-backup`. Native reports, the board
+capture and the update manifest are under `release/verification/reviews-*` in
+the build directory. Shared runtime/model assets and published release archives
+remain unchanged. No paid service, network sharing or publishing is introduced.
