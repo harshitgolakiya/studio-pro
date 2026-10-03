@@ -477,3 +477,9 @@ private receipt exclusion and resume without repeating completed conversions.
 The ready desktop update changes two runtime files (37,009,253 bytes); its
 manifest and captures are under `release/verification/campaign-*` in the build
 directory. Shared engines/models and published release archives are unchanged.
+
+After Shadow was closed, both runtime files were installed with rollback copies
+under `release/ui-fix/campaign-update-backup`. The installed executable passed
+the same campaign preview, saved-profile dispatch, image dimensions, ZIP checksums
+and resume checks. The installation receipt is `campaign-update-manifest.json`
+under `release/verification` in the build directory.
