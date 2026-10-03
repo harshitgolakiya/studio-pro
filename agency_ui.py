@@ -21,6 +21,7 @@ class ProjectsPanel:
         self.sources = []
         self.profile = {}
         self.profiles = []
+        self.last_receipt = None
         body = ctk.CTkScrollableFrame(parent)
         body.pack(fill="both", expand=True)
         dialog._copy(body, "Save client projects and brand kits, apply social/web/print presets, and create named deliverables with a verified ZIP package. Naming supports {client}, {project}, {stem}, {preset}, {index}, {date}.")
@@ -29,12 +30,16 @@ class ProjectsPanel:
         self.menu.pack(anchor="w", padx=12, pady=5)
         self.variables = {key: tk.StringVar(master=parent, value=value) for key, value in
                           {"client": "", "project": "", "colors": "", "fonts": "", "logo": "",
-                           "naming": "{client}-{project}-{stem}-{index}", "preset": "Web images"}.items()}
+                           "naming": "{client}-{project}-{stem}-{index}", "preset": "Web images", "export_set":"Single preset"}.items()}
         for key, label in (("client", "Client"), ("project", "Project"), ("colors", "Brand colors (#RRGGBB, comma separated)"),
                            ("fonts", "Brand font names (comma separated)"), ("logo", "Brand logo path"), ("naming", "Output naming template")):
             entry(body, label, self.variables[key])
         dialog._button(body, "Choose brand logo", self.choose_logo).pack(anchor="w", padx=12, pady=5)
         ctk.CTkOptionMenu(body, variable=self.variables["preset"], values=list(PRESETS), width=260).pack(anchor="w", padx=12, pady=5)
+        from campaign_exports import EXPORT_SETS
+        ctk.CTkLabel(body,text='Campaign export set',anchor='w').pack(fill='x',padx=12)
+        ctk.CTkOptionMenu(body,variable=self.variables['export_set'],values=list(EXPORT_SETS),width=260).pack(anchor='w',padx=12,pady=5)
+        dialog._copy(body,'Social sets export square, portrait and story images together. Mixed client handoff chooses web images, MP4 video, PDF documents or WAV audio by file type. Sources stay unchanged.')
         self.watermark = tk.BooleanVar(master=parent)
         self.package = tk.BooleanVar(master=parent, value=True)
         ctk.CTkCheckBox(body, text="Apply brand logo watermark to images", variable=self.watermark).pack(anchor="w", padx=12, pady=5)
@@ -45,8 +50,12 @@ class ProjectsPanel:
             dialog._button(row, label, command).pack(side="left", padx=(0, 5))
         row = ctk.CTkFrame(body, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=5)
-        for label, command in (("Choose files", self.choose_files), ("Choose folder", self.choose_folder), ("Run delivery", self.run)):
+        for label, command in (("Choose files", self.choose_files), ("Choose folder", self.choose_folder), ("Preview exports", self.preview)):
             dialog._button(row, label, command).pack(side="left", padx=(0, 5))
+        row=ctk.CTkFrame(body,fg_color='transparent');row.pack(fill='x',padx=12,pady=5)
+        dialog._button(row,'Export campaign',self.run).pack(side='left',padx=(0,5))
+        dialog._button(row,'Retry unfinished',self.retry).pack(side='left',padx=(0,5))
+        dialog._button(row,'Resume export',self.resume).pack(side='left',padx=(0,5))
         self.report = ctk.CTkLabel(body, text="No delivery inputs selected", wraplength=650, justify="left", anchor="w")
         self.report.pack(fill="x", padx=12, pady=8)
         self.refresh()
@@ -60,7 +69,7 @@ class ProjectsPanel:
     def load_selected(self, label):
         self.profile = dict(self.labels[label][1]) if label in self.labels else {}
         for key, variable in self.variables.items():
-            value = self.profile.get(key, "Web images" if key == "preset" else "{client}-{project}-{stem}-{index}" if key == "naming" else "")
+            value = self.profile.get(key, "Single preset" if key=='export_set' else "Web images" if key == "preset" else "{client}-{project}-{stem}-{index}" if key == "naming" else "")
             variable.set(", ".join(value) if isinstance(value, list) else value)
         self.watermark.set(self.profile.get("watermark", False))
 
@@ -129,14 +138,58 @@ class ProjectsPanel:
             self.report.configure(text=name)
 
     def run(self):
-        from agency_projects import run_project
+        self._export()
+
+    def preview(self):
+        from campaign_exports import plan_exports
+        try:
+            jobs=plan_exports(self.current(),self.sources)
+            text=f'{len(jobs)} exports · a new campaign folder will be created\n'
+            text+='\n'.join(f"{Path(job['source']).name} → {job['relative_output']}" for job in jobs[:30])
+            if len(jobs)>30:text+=f'\n… and {len(jobs)-30} more'
+            self.report.configure(text=text)
+        except Exception as exc:self.dialog.status.set(str(exc))
+
+    def retry(self):
+        if not self.last_receipt:
+            self.dialog.status.set('Run a campaign first. Retry uses its receipt and skips completed exports.')
+            return
+        self._export(self.last_receipt)
+
+    def resume(self):
+        name=filedialog.askopenfilename(parent=self.dialog,title='Resume campaign export',filetypes=[('Campaign receipt','campaign-receipt.json')])
+        if name:self._export(Path(name))
+
+    def _export(self, receipt=None):
+        from campaign_exports import run_campaign,plan_exports
         profile, sources, output, package = self.current(), list(self.sources), Path(self.dialog.output.get()), self.package.get()
+        if not receipt and profile.get('export_set')=='Single preset' and profile.get('preset')=='Current queue settings':
+            def legacy_work(progress):
+                from agency_projects import run_project
+                result=run_project(profile,sources,output,package,self.dialog._cancel.is_set,progress)
+                self.dialog._bridge.post(lambda:self.report.configure(text=json.dumps(result.details,indent=2)))
+                if not result.ok:raise RuntimeError('Some inputs failed. See the report.')
+                return result.outputs[-1] if result.outputs else None
+            self.dialog._run(legacy_work)
+            return
+        if not receipt:
+            try:plan_exports(profile,sources)
+            except Exception as exc:self.dialog.status.set(str(exc));return
         def work(progress):
-            result = run_project(profile, sources, output, package, self.dialog._cancel.is_set, progress)
-            self.dialog._bridge.post(lambda: self.report.configure(text=json.dumps(result.details, indent=2)))
+            result = run_campaign(profile, sources, output, package, self.dialog._cancel.is_set, progress,retry_receipt=receipt)
+            def show():
+                self.last_receipt=Path(result.details['receipt'])
+                message=f"{result.details['exported']}/{result.details['total']} exported · {result.details['status']}\n{result.details['folder']}"
+                for failed in result.details['failures'][:8]:message+=f"\n{Path(failed['source']).name} · {failed['preset']}: {failed.get('error','Not started')}"
+                if result.details.get('package_error'):message+='\nZIP: '+result.details['package_error']
+                self.report.configure(text=message)
+            self.dialog._bridge.post(show)
             if not result.ok:
-                raise RuntimeError("Some inputs failed. See the report. A delivery ZIP was not created.")
-            return result.outputs[-1] if result.outputs else None
+                if result.details['status']=='cancelled':
+                    from studio_runtime import StudioCancelled
+                    raise StudioCancelled()
+                raise RuntimeError('Some exports are unfinished. Completed files were kept; use Retry unfinished. See the report.')
+            return Path(result.details['folder'])
         self.dialog._run(work)
 
 

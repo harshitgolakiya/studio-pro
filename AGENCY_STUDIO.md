@@ -446,3 +446,34 @@ Two desktop runtime files (36,998,363 bytes) were installed with backup under
 `release/ui-fix/agency-preview-update-backup`. Published release archives have
 not been rebuilt. The remaining product work and no-required-paid-services
 policy are recorded in [AGENCY_RELEASE_PLAN.md](AGENCY_RELEASE_PLAN.md).
+
+### Campaign export sets
+
+Projects & campaigns now includes Single preset, Social image set, Web + social
+images, and Mixed client handoff. The social sets use existing 1080-square,
+1080-by-1350 portrait and 1080-by-1920 story presets. Mixed handoff routes images
+to WebP, video to MP4, documents to PDF and audio to WAV. These are general
+delivery sizes, not promises about a platform's changing upload requirements.
+
+Preview exports lists the intended relative filenames before processing. Each
+campaign gets its own folder, preserving originals and earlier deliveries.
+Saved profiles retain the export set, and the shared project-delivery action
+uses it through both the UI and headless dispatcher. Existing single-preset
+profiles and Current queue settings remain usable.
+
+Per-output receipts persist successes, failures and hashes. Retry unfinished
+and Resume export skip verified completed files and reject changed sources or
+changed/missing completed outputs. Cancellation retains completed work. A ZIP
+is created only after every planned export succeeds; packaging can be retried
+independently. Variant folders, a public delivery index and checksums are
+included. Internal receipts, local source paths and private settings are excluded.
+Cropping currently centers each social image; manual crop positioning and
+custom editable sets remain future refinements.
+
+Validation passed 50 focused campaign, project, action-dispatch and workspace
+tests (two optional engine skips). Staged native checks exercised saved-profile
+dispatch, the preview UI, all three social sizes, ZIP checksum verification,
+private receipt exclusion and resume without repeating completed conversions.
+The ready desktop update changes two runtime files (37,009,253 bytes); its
+manifest and captures are under `release/verification/campaign-*` in the build
+directory. Shared engines/models and published release archives are unchanged.

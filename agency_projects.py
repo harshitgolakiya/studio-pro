@@ -45,6 +45,8 @@ def validate_profile(profile):
         raise ValueError("Project settings must be an object")
     if profile.get("preset", "Web images") not in PRESETS:
         raise ValueError("Choose a supported delivery preset")
+    if profile.get('export_set', 'Single preset') not in {'Single preset','Social image set','Web + social images','Mixed client handoff'}:
+        raise ValueError('Choose a supported export set')
     identifier = str(profile.get("id", ""))
     if identifier and not re.fullmatch(r"[a-f0-9]{32}", identifier):
         raise ValueError("Invalid project identifier")
@@ -86,7 +88,7 @@ def delivery_name(profile, source, index):
     return name
 
 
-def run_project(profile, sources, output_dir, package=True, cancel_check=None, progress=None):
+def run_project(profile, sources, output_dir, package=True, cancel_check=None, progress=None, include_brand=True):
     from headless_cli import _paths, convert_path
     from recipes import coerce_settings
     from archive_tools import build_delivery_package
@@ -129,7 +131,7 @@ def run_project(profile, sources, output_dir, package=True, cancel_check=None, p
                     shutil.copy2(result.output_path, stage.path)
             outputs.append(stage.output)
     converted = len(outputs)
-    if outputs and not failures and (profile.get("colors") or profile.get("fonts") or logo):
+    if include_brand and outputs and not failures and (profile.get("colors") or profile.get("fonts") or logo):
         brand = {"client": profile.get("client", ""), "project": profile["project"],
                  "colors": profile.get("colors", []), "fonts": profile.get("fonts", [])}
         if logo and Path(logo).is_file():

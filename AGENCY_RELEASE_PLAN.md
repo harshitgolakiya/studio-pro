@@ -35,6 +35,12 @@ into actual tools, not access restrictions. All teams retain the full catalog.
   the grid is not an Excel calculation engine. Pages supplies charts/print layout.
 - Presentations use slide navigation and retain the rendered slide layout.
 - Previewing and navigation never save changes to the source document.
+- Campaign export sets now produce square/portrait/story image variants or a
+  mixed image/video/document/audio handoff. Projects save the set; Preview exports
+  lists intended files. Each run has a separate folder and a durable receipt.
+  Retry/resume skips verified successful outputs and rejects changed sources.
+  Optional delivery ZIPs retain variant folders and include a public index plus
+  checksums; internal source paths and project settings stay out of the ZIP.
 
 Bundled LibreOffice provides offline layout rendering. Exact Microsoft Office
 pixel parity, font substitutions, animation playback and advanced workbook
@@ -49,7 +55,9 @@ original-application viewing. Marketing must describe these limits accurately.
    long workbooks, merged cells, charts, unusual fonts and large presentations.
 2. **Campaign export sets.** Save a client/campaign profile and produce named
    image/video/document deliverables with a single preset. Show exact outputs,
-   preserve source files by default, and retry only failed outputs.
+   preserve source files by default, and retry only failed outputs. The first
+   built-in sets and retry receipts are implemented; custom set editing,
+   visual crop positioning, video sizing controls and campaign milestones remain.
 3. **Local review and handoff.** Package files and a review index with stable
    version IDs/checksums. Export/import review comments locally; approvals must
    be attributable and show which version was reviewed. No public uploads.

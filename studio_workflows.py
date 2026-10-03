@@ -109,7 +109,11 @@ def run_workflow(action, sources, output_dir, options=None, cancel_check=None, p
         return StudioResult([stage.output], details if isinstance(details, dict) else {"items": details}, ok)
     if action == "project-delivery":
         from agency_projects import load_profile, run_project
-        return run_project(load_profile(opts["profile"]), sources, output_dir, opts["package"], cancel_check, progress)
+        profile = load_profile(opts['profile'])
+        if profile.get('export_set','Single preset') != 'Single preset':
+            from campaign_exports import run_campaign
+            return run_campaign(profile,sources,output_dir,opts['package'],cancel_check,progress)
+        return run_project(profile, sources, output_dir, opts["package"], cancel_check, progress)
     if action == "publish-file":
         from agency_integrations import publish_file
         details = publish_file(opts["adapter"], source, opts["config"])
