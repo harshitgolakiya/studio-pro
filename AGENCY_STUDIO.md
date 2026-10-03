@@ -310,3 +310,13 @@ creation/closure leaves the single wheel binding unchanged. Verification is in
 The ready desktop update is described by `ui-polish-update-manifest.json`;
 `polish_update.py` backs up and replaces only changed runtime files after the
 running application closes. Published archives and Mac DMGs remain unchanged.
+
+All eleven real packaged-engine checks passed after the update build, including
+PDF signing, encrypted delivery packages, Office export, transcription, OCR,
+translation and project delivery. The desktop installation was updated after
+the user closed Shadow: six files, 44,574,317 bytes, backed up under
+`release/ui-fix/ui-polish-update-backup`. Models and shared engine folders were
+retained. The desktop shortcut continues to target `D:\Shadow-Agency-Studio`.
+
+Native checks on the installed desktop copy also passed: grouped Video tools,
+minimum-window label fitting, updated dialog colors and stable wheel bindings.
