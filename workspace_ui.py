@@ -4,6 +4,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from file_context import tool_catalog, file_tags
+from tool_search import search_tools
 
 SECTIONS = {
     'Images': ('Resize, convert and watermark', {'convert-image', 'optimize', 'plugin-codec', 'plugin-process', 'print-cmyk'}),
@@ -419,16 +420,15 @@ class FileWorkspace:
             self.library_back.grid()
             self.title.configure(text='Search results' if query else self.section or 'Tools')
             self.summary.configure(text='Your shortcuts, across every collection. Click a star to remove a favorite.' if self.section == 'Favorites' else '')
-        matches = [t for t in self.candidates() if (t.key in self.favorites if self.section == 'Favorites' else query or self.section is None or in_section(t, self.section))
-                   and query in f'{t.title} {t.description} {t.group} {t.key}'.casefold()]
-        if self.mode != 'library':
+        matches = search_tools([t for t in self.candidates() if (t.key in self.favorites if self.section == 'Favorites' else query or self.section is None or in_section(t, self.section))], query)
+        if self.mode != 'library' and not query:
             priority = {'transcribe': 1, 'pdf-merge': 1, 'data-convert': 1, 'subtitle-edit': 1, 'archive-extract': 1,
                         'ocr': 2, 'audio': 2, 'trim': 2, 'speak': 3, 'preview': 4}
             matches.sort(key=lambda t: 0 if t.key.startswith('convert-') else priority.get(t.key, 5))
         all_matches = matches
         if self.mode != 'library' and not query and not self.expanded:
             matches = matches[:4]
-        if self.section == 'Favorites':matches.sort(key=lambda tool:self.favorites.index(tool.key))
+        if self.section == 'Favorites' and not query:matches.sort(key=lambda tool:self.favorites.index(tool.key))
         groups = grouped_tools(matches, self.section) if self.mode == 'library' and not query and self.section != 'Favorites' else [('', matches)]
         self.tool_groups = [name for name, _ in groups if name]
         self.visible_tools = [t.key for _, entries in groups for t in entries]
@@ -462,7 +462,7 @@ class FileWorkspace:
                     favorite.configure(text=star, text_color=('#6652C2', '#B9ADF3') if tool.key in self.favorites else ('#777785', '#9493A3'))
                 if description.winfo_manager():description.pack_forget()
                 if hint_label.winfo_manager():hint_label.pack_forget()
-                if self.mode == 'files' and not self.expanded and not query:
+                if query or (self.mode == 'files' and not self.expanded):
                     description.pack(fill='x', padx=16, pady=(6, 14))
                 inputs = tool.inputs(self.selected_inputs())
                 disabled = len(inputs) > 1 and not tool.multiple and self.mode != 'library'

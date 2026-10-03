@@ -360,3 +360,21 @@ The desktop update replaced two runtime files (36,971,940 bytes), with backup
 under `release/ui-fix/favorites-update-backup`; shared engines/models were
 retained. Receipts and captures are under `release/verification/favorites-*`.
 Published release archives remain unchanged.
+
+### Everyday tool search
+
+Workspace search now recognizes common task phrases such as transcript,
+voiceover, make video smaller, Word to PDF, unzip and remove noise. It ranks
+exact names and phrases first, matches words regardless of order and tolerates
+small typos or prefixes. Exact operation names preserve direction for Audio
+to text versus Text to audio. Results include descriptions so users can choose
+the intended tool. Favorites search and file-based actions retain their scope.
+Search runs locally, reuses cached catalog metadata and keeps existing typing
+debouncing; it introduces no service dependency.
+
+Validation passed 23 tests covering phrase ranking, exact conversion direction,
+word order, typos, scope, workspace flows and palette consistency. Staged native
+checks passed search descriptions, Favorites scope and the voiceover route;
+dark/light captures were reviewed at minimum window size. The ready desktop
+update and backup procedure are recorded in `release/verification/search-*`
+under the build directory. Installation awaits closure of the running app.
