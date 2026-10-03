@@ -226,3 +226,23 @@ processing actions. Reports and screenshots are in
 The desktop app at `D:\Shadow-Agency-Studio` was updated using 13 changed/new
 files (38,989,555 bytes), retaining the existing shared models and runtimes.
 The previously published Windows archive and Mac DMGs still predate this update.
+
+### Simplified tool navigation on 2026-10-03
+
+The tool browser starts with eight illustrated categories instead of listing
+all tools as large cards. Category contents and global search use compact action
+rows. Video includes transcription and subtitle tools; document tools include
+voiceovers and print delivery. Every catalog entry remains accessible.
+
+Selecting one file shows its name and four primary actions. More actions expands
+the rest; Change files replaces the selection and preserves it if the picker is
+cancelled. The queue appears for multiple files or conversion settings. Repeated
+category labels, descriptions, and input instructions were removed from action
+rows. Fourteen focused workspace and media-visibility tests passed, including
+complete category coverage and the collapsed/expanded file actions.
+
+Native UI verification passed for all 65 catalog entries and all 40 Studio
+action routes. The desktop installation at `D:\Shadow-Agency-Studio` received
+two changed files (36,947,564 bytes); shared models and runtimes were retained.
+Screenshots and the update manifest are in the release verification folder.
+Published Windows archives and Mac DMGs still predate these UI changes.

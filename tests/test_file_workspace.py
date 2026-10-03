@@ -101,3 +101,34 @@ class WorkspaceFlowTests(unittest.TestCase):
         workspace.open(next(t for t in workspace.tools if t.key == 'speak'))
         self.assertEqual(self.app._studio_dialog.tabs.get(), 'Text to Audio')
         self.app._studio_dialog.destroy()
+
+    def test_categories_and_search_keep_all_tools_accessible(self):
+        from workspace_ui import SECTIONS
+        workspace = self.app._file_workspace
+        workspace.show_library()
+        self.assertEqual(workspace.visible_tools, [])
+        discovered = set()
+        for section in SECTIONS:
+            workspace._show_section(section)
+            discovered.update(workspace.visible_tools)
+        self.assertEqual(discovered, {t.key for t in workspace.tools})
+        workspace._show_section('Video')
+        self.assertIn('subtitle-edit', workspace.visible_tools)
+        self.assertIn('transcribe', workspace.visible_tools)
+        workspace._categories()
+        self.assertEqual(workspace.visible_tools, [])
+
+    def test_one_file_shows_four_actions_and_more_is_available(self):
+        self.add(['recording.wav'])
+        workspace = self.app._file_workspace
+        self.assertEqual(workspace.queue.winfo_manager(), '')
+        self.assertEqual(len(workspace.visible_tools), 4)
+        self.assertEqual(workspace.filters.winfo_manager(), '')
+        workspace._toggle_more()
+        self.assertIn('audio-isolate', workspace.visible_tools)
+        workspace._toggle_more()
+        self.assertEqual(len(workspace.visible_tools), 4)
+        before = list(self.app.selected_files)
+        with patch('tkinter.filedialog.askopenfilenames', return_value=()):
+            workspace._change_files()
+        self.assertEqual(self.app.selected_files, before)
