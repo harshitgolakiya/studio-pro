@@ -2,7 +2,9 @@
 
 Agency Studio combines the original image/video converter with Office, PDF,
 OCR, data, speech, print, project delivery, and integration workflows.
-Open **Studio Tools > More Tools** for the expanded controls.
+Open **Explore tools** for the full catalog and role-based shortcuts.
+See [AGENCY_RELEASE_PLAN.md](AGENCY_RELEASE_PLAN.md) for the agency workflow
+audit, remaining release gates, and the free/offline service policy.
 
 ## Implementation status
 
@@ -39,10 +41,11 @@ and JSON mappings where needed. Results show output paths and detailed reports.
 
 ## Runtime assets
 
-The complete Windows build stages LibreOffice, FFmpeg, Ghostscript, and **53
-catalog model entries**: English and multilingual base transcription, 13 voices,
+The current Windows desktop stages LibreOffice, FFmpeg, Ghostscript, and **40
+installed catalog entries**: English and multilingual base transcription, one
+natural voice pack with four US/UK female/male choices,
 additional OCR scripts, 25 translation pairs, speaker models, isolation, and CMYK
-profile assets. Larger Whisper small/medium/large-v3 models remain optional in
+profile assets. The catalog contains 44 entries; larger transcription models remain optional in
 Models. Installed assets run locally; selecting Install explicitly downloads a
 model. Model cards, provenance, and upstream notices are retained.
 
@@ -411,3 +414,35 @@ comparison WAVs and the UI capture are in `release/verification/natural-*` and
 
 Model source: https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2
 Voice mapping: https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html
+
+### Agency roles and read-only document refinement
+
+The current voice picker contains only Heart (US female), Michael (US male),
+Emma (UK female), and Daniel (UK male). The thirteen legacy Piper models and
+six unused Kokoro descriptors were moved outside the active asset tree into
+`release/verification/agency-retired-voices` for rollback. The shared Kokoro
+weights remain one pack. Custom voice files can still be selected explicitly.
+
+Explore tools now offers role shortcuts for design/production, video/social,
+content/accounts, operations, and developers/IT. Every role retains access to
+the full catalog. The role choice persists through the existing settings store.
+
+Office layout preview no longer waits for text extraction; Text loads on request.
+A local cache keeps up to 24 rendered files within 512 MiB and invalidates on
+source path, size or modification time changes. XLSX/XLSM opens in a styled,
+read-only sheet grid with selection, sheet switching and virtualized scrolling.
+Pages supplies workbook charts/print layout. Presentations label navigation as
+slides. Sources are not saved or changed. Saved formula values, third-party
+layout rendering, substituted fonts and absent slide animations are documented
+limits; this is not a replacement for the Microsoft Office rendering engine.
+
+Focused workspace, speech, palette and preview checks passed. Staged and
+installed native checks opened real DOCX/PPTX/XLSX fixtures, switched slides and
+sheets, verified four voice choices and preserved source hashes. The staged Word
+fixture took 15.77 seconds on first rendering and 0.22 seconds on cached reopen;
+first-time rendering/import speed remains a release refinement. Screenshots and
+receipts are under `release/verification/agency-*` in the build directory.
+Two desktop runtime files (36,998,363 bytes) were installed with backup under
+`release/ui-fix/agency-preview-update-backup`. Published release archives have
+not been rebuilt. The remaining product work and no-required-paid-services
+policy are recorded in [AGENCY_RELEASE_PLAN.md](AGENCY_RELEASE_PLAN.md).

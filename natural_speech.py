@@ -6,11 +6,8 @@ import textwrap
 import wave
 
 VOICES = {
-    'af_heart': (3, 'Heart · American female'), 'af_bella': (2, 'Bella · American female'),
-    'af_nicole': (6, 'Nicole · American female'), 'af_sarah': (9, 'Sarah · American female'),
-    'am_michael': (16, 'Michael · American male'), 'am_eric': (13, 'Eric · American male'),
-    'bf_emma': (21, 'Emma · British female'), 'bf_isabella': (22, 'Isabella · British female'),
-    'bm_daniel': (24, 'Daniel · British male'), 'bm_george': (26, 'George · British male'),
+    'af_heart': (3, 'Heart · US female'), 'am_michael': (16, 'Michael · US male'),
+    'bf_emma': (21, 'Emma · UK female'), 'bm_daniel': (24, 'Daniel · UK male'),
 }
 
 

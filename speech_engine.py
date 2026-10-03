@@ -108,9 +108,11 @@ def default_whisper_model() -> Path:
 
 
 def available_voices() -> list[Path]:
-    from natural_speech import voice_ready
+    from natural_speech import voice_ready, VOICES
     root = model_directory()
-    return [path for path in sorted((root / 'kokoro-v1' / 'voices').glob('*.voice.json')) if voice_ready(path)] + sorted((root / "voices").glob("*.onnx"))
+    natural = [root / 'kokoro-v1' / 'voices' / f'{name}.voice.json' for name in VOICES]
+    natural = [path for path in natural if voice_ready(path)]
+    return natural or sorted((root / 'voices').glob('en_*.onnx'))
 
 
 def default_voice() -> Path | None:

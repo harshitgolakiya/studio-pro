@@ -345,7 +345,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         from natural_speech import voice_ready, voice_label
         labels = {entry.marker.removesuffix(".onnx.json"): entry.label for entry in catalog() if entry.kind == "voice"}
         paths = [voice for voice in available_voices() if voice_ready(voice)]
-        self._voices = {voice_label(voice) or labels.get(voice.stem, voice.stem): voice for voice in paths}
+        self._voices = {voice_label(voice) or labels.get(voice.stem, voice.stem.replace('_', ' ').replace('-', ' ').title()): voice for voice in paths}
         if self._voice and self._voice.is_file() and Path(str(self._voice) + ".json").is_file() and self._voice not in self._voices.values():
             self._voices[f"Custom: {self._voice.stem}"] = self._voice
         selected = self._voice or default_voice()

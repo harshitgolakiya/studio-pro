@@ -28,7 +28,7 @@ class NaturalSpeechTests(unittest.TestCase):
             with patch('model_catalog.model_directory',return_value=root/'models'), patch('model_catalog._download',side_effect=lambda url,path,**kw:shutil.copy2(archive,path)):
                 target=model_catalog.install(entry)
                 self.assertTrue(model_catalog.is_installed(entry))
-                self.assertEqual(len(list((target/'voices').glob('*.voice.json'))),10)
+                self.assertEqual(len(list((target/'voices').glob('*.voice.json'))),4)
                 marker=target/'voices'/'af_heart.voice.json'
                 self.assertTrue(voice_ready(marker))
                 marker.write_text('{broken')

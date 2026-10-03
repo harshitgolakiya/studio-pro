@@ -5,6 +5,7 @@ import customtkinter as ctk
 
 from file_context import tool_catalog, file_tags
 from tool_search import search_tools
+from agency_roles import ROLE_TOOLS
 
 SECTIONS = {
     'Images': ('Resize, convert and watermark', {'convert-image', 'optimize', 'plugin-codec', 'plugin-process', 'print-cmyk'}),
@@ -114,6 +115,8 @@ class FileWorkspace:
         self.favorites = list(dict.fromkeys(key for key in stored_favorites
                                            if isinstance(key, str) and key in valid_keys)) if isinstance(stored_favorites, list) else []
         self._favorite_buttons = {}
+        role = app.settings.get('workspace_role', 'All teams')
+        self.role = tk.StringVar(master=app, value=role if isinstance(role, str) and role in ROLE_TOOLS else 'All teams')
         self.mode = 'files'
         self.converting = False
         self._signature = None
@@ -208,6 +211,7 @@ class FileWorkspace:
                                          fg_color='transparent', border_width=1, border_color=('#DDDDE7', '#33333E'),
                                          text_color=('#282833', '#aaa7b8'), command=self._categories)
         self.library_back.grid(row=0, column=2)
+        self.role_menu = ctk.CTkOptionMenu(filters, variable=self.role, values=list(ROLE_TOOLS), width=190, command=self._set_role)
         self.cards = ctk.CTkFrame(self.browser, fg_color='transparent')
         self.cards.grid(row=4, column=0, sticky='ew')
         self.cards.grid_columnconfigure((0, 1, 2), weight=1, uniform='tools')
@@ -365,7 +369,7 @@ class FileWorkspace:
 
     def render_tools(self):
         self._sync_navigation()
-        signature = (self.mode, self.section, self.query.get().strip().casefold(), self.expanded, tuple(self.selected_inputs()), tuple(self.favorites))
+        signature = (self.mode, self.section, self.query.get().strip().casefold(), self.expanded, tuple(self.selected_inputs()), tuple(self.favorites), self.role.get())
         if signature == self._render_signature:return
         self._render_signature = signature
         self._layout_items = []
@@ -391,6 +395,7 @@ class FileWorkspace:
         else:
             self.filters.grid_remove()
         self.library_back.grid_remove()
+        self.role_menu.grid_remove()
         if self.mode == 'library' and not query and self.section is None:
             self.cards.grid_columnconfigure((0, 1, 2), weight=1, uniform='tools')
             self.title.configure(text='Tools')
@@ -398,8 +403,13 @@ class FileWorkspace:
             self.visible_tools = []
             self.title.configure(text='Find your next shortcut.')
             self.summary.configure(text='Useful tools for everyday creative work. Browse a collection in the sidebar.')
-            featured = tuple(dict.fromkeys(self.favorites + ['speak', 'transcribe', 'pdf-merge', 'convert-image', 'convert-video', 'archive-extract']))[:6]
-            if self.favorites:self.summary.configure(text='Your favorites first. Browse a collection in the sidebar for more tools.')
+            self.role_menu.grid(row=0, column=2)
+            featured = tuple(dict.fromkeys(self.favorites + list(ROLE_TOOLS[self.role.get()])))[:6]
+            if self.role.get() != 'All teams':
+                featured = ROLE_TOOLS[self.role.get()]
+                self.title.configure(text=self.role.get())
+                self.summary.configure(text='Shortcuts for your team. Every tool stays available in the collections.')
+            if self.favorites and self.role.get() == 'All teams':self.summary.configure(text='Your favorites first. Browse a collection in the sidebar for more tools.')
             for index, key in enumerate(featured):
                 tool = next(t for t in self.tools if t.key == key)
                 if key not in self._featured:
@@ -500,6 +510,14 @@ class FileWorkspace:
         self.app.settings['favorite_tools'] = list(self.favorites)
         saved = update_setting('favorite_tools', list(self.favorites))
         self.app.status_text.set('Favorites updated.' if saved else 'Favorites updated for this session. Settings could not be saved.')
+        self.render_tools()
+
+    def _set_role(self, role):
+        from settings import update_setting
+        if role not in ROLE_TOOLS:return
+        self.role.set(role)
+        self.app.settings['workspace_role'] = role
+        update_setting('workspace_role', role)
         self.render_tools()
 
     def _schedule_search(self, _event=None):

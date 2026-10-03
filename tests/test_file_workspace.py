@@ -284,3 +284,16 @@ class WorkspaceFlowTests(unittest.TestCase):
         self.assertEqual(workspace.visible_tools, ['speak'])
         workspace.show_library('Audio')
         self.assertEqual(workspace._favorite_buttons['speak'].cget('text'), '\u2605')
+
+    def test_role_shortcuts_reuse_real_tools_and_keep_full_catalog(self):
+        from agency_roles import ROLE_TOOLS
+        from settings import load_settings
+        workspace=self.app._file_workspace
+        workspace.show_library()
+        for role,keys in ROLE_TOOLS.items():
+            workspace._set_role(role)
+            self.assertTrue(set(keys)<={tool.key for tool in workspace.tools})
+            self.assertEqual([widget for kind,widget in workspace._layout_items if kind=='featured'],[workspace._featured[key] for key in keys])
+        self.assertEqual(load_settings()['workspace_role'],'Developers & IT')
+        workspace.query.set('voiceover');workspace.render_tools()
+        self.assertEqual(workspace.visible_tools[0],'speak')
