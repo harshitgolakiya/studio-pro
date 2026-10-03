@@ -20,6 +20,15 @@ from ui_dispatch import TkEventBridge, cancel_widget_callbacks
 from utils import open_file_or_folder
 
 
+class NavigationTabs(ctk.CTkTabview):
+    def _grid_forget_all_tabs(self, exclude_name=None):
+        # CTk queues tab cleanup for 100ms later. Rapid navigation must keep
+        # the current page, rather than hiding it for an earlier selection.
+        if exclude_name is not None:
+            exclude_name = self.get()
+        super()._grid_forget_all_tabs(exclude_name)
+
+
 class StudioToolsDialog(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
@@ -37,6 +46,9 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self._busy = False
         self._actions = []
         self._last_output = None
+        self._preview_output = None
+        from audio_preview import WavPlayer
+        self._player = WavPlayer()
         self._pdfs: list[Path] = []
         self._voice = None
         self._model = None
@@ -55,21 +67,35 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.audio_start = tk.StringVar(value="0")
         self.audio_duration = tk.StringVar()
         self.status = tk.StringVar(value="Ready. All file processing stays on this computer.")
-        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(self, text="Studio Tools", font=ctk.CTkFont(size=25, weight="bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 4))
-        tabs = ctk.CTkTabview(self)
-        tabs.grid(row=1, column=0, sticky="nsew", padx=20, pady=8)
+        ctk.CTkLabel(self, text="Studio workspace", font=ctk.CTkFont(size=25, weight="bold"), anchor="w").grid(row=0, column=0, columnspan=2, sticky="ew", padx=24, pady=(20, 4))
+        tabs = NavigationTabs(self)
+        self.tabs = tabs
+        tabs.grid(row=1, column=1, sticky="nsew", padx=(4, 20), pady=8)
         self._documents(tabs.add("Documents"))
         self._pdf_tools(tabs.add("PDF Tools"))
         self._transcription(tabs.add("Audio to Text"))
         self._synthesis(tabs.add("Text to Audio"))
         self._audio_tools(tabs.add("Audio Tools"))
-        from studio_expansion_ui import build_expansion_tabs
-        build_expansion_tabs(self, tabs.add("More Tools"))
+        from studio_expansion_ui import build_expansion_pages
+        self.panels = build_expansion_pages(self, tabs)
         self._engines(tabs.add("Engines"))
+        tabs._segmented_button.grid_forget()
+        navigation = ctk.CTkScrollableFrame(self, width=155, fg_color="transparent")
+        navigation.grid(row=1, column=0, sticky="ns", padx=(16, 0), pady=8)
+        self._navigation = {}
+        for title, label in (("Documents", "Documents"), ("PDF Tools", "PDF pages"), ("Audio to Text", "Audio to text"),
+                             ("Text to Audio", "Text to audio"), ("Audio Tools", "Audio tools"), ("OCR", "OCR / scans"),
+                             ("Data", "Data / sheets"), ("Archives", "Archives / delivery"), ("Advanced workflows", "Advanced tools"),
+                             ("Projects", "Projects / brands"), ("Integrations", "Integrations / API"), ("Models", "Voices / models"), ("Engines", "Engine status")):
+            button = ctk.CTkButton(navigation, text=label, width=150, height=34, anchor="w", fg_color="transparent",
+                                  text_color=("#243746", "#deebf5"), command=lambda name=title: self.show_page(name))
+            button.pack(fill="x", pady=3)
+            self._navigation[title] = button
+        self.show_page("Documents")
         footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.grid(row=2, column=0, sticky="ew", padx=24, pady=10)
+        footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=24, pady=10)
         footer.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(footer, text="Output folder").grid(row=0, column=0, padx=(0, 10))
         ctk.CTkEntry(footer, textvariable=self.output).grid(row=0, column=1, sticky="ew")
@@ -80,6 +106,58 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.cancel = ctk.CTkButton(footer, text="Cancel", width=90, state="disabled", command=self._cancel.set)
         self.cancel.grid(row=1, column=2)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def show_page(self, name):
+        self.tabs.set(name)
+        for title, button in getattr(self, "_navigation", {}).items():
+            button.configure(fg_color="#0e756b" if title == name else "transparent")
+
+    def open_tool(self, key, paths=()):
+        if self._busy:
+            self.status.set("Wait for the current operation to finish.")
+            return
+        from studio_workflows import WORKFLOWS
+        paths = list(paths)
+        if key in WORKFLOWS:
+            self.panels["Advanced workflows"].select_tool(key, paths)
+            self.show_page("Advanced workflows")
+        elif key in {"ocr", "data-convert", "data-clean", "data-export-sheets", "archive-create", "archive-extract", "delivery-create", "delivery-verify"}:
+            from studio_actions import ACTION_LABELS
+            page = "OCR" if key == "ocr" else "Data" if key.startswith("data-") else "Archives"
+            panel = self.panels[page]
+            panel.select(paths)
+            panel.action.set(ACTION_LABELS[key])
+            self.show_page(page)
+        elif key.startswith("pdf-"):
+            self._pdfs = paths
+            self.pdf_list.configure(state="normal")
+            self.pdf_list.delete("1.0", "end")
+            self.pdf_list.insert("1.0", "\n".join(f"{i}. {p.name}" for i, p in enumerate(paths, 1)))
+            self.pdf_list.configure(state="disabled")
+            self.pdf_operation.set({"pdf-merge": "Merge PDFs", "pdf-extract": "Extract pages", "pdf-rotate": "Rotate pages", "pdf-compress": "Compress PDF", "pdf-images": "Pages to PNG ZIP"}[key])
+            self.show_page("PDF Tools")
+        elif key == "transcribe":
+            self.source.set(str(paths[0]) if paths else "")
+            self.show_page("Audio to Text")
+        elif key == "audio":
+            self.audio_source.set(str(paths[0]) if paths else "")
+            self.show_page("Audio Tools")
+        elif key == "speak":
+            self.show_page("Text to Audio")
+            if paths:
+                source = paths[0]
+                def work(progress):
+                    text = to_markdown(source, self._cancel.is_set)
+                    self._bridge.post(lambda: self._set_script(text))
+                self._run(work)
+        else:
+            page = {"models": "Models", "projects": "Projects", "integrations": "Integrations", "engines": "Engines"}[key]
+            self.show_page(page)
+            if key == "projects" and paths:
+                panel = self.panels[page]
+                panel.sources = paths
+                panel.report.configure(text="\n".join(str(p) for p in paths))
+        self.lift()
 
     def _button(self, parent, text, command, width=145):
         button = ctk.CTkButton(parent, text=text, command=command, width=width)
@@ -193,18 +271,17 @@ class StudioToolsDialog(ctk.CTkToplevel):
         # screens. Packing the expanding editor first could clip the action.
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(tab, text="Create voiceovers from scripts or extracted document text. Choose a voice for your language. "
-                     "Export a WAV master, then use the audio converter for MP3, AAC, or Opus delivery.",
-                     wraplength=680, justify="left", anchor="w").grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 8))
-        self.script = ctk.CTkTextbox(tab, height=140, wrap="word")
-        self.script.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
+        ctk.CTkLabel(tab, text="Create a voiceover from a script. Choose a voice, generate, then play.",
+                     wraplength=500, justify="left", anchor="w").grid(row=0, column=0, sticky="ew", padx=14, pady=(8, 4))
+        self.script = ctk.CTkTextbox(tab, height=80, wrap="word")
+        self.script.grid(row=1, column=0, sticky="nsew", padx=14, pady=4)
         row = ctk.CTkFrame(tab, fg_color="transparent")
-        row.grid(row=2, column=0, sticky="ew", padx=14, pady=6)
+        row.grid(row=2, column=0, sticky="ew", padx=14, pady=3)
         self._button(row, "Load document text", self._load_script).pack(side="left", padx=(0, 8))
         ctk.CTkOptionMenu(row, variable=self.speed, values=["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"], width=85).pack(side="right")
         ctk.CTkLabel(row, text="Speed").pack(side="right", padx=8)
         voices = ctk.CTkFrame(tab, fg_color="transparent")
-        voices.grid(row=3, column=0, sticky="ew", padx=14, pady=6)
+        voices.grid(row=3, column=0, sticky="ew", padx=14, pady=3)
         voices.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(voices, text="Voice").grid(row=0, column=0, padx=(0, 8))
         self.voice_choice = tk.StringVar(master=self)
@@ -214,9 +291,46 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self._button(voices, "Browse custom voice", self._choose_voice, width=175).grid(row=0, column=3)
         self.voice_label = ctk.CTkLabel(voices, text="", anchor="w")
         self.voice_label.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        # Keep the action parented to the tab for scaling/visibility checks.
         self.generate_speech = self._button(tab, "Generate speech", self._speak)
-        self.generate_speech.grid(row=4, column=0, sticky="w", padx=14, pady=(4, 10))
+        self.generate_speech.grid(row=4, column=0, sticky="w", padx=14, pady=(4, 8))
+        playback = ctk.CTkFrame(tab, fg_color="transparent")
+        playback.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 8))
+        playback.grid_columnconfigure(0, weight=1)
+        self.audio_device = tk.StringVar(master=self, value="System default")
+        try:
+            from audio_preview import output_devices
+            self._devices = output_devices()
+        except Exception:
+            self._devices = {"System default": None}
+        self.device_menu = ctk.CTkOptionMenu(playback, variable=self.audio_device, values=list(self._devices))
+        self.device_menu.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.play_audio = ctk.CTkButton(playback, text="Play", width=65, state="disabled", command=self._play_audio)
+        self.play_audio.grid(row=0, column=1, padx=(0, 6))
+        self.stop_audio = ctk.CTkButton(playback, text="Stop", width=65, state="disabled", command=self._stop_audio)
+        self.stop_audio.grid(row=0, column=2)
+        self.audio_preview_status = self.status
         self._refresh_voices()
+
+    def _play_audio(self):
+        if not self._preview_output:
+            return
+        try:
+            self.play_audio.configure(state="disabled")
+            self.stop_audio.configure(state="normal")
+            self.audio_preview_status.set(f"Playing through {self.audio_device.get()}")
+            self._player.play(self._preview_output, device=self._devices[self.audio_device.get()],
+                              finished=lambda error: self._bridge.post(lambda: self._playback_finished(error)))
+        except Exception as exc:
+            self._playback_finished(str(exc))
+
+    def _stop_audio(self):
+        self._player.stop()
+
+    def _playback_finished(self, error):
+        self.stop_audio.configure(state="disabled")
+        self.play_audio.configure(state="normal" if self._preview_output else "disabled")
+        self.audio_preview_status.set(f"Playback failed: {error}. Try another output device." if error else "Preview finished · choose another output device if you could not hear it")
 
     def _refresh_voices(self):
         from model_catalog import catalog
@@ -230,7 +344,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.voice_menu.configure(values=list(self._voices) or ["No installed voices"])
         self.voice_menu.set(choice)
         self._select_voice(choice)
-        self.voice_label.configure(text=f"{len(paths)} installed voices available" if paths else "Install a voice in More Tools > Models, or browse for a custom voice.")
+        self.voice_label.configure(text=f"{len(paths)} installed voices available" if paths else "Install a voice in Voices / models, or browse for a custom voice.")
 
     def _select_voice(self, choice):
         self._voice = self._voices.get(choice)
@@ -258,6 +372,10 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.script.insert("1.0", text)
 
     def _speak(self):
+        if not self.script.get("1.0", "end-1c").strip():
+            self.status.set("Write or load a script first.")
+            return
+        self._player.stop()
         text, voice, speed = self.script.get("1.0", "end-1c"), self._voice, float(self.speed.get())
         output = filedialog.asksaveasfilename(parent=self, title="Save voiceover", initialdir=self.output.get(), initialfile="voiceover.wav", defaultextension=".wav", filetypes=[("WAV audio", "*.wav")])
         if output:
@@ -387,8 +505,17 @@ class StudioToolsDialog(ctk.CTkToplevel):
             if output:
                 self._last_output = output
                 self.open_output.configure(state="normal")
+                if output.suffix.lower() == ".wav":
+                    from audio_preview import wav_info
+                    self._preview_output = output
+                    self.play_audio.configure(state="normal")
+                    info = wav_info(output)
+                    message = f"{output.name} · {info['duration']:.1f}s audio ready · choose output and press Play"
+                    if info['peak'] < 0.001: message = "This audio is silent or very quiet. Try another voice."
+                    self.audio_preview_status.set(message)
 
     def destroy(self):
+        self._player.stop()
         self._cancel.set()
         server = getattr(self, "_automation_server", None)
         if server:

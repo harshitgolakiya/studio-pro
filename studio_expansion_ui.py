@@ -41,6 +41,24 @@ def build_expansion_tabs(dialog, parent):
     show("OCR")
 
 
+def build_expansion_pages(dialog, tabs):
+    """Expose each section directly instead of hiding them in More Tools."""
+    from studio_workflow_ui import WorkflowPanel, ModelsPanel
+    from agency_ui import ProjectsPanel, IntegrationsPanel
+    panels = {}
+    for title, actions, formats in (
+        ("OCR", ["ocr"], ["TXT", "MD", "JSON", "PDF"]),
+        ("Data", ["data-convert", "data-clean", "data-export-sheets"], ["CSV", "TSV", "JSON", "JSONL", "XML", "YAML", "XLSX"]),
+        ("Archives", ["archive-create", "archive-extract", "delivery-create", "delivery-verify"], ["ZIP", "7Z", "TAR", "TAR.GZ", "TAR.XZ"]),
+    ):
+        panel_title = "Archives & Delivery" if title == "Archives" else title
+        panels[title] = ExpansionPanel(dialog, tabs.add(title), panel_title, actions, formats)
+    for title, cls in (("Advanced workflows", WorkflowPanel), ("Models", ModelsPanel),
+                       ("Projects", ProjectsPanel), ("Integrations", IntegrationsPanel)):
+        panels[title] = cls(dialog, tabs.add(title))
+    return panels
+
+
 class ExpansionPanel:
     def __init__(self, dialog, tab, title, actions, formats):
         self.dialog = dialog

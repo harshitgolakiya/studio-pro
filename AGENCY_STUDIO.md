@@ -194,3 +194,35 @@ and user Start menu shortcuts named Shadow Agency Studio point to this version.
 Its model, LibreOffice, and Ghostscript folders link to the existing assets in
 `D:\Shadow-Agency-Studio-Build\vendor`, which must be retained. The previously
 published Windows archive and Mac DMGs predate this desktop UI update.
+
+### File-first workspace and audio preview on 2026-10-03
+
+Shadow starts with file/folder selection and drag-and-drop. After import it shows
+actions for the selected file types; selecting queue rows narrows the context.
+Mixed inputs show how many files apply to each action. Conversion is separated
+into images, video, audio, and documents and processes only that chosen subset.
+Document batches expose their common output formats. Conversion settings appear
+after choosing a conversion action, with image-only tabs hidden for other types.
+
+Menu > All tools opens a searchable catalog with 65 entries, including all 40
+existing processing actions and tools that do not require an input file.
+Opening a tool carries the applicable queue inputs into its form. Studio pages
+use direct sidebar navigation for OCR, data, archives, projects, integrations,
+models, and engines instead of the nested More Tools menu. Imports now include
+supported data, archive, subtitle, and print/font formats.
+
+Voiceovers have Play, Stop, and a named output-device selector. Playback uses
+the device's mix rate and resamples the preview without editing the saved WAV.
+The reported exported voiceover files contained non-silent audio; Windows was
+routing output to headphones. Packaged generation and playback on the laptop
+speakers passed, with all 13 voices available. Generate and Play remained
+visible in short windows at 100%, 125%, and 150% scaling.
+
+The full source suite passed 452 tests in 308.457 seconds, with two seller-only
+tests skipped. Packaged workspace checks passed file-only startup, contextual
+audio tools, selected-input handoff, subtitle search, and routing of all 40
+processing actions. Reports and screenshots are in
+`D:\Shadow-Agency-Studio-Build\release\verification\workspace-*` and `speech-ui.*`.
+The desktop app at `D:\Shadow-Agency-Studio` was updated using 13 changed/new
+files (38,989,555 bytes), retaining the existing shared models and runtimes.
+The previously published Windows archive and Mac DMGs still predate this update.

@@ -44,6 +44,15 @@ class WorkflowPanel:
         self.action.set(values[0])
         self.change_action(values[0])
 
+    def select_tool(self, action, sources):
+        group, label, _ = WORKFLOWS[action]
+        self.group.set(group)
+        self.change_group(group)
+        self.action.set(label)
+        self.change_action(label)
+        self.sources = list(sources)
+        self.inputs.configure(text="\n".join(str(p) for p in sources) or "Choose inputs for this tool")
+
     def change_action(self, label):
         for child in self.fields.winfo_children():
             child.destroy()

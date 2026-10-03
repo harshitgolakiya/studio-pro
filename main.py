@@ -241,6 +241,8 @@ ALL_MEDIA_EXTENSIONS = (
     | SUPPORTED_AUDIO_EXTENSIONS
     | SUPPORTED_DOCUMENT_EXTENSIONS
 )
+from file_context import IMPORT_EXTENSIONS
+ALL_MEDIA_EXTENSIONS |= IMPORT_EXTENSIONS
 IMAGE_FORMAT_OPTIONS = [
     "PDF (Combined)" if fmt == "PDF" else ("JPEG / JPG" if fmt == "JPEG" else fmt)
     for fmt in IMAGE_OUTPUT_FORMATS
@@ -627,7 +629,7 @@ class WebPCompressorApp(ctk.CTk):
         self.bind("<Control-O>", lambda _e: self._add_files())
         self.bind("<Alt-Up>", lambda _e: self._move_selected_up())
         self.bind("<Alt-Down>", lambda _e: self._move_selected_down())
-        self.bind("<Control-Return>", lambda _e: self._start_conversion())
+        self.bind("<Control-Return>", lambda _e: self._run_workspace_conversion())
         self.bind("<Control-k>", lambda _e: self._open_command_palette())
         self.bind("<Control-K>", lambda _e: self._open_command_palette())
         self.bind("<Control-Shift-P>", lambda _e: self._open_command_palette())
@@ -714,7 +716,7 @@ class WebPCompressorApp(ctk.CTk):
         title_lbl.bind("<Button-1>", lambda _e: self._open_about_dialog())
         sub_lbl = ctk.CTkLabel(
             brand_copy,
-            text="Convert · optimize · automate",
+            text="Your files. Your next step.",
             font=ctk.CTkFont(size=10),
             text_color=APP_MUTED,
             anchor="w",
@@ -820,6 +822,7 @@ class WebPCompressorApp(ctk.CTk):
             scrollbar_button_hover_color=APP_MUTED,
         )
         content_shell.grid(row=1, column=0, sticky="nsew")
+        self._content_shell = content_shell
         content_shell.grid_rowconfigure(0, weight=1)
         content_shell.grid_columnconfigure(0, weight=1)
 
@@ -2257,6 +2260,8 @@ class WebPCompressorApp(ctk.CTk):
 
         self._update_image_summary()
         self._lossless_changed()
+        from workspace_ui import install_workspace
+        install_workspace(self, content_inner, workspace, list_header, output, footer, header_right)
 
     def _open_license_manager(self) -> None:
         existing = getattr(self, "_license_dialog", None)
@@ -2687,6 +2692,13 @@ class WebPCompressorApp(ctk.CTk):
         """Show only media-relevant controls for the active category (image, video, audio, document, gif)."""
         if not hasattr(self, "video_options_row") or not hasattr(self, "size_row"):
             return
+        if hasattr(self, "_file_workspace"):
+            tabs = ["Format & Presets", "Renaming & Safety"]
+            if category in {"image", "gif"}:
+                tabs = ["Format & Presets", "Edit & Transform", "Renaming & Safety", "Watermark"]
+            self.settings_tabview._segmented_button.configure(values=tabs)
+            if self.settings_tabview.get() not in tabs:
+                self.settings_tabview.set(tabs[0])
 
         if category == "video":
             self.smart_trim_btn.pack(side="right", padx=(0, 4))
@@ -2751,6 +2763,11 @@ class WebPCompressorApp(ctk.CTk):
             target_path = next((p for p, r in self.row_ids.items() if r == item_id), None)
         elif self.selected_files:
             target_path = self.selected_files[0]
+        workspace = getattr(self, "_file_workspace", None)
+        if workspace and workspace.converting:
+            inputs = [p for p in getattr(self, "_conversion_inputs", []) if p in self.selected_files]
+            if inputs:
+                target_path = inputs[0]
 
         if target_path is None:
             category = "ready"
@@ -2767,7 +2784,7 @@ class WebPCompressorApp(ctk.CTk):
             elif ext in SUPPORTED_EXTENSIONS:
                 category = "image"
             else:
-                category = "image"
+                category = "other"
 
         # Update info text
         if target_path and target_path.exists():
@@ -2786,6 +2803,10 @@ class WebPCompressorApp(ctk.CTk):
             self.smart_info_label.configure(text="Select or drop media to auto-tune options")
 
         self._update_category_controls_visibility(category)
+        if category == "other":
+            self._current_smart_category = category
+            self.smart_info_label.configure(text="Choose a matching file tool from the workspace.")
+            return
 
         if category == self._current_smart_category and category != "document":
             return
@@ -2887,7 +2908,17 @@ class WebPCompressorApp(ctk.CTk):
                 text_color=("#0369a1", "#7dd3fc"),
             )
             self.smart_trim_btn.pack_forget()
-            document_formats = [f"Document: {target}" for target in document_targets(target_path)]
+            inputs = getattr(self, "_conversion_inputs", [target_path])
+            inputs = [p for p in inputs if p in self.selected_files and p.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS] or [target_path]
+            common = set(document_targets(inputs[0]))
+            for path in inputs[1:]:
+                common.intersection_update(document_targets(path))
+            document_formats = [f"Document: {target}" for target in document_targets(target_path) if target in common]
+            if not document_formats:
+                self.status_text.set("These documents have no common output format. Select a smaller group.")
+                self.convert_button.configure(state="disabled")
+                return
+            self.convert_button.configure(state="normal")
             self.format_menu.configure(values=document_formats)
             if self.target_format.get() not in document_formats:
                 self.target_format.set("Document: PDF" if "Document: PDF" in document_formats else document_formats[0])
@@ -3063,7 +3094,7 @@ class WebPCompressorApp(ctk.CTk):
             PaletteAction("Remove duplicate files", self._remove_duplicates, "Queue", "", "same content dedupe", lambda: idle() and bool(self._duplicate_paths())),
             PaletteAction("Move selected up", self._move_selected_up, "Queue", "Alt+↑", "reorder", has_sel),
             PaletteAction("Move selected down", self._move_selected_down, "Queue", "Alt+↓", "reorder", has_sel),
-            PaletteAction("Convert", self._start_conversion, "Conversion", "Ctrl+Enter", "start run compress", lambda: has_files() and idle()),
+            PaletteAction("Convert", self._run_workspace_conversion, "Conversion", "Ctrl+Enter", "start run compress", lambda: has_files() and idle()),
             PaletteAction("Cancel conversion", self._cancel_conversion, "Conversion", "", "stop abort", lambda: self.conversion_running),
             PaletteAction("Pause / resume queue", self._toggle_pause, "Conversion", "", "hold wait continue", lambda: self.conversion_running),
             PaletteAction("Retry failed items", self._retry_failed, "Conversion", "", "rerun errors again", lambda: idle() and bool(self._failed_paths())),
@@ -3663,6 +3694,7 @@ class WebPCompressorApp(ctk.CTk):
         self._ingest_image_paths(found)
 
     def _ingest_image_paths(self, paths: list[Path]) -> None:
+        had_files = bool(self.selected_files)
         for raw_path in paths:
             path = raw_path.resolve()
             if (
@@ -3699,7 +3731,12 @@ class WebPCompressorApp(ctk.CTk):
             self.table_frame.grid_remove()
 
         self._update_image_summary()
+        workspace = getattr(self, "_file_workspace", None)
+        if workspace and not workspace.converting and paths:
+            workspace.mode = "files"
         self._update_button_states()
+        if workspace and not had_files and self.selected_files:
+            workspace.reset_scroll()
         self._schedule_queue_save()
 
     def _flag_duplicates(self) -> None:
@@ -4715,6 +4752,14 @@ class WebPCompressorApp(ctk.CTk):
             parent=self,
         )
 
+    def _run_workspace_conversion(self):
+        workspace = getattr(self, "_file_workspace", None)
+        if workspace and not workspace.converting:
+            workspace.back_to_actions()
+            self.status_text.set("Choose a conversion tool for the files you want to process.")
+            return
+        self._start_conversion(only=getattr(self, "_conversion_inputs", None))
+
     def _start_conversion(self, only: list[Path] | None = None) -> None:
         """Run the queue, or just ``only`` (a subset of it, e.g. failed rows)
         with whatever settings are currently in the UI."""
@@ -5715,6 +5760,9 @@ class WebPCompressorApp(ctk.CTk):
                 self.move_up_button.configure(state="normal" if has_sel else "disabled")
                 self.move_down_button.configure(state="normal" if has_sel else "disabled")
             self._adapt_settings_to_selection()
+        workspace = getattr(self, "_file_workspace", None)
+        if workspace:
+            workspace.refresh()
 
     def _open_output_folder(self) -> None:
         use_source = self.save_in_source_folder.get()
@@ -5772,7 +5820,7 @@ if __name__ == "__main__":
         index = sys.argv.index("--run-hook-script")
         script = Path(sys.argv[index + 1]).resolve()
         sys.argv = [str(script)]
-        runpy.run_path(str(script), run_name="__main__")
+        runpy.run_path(str(script), run_name="__main__", init_globals={"ShadowApp": WebPCompressorApp})
         raise SystemExit(0)
     if "--studio-smoke-report" in sys.argv:
         from studio_smoke import run

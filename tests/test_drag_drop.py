@@ -43,9 +43,8 @@ class DragDropTests(unittest.TestCase):
         self.img2 = self.tmp_path / "test2.jpg"
         Image.new("RGB", (50, 50), color="red").save(self.img2)
 
-        # .txt is a supported document format now (converts to/from Markdown),
-        # so use a genuinely unsupported extension for the "should be ignored" case.
-        self.unsupported_file = self.tmp_path / "archive.zip"
+        # Documents, data, subtitles, and archives have contextual tools now.
+        self.unsupported_file = self.tmp_path / "unknown.unsupported"
         self.unsupported_file.write_text("not a supported format")
 
         self.sub_dir = self.tmp_path / "nested"
@@ -77,7 +76,7 @@ class DragDropTests(unittest.TestCase):
         selected_filenames = [p.name for p in self.app.selected_files]
         self.assertIn("test1.png", selected_filenames)
         self.assertIn("test3.png", selected_filenames)
-        self.assertNotIn("archive.zip", selected_filenames)
+        self.assertNotIn("unknown.unsupported", selected_filenames)
         self.assertEqual(len(self.app.selected_files), 2)
 
     def test_simulated_wm_dropfiles_message(self) -> None:

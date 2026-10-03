@@ -13,6 +13,10 @@ The application EULA does not replace their license terms.
 - Piper: GPLv3; source https://github.com/OHF-Voice/piper1-gpl.
   Voice model cards are staged under `vendor/models/licenses` or `voices`.
   Each voice retains its model/dataset license.
+- sounddevice and PortAudio: MIT; sources
+  https://github.com/spatialaudio/python-sounddevice and https://github.com/PortAudio/portaudio.
+  Bundled notices are in `licenses/sounddevice.txt`, `licenses/portaudio.txt`,
+  and the PortAudio data directory.
 - faster-whisper and CTranslate2: MIT; sources
   https://github.com/SYSTRAN/faster-whisper and https://github.com/OpenNMT/CTranslate2.
   Whisper model source: https://github.com/openai/whisper.

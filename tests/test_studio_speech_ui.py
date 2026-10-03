@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 import tkinter as tk
 import unittest
+import time
 from unittest.mock import patch
 
 import customtkinter as ctk
@@ -17,7 +18,9 @@ class SpeechUiTests(unittest.TestCase):
         dialog = StudioToolsDialog(root)
         tabs = dialog.generate_speech.master.master
         tabs.set("Text to Audio")
-        root.update()
+        for _ in range(6):
+            root.update()
+            time.sleep(0.05)
         self.addCleanup(self.close_dialog, root, dialog)
         return root, dialog
 
@@ -36,7 +39,9 @@ class SpeechUiTests(unittest.TestCase):
                     root, dialog = self.make_dialog()
                     dialog.minsize(0, 0)
                     dialog.geometry("740x480")
-                    root.update()
+                    for _ in range(4):
+                        root.update()
+                        time.sleep(0.05)
                     button = dialog.generate_speech
                     tab = button.master
                     self.assertTrue(button.winfo_ismapped())
@@ -44,6 +49,7 @@ class SpeechUiTests(unittest.TestCase):
                     self.assertGreaterEqual(button.winfo_rooty(), tab.winfo_rooty())
                     self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), tab.winfo_rooty() + tab.winfo_height())
                     self.assertLessEqual(dialog.script.winfo_rooty() + dialog.script.winfo_height(), dialog.voice_menu.winfo_rooty())
+                    self.assertLessEqual(dialog.play_audio.winfo_rooty() + dialog.play_audio.winfo_height(), tab.winfo_rooty() + tab.winfo_height())
                     self.doCleanups()
         finally:
             ctk.set_widget_scaling(1.0)
