@@ -377,4 +377,8 @@ word order, typos, scope, workspace flows and palette consistency. Staged native
 checks passed search descriptions, Favorites scope and the voiceover route;
 dark/light captures were reviewed at minimum window size. The ready desktop
 update and backup procedure are recorded in `release/verification/search-*`
-under the build directory. Installation awaits closure of the running app.
+under the build directory. After the user closed Shadow, two runtime files
+(36,976,018 bytes) were installed with backup under `release/ui-fix/search-update-backup`.
+Native checks on the installed copy passed the same phrases, typo handling,
+Favorites scope, descriptions and voiceover route. Shared engines/models and
+published release archives remain unchanged.
