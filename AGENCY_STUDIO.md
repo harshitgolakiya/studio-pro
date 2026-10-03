@@ -269,5 +269,8 @@ visible. All 65 catalog entries and 40 Studio action routes were verified.
 The ready runtime is `D:\Shadow-Agency-Studio-Build\release\ui-fix\dist\Shadow`.
 Its desktop update manifest and backup/install helper are in the release
 verification folder (`premium-workspace-update-manifest.json` and
-`premium_update.py`). Installation requires the running desktop copy to close;
-the currently published archives and Mac DMGs have not been rebuilt.
+`premium_update.py`). The desktop copy at `D:\Shadow-Agency-Studio` was updated
+after the user closed it: three files, 36,959,381 bytes, with backups and shared
+assets retained. The installed executable passed the same native UI checks;
+the desktop shortcut targets this copy. Published archives and Mac DMGs have
+not been rebuilt.
