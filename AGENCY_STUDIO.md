@@ -262,3 +262,12 @@ conversion settings and Studio forms. Single-file actions include a file
 identity strip and short descriptions. Seventeen focused tests passed,
 including sidebar navigation without losing the queue, eligible conversion
 inputs, speech controls, and access to every catalog entry.
+
+The staged native Windows build passed seven screenshot checks, including the
+980x720 light layout, preferences, and the speech form with Generate speech
+visible. All 65 catalog entries and 40 Studio action routes were verified.
+The ready runtime is `D:\Shadow-Agency-Studio-Build\release\ui-fix\dist\Shadow`.
+Its desktop update manifest and backup/install helper are in the release
+verification folder (`premium-workspace-update-manifest.json` and
+`premium_update.py`). Installation requires the running desktop copy to close;
+the currently published archives and Mac DMGs have not been rebuilt.
