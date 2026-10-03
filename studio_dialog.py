@@ -1,6 +1,8 @@
 """Agency tools with local PDF and speech workflows."""
 from __future__ import annotations
 
+from design_system import style_dialog
+
 import importlib.util
 from pathlib import Path
 import threading
@@ -32,6 +34,7 @@ class NavigationTabs(ctk.CTkTabview):
 class StudioToolsDialog(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
+        style_dialog(self, master)
         self.title("Shadow — Studio Tools")
         scale = self._get_window_scaling()
         width = min(940, max(640, int((self.winfo_screenwidth() - 80) / scale)))

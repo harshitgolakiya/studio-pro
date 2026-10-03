@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from design_system import (ACCENT, ACCENT_HOVER, ACCENT_TEXT_DARK, ACCENT_TEXT_LIGHT, BACKGROUND_DARK, BACKGROUND_LIGHT, BORDER_DARK, BORDER_LIGHT, DANGER_DARK, DANGER_LIGHT, DANGER_SURFACE_DARK, ELEVATED_DARK, ELEVATED_LIGHT, MUTED_DARK, MUTED_LIGHT, PRIMARY_TEXT, SELECTION_DARK, SELECTION_LIGHT, SURFACE_DARK, TEXT_DARK, TEXT_LIGHT)
+
 # Frozen worker/resource-tracker subprocesses must be diverted before loading
 # GUI modules or engines. macOS uses spawn for multiprocessing by default.
 if __name__ == "__main__":
@@ -138,6 +140,9 @@ try:
 except Exception:
     pass
 
+
+from ui_scrolling import install_scrolling
+install_scrolling()
 
 from app_bootstrap import ensure_runtime_dependencies_noisy
 from accessibility import enable_keyboard_navigation
@@ -588,9 +593,9 @@ class WebPCompressorApp(ctk.CTk):
                 )
                 return ctypes.c_uint(red | (green << 8) | (blue << 16))
 
-            border = colorref("#27303B" if dark else "#D6DFE7")
-            caption = colorref("#090C10" if dark else "#F3F6F8")
-            text_color = colorref("#EDEFF2" if dark else "#14212B")
+            border = colorref(BORDER_DARK if dark else BORDER_LIGHT)
+            caption = colorref(BACKGROUND_DARK if dark else BACKGROUND_LIGHT)
+            text_color = colorref(TEXT_DARK if dark else TEXT_LIGHT)
             for attribute, value in ((34, border), (35, caption), (36, text_color)):
                 dwm.DwmSetWindowAttribute(
                     hwnd,
@@ -734,15 +739,15 @@ class WebPCompressorApp(ctk.CTk):
         if is_vip:
             badge_text = "VIP MASTER"
             badge_color = APP_CTA
-            badge_text_color = "#171308"
+            badge_text_color = PRIMARY_TEXT
         elif is_pro:
             badge_text = "PRO LIFETIME"
-            badge_color = "#16a34a"
+            badge_color = ACCENT
             badge_text_color = "#ffffff"
         else:
             badge_text = "FREE TRIAL"
-            badge_color = "#eab308"
-            badge_text_color = "#171308"
+            badge_color = ACCENT
+            badge_text_color = PRIMARY_TEXT
 
         self.license_badge = ctk.CTkButton(
             header_right,
@@ -1043,7 +1048,7 @@ class WebPCompressorApp(ctk.CTk):
             width=40,
             height=40,
             corner_radius=12,
-            fg_color=(APP_ACCENT_SOFT, "#1e293b"),
+            fg_color=(APP_ACCENT_SOFT, ELEVATED_DARK),
             text_color=(APP_ACCENT, APP_ACCENT_TINT),
             font=ctk.CTkFont(size=18, weight="bold"),
         ).grid(row=0, column=0, rowspan=2, padx=(0, 14))
@@ -1089,8 +1094,8 @@ class WebPCompressorApp(ctk.CTk):
             corner_radius=8,
             fg_color="transparent",
             border_width=1,
-            border_color=("#cbd5e1", "#334155"),
-            text_color=("#334155", "#f1f5f9"),
+            border_color=(BORDER_LIGHT, TEXT_LIGHT),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             font=ctk.CTkFont(size=12),
         ).pack(side="left", padx=5)
 
@@ -1164,7 +1169,7 @@ class WebPCompressorApp(ctk.CTk):
             segmented_button_selected_color=APP_ACCENT,
             segmented_button_selected_hover_color=APP_ACCENT_TINT,
             segmented_button_unselected_color=APP_ELEVATED,
-            segmented_button_unselected_hover_color=("#D6DFE7", "#2A2E38"),
+            segmented_button_unselected_hover_color=(BORDER_LIGHT, ELEVATED_DARK),
             text_color=APP_TEXT,
             height=38,
         )
@@ -1185,8 +1190,8 @@ class WebPCompressorApp(ctk.CTk):
             self.smart_header_frame,
             text="✨ Smart Settings: Auto-Detect Ready",
             font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color=("#e2e8f0", "#1e293b"),
-            text_color=("#334155", "#94a3b8"),
+            fg_color=(ELEVATED_LIGHT, ELEVATED_DARK),
+            text_color=(TEXT_LIGHT, MUTED_DARK),
             corner_radius=6,
             height=26,
             padx=10,
@@ -1197,7 +1202,7 @@ class WebPCompressorApp(ctk.CTk):
             self.smart_header_frame,
             text="Select or drop media to auto-tune options",
             font=ctk.CTkFont(size=11),
-            text_color=("#64748b", "#94a3b8"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         )
         self.smart_info_label.pack(side="left", padx=(8, 0))
 
@@ -1205,7 +1210,7 @@ class WebPCompressorApp(ctk.CTk):
             self.smart_header_frame,
             textvariable=self.estimate_text,
             font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("#0E756B", "#70E1D4"),
+            text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
         )
         self.estimate_label.pack(side="right", padx=(10, 0))
 
@@ -1218,6 +1223,7 @@ class WebPCompressorApp(ctk.CTk):
             fg_color=APP_ACCENT,
             hover_color=APP_ACCENT_DARK,
             command=self._open_selected_trimmer,
+            text_color=PRIMARY_TEXT,
         )
 
         fmt_row0 = ctk.CTkFrame(tab_format, fg_color="transparent")
@@ -1227,7 +1233,7 @@ class WebPCompressorApp(ctk.CTk):
             fmt_row0,
             text="Target Format:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#0f172a", "#f8fafc"),
+            text_color=(TEXT_LIGHT, BACKGROUND_LIGHT),
         ).pack(side="left", padx=(0, 6))
 
         format_options = [
@@ -1269,7 +1275,7 @@ class WebPCompressorApp(ctk.CTk):
             fmt_row0,
             text="Profile:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#0f172a", "#f8fafc"),
+            text_color=(TEXT_LIGHT, BACKGROUND_LIGHT),
         ).pack(side="left", padx=(0, 6))
 
         preset_profiles = [
@@ -1322,9 +1328,9 @@ class WebPCompressorApp(ctk.CTk):
                 height=26,
                 corner_radius=6,
                 font=ctk.CTkFont(size=11),
-                fg_color=("gray92", "#22262d"),
-                hover_color=("gray85", "#2c313a"),
-                text_color=("#334155", "#f1f5f9"),
+                fg_color=(ELEVATED_LIGHT, ELEVATED_DARK),
+                hover_color=(BORDER_LIGHT, ELEVATED_DARK),
+                text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
                 command=lambda q=q_val, l=(name == "Lossless"): self._apply_preset(
                     q, l
                 ),
@@ -1621,7 +1627,7 @@ class WebPCompressorApp(ctk.CTk):
             tr_row0,
             text="Rotate:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 6))
         self.rotate_menu = ctk.CTkOptionMenu(
             tr_row0,
@@ -1640,7 +1646,7 @@ class WebPCompressorApp(ctk.CTk):
             tr_row0,
             text="Aspect Ratio Crop:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 6))
         self.aspect_menu = ctk.CTkOptionMenu(
             tr_row0,
@@ -1658,7 +1664,7 @@ class WebPCompressorApp(ctk.CTk):
         ctk.CTkCheckBox(tr_row1, text="Rounded Corners:", variable=self.enable_rounded, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 4))
         self.corner_entry = ctk.CTkEntry(tr_row1, width=44, height=24, textvariable=self.corner_radius, justify="center")
         self.corner_entry.pack(side="left", padx=(0, 4))
-        ctk.CTkLabel(tr_row1, text="px radius", font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=(0, 18))
+        ctk.CTkLabel(tr_row1, text="px radius", font=ctk.CTkFont(size=11), text_color=(MUTED_LIGHT, MUTED_DARK)).pack(side="left", padx=(0, 18))
 
         ctk.CTkCheckBox(tr_row1, text="Grayscale (Monochrome B&W)", variable=self.grayscale, font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 18))
         ctk.CTkCheckBox(tr_row1, text="Broadcast Audio Loudnorm (EBU R128)", variable=self.normalize_audio, font=ctk.CTkFont(size=11)).pack(side="left")
@@ -1671,7 +1677,7 @@ class WebPCompressorApp(ctk.CTk):
             tr_row_color,
             text="Color Profile:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 6))
         self.color_profile_menu = ctk.CTkOptionMenu(
             tr_row_color,
@@ -1732,7 +1738,7 @@ class WebPCompressorApp(ctk.CTk):
             tr_row_hdr,
             text="Bit Depth:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 6))
         self.bit_depth_menu = ctk.CTkOptionMenu(
             tr_row_hdr,
@@ -1797,7 +1803,7 @@ class WebPCompressorApp(ctk.CTk):
             tr_row_raw,
             text="Camera RAW:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 6))
 
         ctk.CTkLabel(
@@ -1869,7 +1875,7 @@ class WebPCompressorApp(ctk.CTk):
             tr_row_svg,
             text="Vector SVG:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 6))
 
         ctk.CTkLabel(
@@ -1923,7 +1929,7 @@ class WebPCompressorApp(ctk.CTk):
             stack_header,
             text="Processing stack",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkLabel(
             stack_header,
@@ -1958,10 +1964,10 @@ class WebPCompressorApp(ctk.CTk):
             nm_row0,
             text="Filename Pattern:",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#334155", "#cbd5e1"),
+            text_color=(TEXT_LIGHT, BORDER_LIGHT),
         ).pack(side="left", padx=(0, 8))
 
-        ctk.CTkLabel(nm_row0, text="Prefix:", font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(nm_row0, text="Prefix:", font=ctk.CTkFont(size=11), text_color=(MUTED_LIGHT, MUTED_DARK)).pack(side="left", padx=(0, 4))
         self.prefix_entry = ctk.CTkEntry(nm_row0, width=70, height=26, textvariable=self.filename_prefix, placeholder_text="web_")
         self.prefix_entry.pack(side="left", padx=(0, 8))
 
@@ -1972,7 +1978,7 @@ class WebPCompressorApp(ctk.CTk):
             text_color=(APP_ACCENT, APP_ACCENT_TINT),
         ).pack(side="left", padx=(0, 8))
 
-        ctk.CTkLabel(nm_row0, text="Suffix:", font=ctk.CTkFont(size=11), text_color=("#64748b", "#94a3b8")).pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(nm_row0, text="Suffix:", font=ctk.CTkFont(size=11), text_color=(MUTED_LIGHT, MUTED_DARK)).pack(side="left", padx=(0, 4))
         self.suffix_entry = ctk.CTkEntry(nm_row0, width=70, height=26, textvariable=self.filename_suffix, placeholder_text="_opt")
         self.suffix_entry.pack(side="left", padx=(0, 16))
 
@@ -2066,7 +2072,7 @@ class WebPCompressorApp(ctk.CTk):
             wm_row0,
             text="Position:",
             font=ctk.CTkFont(size=11),
-            text_color=("#64748b", "#94a3b8"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(side="left", padx=(0, 4))
         ctk.CTkOptionMenu(
             wm_row0,
@@ -2080,7 +2086,7 @@ class WebPCompressorApp(ctk.CTk):
             wm_row0,
             text="When:",
             font=ctk.CTkFont(size=11),
-            text_color=("#64748b", "#94a3b8"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(side="left", padx=(10, 4))
         ctk.CTkOptionMenu(
             wm_row0,
@@ -2152,8 +2158,8 @@ class WebPCompressorApp(ctk.CTk):
             border_width=2,
             corner_radius=4,
             font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color=("#ea580c", "#f97316"),
-            hover_color=("#c2410c", "#ea580c"),
+            fg_color=(DANGER_LIGHT, DANGER_DARK),
+            hover_color=(BORDER_DARK, DANGER_LIGHT),
         )
         self.replace_source_checkbox.pack(side="left")
 
@@ -2185,8 +2191,8 @@ class WebPCompressorApp(ctk.CTk):
             corner_radius=9,
             fg_color="transparent",
             border_width=1,
-            border_color=("#cbd5e1", "#334155"),
-            text_color=("#334155", "#f1f5f9"),
+            border_color=(BORDER_LIGHT, TEXT_LIGHT),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             state="disabled",
         )
         self.export_csv_button.grid(row=2, column=0, sticky="w")
@@ -2200,8 +2206,8 @@ class WebPCompressorApp(ctk.CTk):
             corner_radius=9,
             fg_color="transparent",
             border_width=1,
-            border_color=("#cbd5e1", "#334155"),
-            text_color=("#334155", "#f1f5f9"),
+            border_color=(BORDER_LIGHT, TEXT_LIGHT),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             state="disabled",
         )
         self.open_button.grid(row=2, column=2, padx=(0, 8))
@@ -2216,8 +2222,8 @@ class WebPCompressorApp(ctk.CTk):
             corner_radius=7,
             fg_color="transparent",
             border_width=1,
-            border_color=("#cbd5e1", "#334155"),
-            text_color=("#334155", "#f1f5f9"),
+            border_color=(BORDER_LIGHT, TEXT_LIGHT),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             state="disabled",
         )
         self.pause_button.pack(side="left", padx=(0, 6))
@@ -2241,8 +2247,8 @@ class WebPCompressorApp(ctk.CTk):
             corner_radius=9,
             fg_color="transparent",
             border_width=1,
-            border_color=("#f0b4a8", "#7f1d1d"),
-            text_color=("#b91c1c", "#fca5a5"),
+            border_color=(DANGER_DARK, DANGER_SURFACE_DARK),
+            text_color=(DANGER_LIGHT, DANGER_DARK),
         )
 
         self.convert_button = ctk.CTkButton(
@@ -2255,6 +2261,7 @@ class WebPCompressorApp(ctk.CTk):
             fg_color=APP_ACCENT,
             hover_color=APP_ACCENT_DARK,
             font=ctk.CTkFont(family=DISPLAY_FONT, weight="bold", size=14),
+            text_color=PRIMARY_TEXT,
         )
         self.convert_button.grid(row=2, column=4)
 
@@ -2278,34 +2285,34 @@ class WebPCompressorApp(ctk.CTk):
         if is_vip:
             badge_text = "VIP MASTER"
             badge_color = APP_CTA
-            badge_text_color = "#171308"
+            badge_text_color = PRIMARY_TEXT
             self.vip_downloader_button.configure(
                 text="⚡ Download URL",
                 fg_color=APP_CTA,
                 hover_color=APP_CTA_STRONG,
-                text_color="#171308",
+                text_color=PRIMARY_TEXT,
                 font=ctk.CTkFont(weight="bold"),
             )
         elif is_pro:
             badge_text = "PRO LIFETIME"
-            badge_color = "#16a34a"
+            badge_color = ACCENT
             badge_text_color = "#ffffff"
             self.vip_downloader_button.configure(
                 text="🔒 Download URL",
-                fg_color=("gray88", "gray25"),
-                hover_color=("gray80", "gray32"),
-                text_color=("#344054", "#f2f4f7"),
+                fg_color=(ELEVATED_LIGHT, ELEVATED_DARK),
+                hover_color=(BORDER_LIGHT, BORDER_DARK),
+                text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
                 font=ctk.CTkFont(weight="normal"),
             )
         else:
             badge_text = "FREE TRIAL"
-            badge_color = "#eab308"
-            badge_text_color = "#171308"
+            badge_color = ACCENT
+            badge_text_color = PRIMARY_TEXT
             self.vip_downloader_button.configure(
                 text="🔒 Download URL",
-                fg_color=("gray88", "gray25"),
-                hover_color=("gray80", "gray32"),
-                text_color=("#344054", "#f2f4f7"),
+                fg_color=(ELEVATED_LIGHT, ELEVATED_DARK),
+                hover_color=(BORDER_LIGHT, BORDER_DARK),
+                text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
                 font=ctk.CTkFont(weight="normal"),
             )
         self.license_badge.configure(
@@ -2369,16 +2376,16 @@ class WebPCompressorApp(ctk.CTk):
         if is_running:
             self.watch_folder_button.configure(
                 text="🟢 Watching...",
-                fg_color="#059669",
-                hover_color="#047857",
+                fg_color=ACCENT,
+                hover_color=ACCENT_HOVER,
                 text_color="#ffffff",
             )
         else:
             self.watch_folder_button.configure(
                 text="📁 Auto-Watch",
-                fg_color=("gray88", "gray25"),
-                hover_color=("gray80", "gray32"),
-                text_color=("#344054", "#f2f4f7"),
+                fg_color=(ELEVATED_LIGHT, ELEVATED_DARK),
+                hover_color=(BORDER_LIGHT, BORDER_DARK),
+                text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             )
 
     def _on_app_close(self) -> None:
@@ -2816,8 +2823,8 @@ class WebPCompressorApp(ctk.CTk):
         if category == "video":
             self.smart_badge.configure(
                 text="🎬 Smart Video Mode (GPU when supported · universal CPU fallback)",
-                fg_color=("#dbeafe", "#1e3a5f"),
-                text_color=("#1d4ed8", "#93c5fd"),
+                fg_color=(SELECTION_LIGHT, SELECTION_DARK),
+                text_color=(ACCENT, ACCENT_TEXT_DARK),
             )
             video_formats = [
                 "Video: MP4",
@@ -2848,8 +2855,8 @@ class WebPCompressorApp(ctk.CTk):
         elif category == "audio":
             self.smart_badge.configure(
                 text="🎵 Smart Audio Mode",
-                fg_color=("#ecfdf5", "#064e3b"),
-                text_color=("#047857", "#6ee7b7"),
+                fg_color=(SELECTION_LIGHT, SELECTION_DARK),
+                text_color=(ACCENT_HOVER, ACCENT_TEXT_DARK),
             )
             self.smart_trim_btn.pack_forget()
             audio_formats = [
@@ -2876,8 +2883,8 @@ class WebPCompressorApp(ctk.CTk):
         elif category == "gif":
             self.smart_badge.configure(
                 text="🎞️ Smart Animated GIF Mode (80-90% Reduction)",
-                fg_color=("#fef3c7", "#78350f"),
-                text_color=("#b45309", "#fde68a"),
+                fg_color=(SELECTION_LIGHT, SELECTION_DARK),
+                text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
             )
             self.smart_trim_btn.pack_forget()
             gif_formats = [
@@ -2904,8 +2911,8 @@ class WebPCompressorApp(ctk.CTk):
         elif category == "document":
             self.smart_badge.configure(
                 text="📝 Document Studio",
-                fg_color=("#e0f2fe", "#0c4a6e"),
-                text_color=("#0369a1", "#7dd3fc"),
+                fg_color=(SELECTION_LIGHT, SELECTION_DARK),
+                text_color=(ACCENT, ACCENT_TEXT_DARK),
             )
             self.smart_trim_btn.pack_forget()
             inputs = getattr(self, "_conversion_inputs", [target_path])
@@ -2935,7 +2942,7 @@ class WebPCompressorApp(ctk.CTk):
         elif category == "image":
             self.smart_badge.configure(
                 text="🖼️ Smart Image Mode",
-                fg_color=(APP_ACCENT_SOFT, "#123A36"),
+                fg_color=(APP_ACCENT_SOFT, SELECTION_DARK),
                 text_color=(APP_ACCENT, APP_ACCENT_TINT),
             )
             self.smart_trim_btn.pack_forget()
@@ -2960,8 +2967,8 @@ class WebPCompressorApp(ctk.CTk):
         else:  # ready / empty queue
             self.smart_badge.configure(
                 text="✨ Smart Settings: Auto-Detect Ready",
-                fg_color=("#e2e8f0", "#1e293b"),
-                text_color=("#334155", "#94a3b8"),
+                fg_color=(ELEVATED_LIGHT, ELEVATED_DARK),
+                text_color=(TEXT_LIGHT, MUTED_DARK),
             )
             self.smart_trim_btn.pack_forget()
             all_formats = [
@@ -3020,11 +3027,11 @@ class WebPCompressorApp(ctk.CTk):
 
     def _apply_table_theme(self) -> None:
         dark_mode = ctk.get_appearance_mode().lower() == "dark"
-        table_bg = "#11161d" if dark_mode else "#ffffff"
-        head_bg = "#1a2029" if dark_mode else "#f2f4f7"
-        fg = "#f4f7fa" if dark_mode else "#14212b"
-        sel_bg = "#123B36" if dark_mode else "#CFF4EE"
-        sel_fg = "#ffffff" if dark_mode else "#0B3B35"
+        table_bg = SURFACE_DARK if dark_mode else "#ffffff"
+        head_bg = ELEVATED_DARK if dark_mode else ELEVATED_LIGHT
+        fg = TEXT_DARK if dark_mode else TEXT_LIGHT
+        sel_bg = SELECTION_DARK if dark_mode else SELECTION_LIGHT
+        sel_fg = "#ffffff" if dark_mode else ACCENT_TEXT_LIGHT
 
         self.table_style.configure(
             "Treeview",
@@ -3067,6 +3074,9 @@ class WebPCompressorApp(ctk.CTk):
         self._apply_table_theme()
         self.update_idletasks()
         self._sync_native_window_theme()
+        from design_system import sync_window_chrome
+        for window in self.winfo_children():
+            if isinstance(window, ctk.CTkToplevel):sync_window_chrome(window)
 
     def _apply_density(self, _density: str = "Comfortable") -> None:
         ctk.set_widget_scaling(1.0)
@@ -3274,6 +3284,7 @@ class WebPCompressorApp(ctk.CTk):
             hover_color=APP_ACCENT_DARK,
             font=ctk.CTkFont(size=11, weight="bold"),
             command=dlg.destroy,
+            text_color=PRIMARY_TEXT,
         ).pack(side="right")
 
         enable_keyboard_navigation(dlg)
@@ -4236,7 +4247,7 @@ class WebPCompressorApp(ctk.CTk):
             chip = ctk.CTkFrame(
                 frame,
                 corner_radius=7,
-                fg_color=(APP_ACCENT_SOFT, "#123A36") if active else APP_ELEVATED,
+                fg_color=(APP_ACCENT_SOFT, SELECTION_DARK) if active else APP_ELEVATED,
             )
             chip.pack(side="left", padx=(0, 5))
             ctk.CTkButton(
@@ -4709,7 +4720,7 @@ class WebPCompressorApp(ctk.CTk):
             if not 1 <= value <= 100:
                 raise ValueError
         except ValueError:
-            self.quality_entry.configure(border_color="#d92d20")
+            self.quality_entry.configure(border_color=DANGER_LIGHT)
             self.status_text.set("Quality must be a whole number from 1 to 100")
             return False
         self.quality_entry.configure(

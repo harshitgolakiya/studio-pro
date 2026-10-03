@@ -1,6 +1,8 @@
 """History window: searchable log of past conversions with reproducible settings."""
 from __future__ import annotations
 
+from design_system import (style_dialog, MUTED_DARK, MUTED_LIGHT)
+
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
@@ -12,12 +14,13 @@ from diagnostics import export_diagnostics
 from history import HistoryEntry, clear_history, load_history, search_history, summarize
 from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
 
-_MUTED = ("#607181", "#91A0AE")
+_MUTED = (MUTED_LIGHT, MUTED_DARK)
 
 
 class HistoryDialog(ctk.CTkToplevel):
     def __init__(self, master: Any, apply_settings: Callable[[dict[str, Any]], None]) -> None:
         super().__init__(master)
+        style_dialog(self, master)
         self.title("Conversion History")
         self.geometry("900x560")
         self.minsize(720, 420)

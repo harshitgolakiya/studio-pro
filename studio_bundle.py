@@ -4,7 +4,7 @@ import importlib.util
 import sys
 
 
-def collect_studio():
+def collect_studio(include_shared_assets=True):
     from PyInstaller.utils.hooks import collect_all
     datas, binaries, imports = [], [], []
     # Include native engines, voice data, CT2/ONNX DLLs, and PDFium resources.
@@ -16,7 +16,7 @@ def collect_studio():
             datas.extend(data)
             binaries.extend(native)
             imports.extend(hidden)
-    for folder in (Path("vendor/libreoffice"), Path("vendor/models"), Path("vendor/ghostscript")):
+    for folder in (Path("vendor/libreoffice"), Path("vendor/models"), Path("vendor/ghostscript")) if include_shared_assets else ():
         # macOS keeps LibreOffice's signed .app, framework symlinks, and native
         # layout intact via the post-build staging step.
         if sys.platform == "darwin" and folder.name == "libreoffice":
@@ -24,9 +24,9 @@ def collect_studio():
         if not folder.is_dir():
             continue
         for path in folder.rglob("*"):
-            if path.is_file() and ".cache" not in path.parts and "$PLUGINSDIR" not in path.parts and path.suffix.lower() not in {".msi", ".log", ".download", ".lock", ".nsis"}:
+            if path.is_file() and ".cache" not in path.parts and "$PLUGINSDIR" not in path.parts and not path.name.startswith((".~lock.", "~$")) and path.suffix.lower() not in {".msi", ".log", ".download", ".lock", ".nsis", ".tmp"}:
                 datas.append((str(path), str(path.parent)))
-    if sys.platform == "darwin" and Path("vendor/ghostscript/bin/gs").is_file():
+    if include_shared_assets and sys.platform == "darwin" and Path("vendor/ghostscript/bin/gs").is_file():
         binaries.append(("vendor/ghostscript/bin/gs", "vendor/ghostscript/bin"))
     if Path("THIRD_PARTY_NOTICES.md").is_file():
         datas.append(("THIRD_PARTY_NOTICES.md", "."))

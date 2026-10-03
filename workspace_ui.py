@@ -17,9 +17,42 @@ SECTIONS = {
 }
 
 
+COLLECTION_GROUPS = {
+    'Images': [('Convert & optimize', ('convert-image','optimize','preview')), ('Print & plugins', ('print-cmyk','print-import','plugin-codec','plugin-process'))],
+    'Video': [('Convert & edit', ('convert-video','trim','preview','download')), ('Audio & transcription', ('audio','audio-isolate','transcribe','speech-batch')), ('Subtitles', ('subtitle-edit','subtitle-translate'))],
+    'Audio': [('Create & convert', ('speak','convert-audio','audio','preview')), ('Speech & transcripts', ('transcribe','speech-batch','audio-isolate'))],
+    'Documents & PDF': [('Convert & edit', ('convert-document','office-edit','office-replace','text-translate','office-properties','office-set-properties')),
+                       ('PDF pages', ('pdf-merge','pdf-extract','pdf-rotate','pdf-compress','pdf-images')),
+                       ('Forms & signatures', ('pdf-fields','pdf-fill','pdf-identity','pdf-sign','pdf-signatures')),
+                       ('Protect & repair', ('pdf-protect','pdf-unlock','pdf-redact','pdf-repair')),
+                       ('Extract & print', ('ocr','pdf-tables','print-import','print-fonts','print-preflight','print-cmyk')),
+                       ('Read & listen', ('preview','speak'))],
+    'Data': [('Convert & clean', ('data-convert','data-clean','data-export-sheets')), ('Inspect & validate', ('data-schema','data-validate'))],
+    'Archives & delivery': [('Pack & extract', ('archive-create','archive-extract','archive-inspect')), ('Deliver & verify', ('delivery-create','delivery-verify','folder-manifest','folder-verify'))],
+    'Workspace': [('Projects & presets', ('projects','recipes','project-delivery')), ('Automation & publishing', ('watch','download','integrations','publish-file'))],
+    'Settings': [('Application', ('models','engines','license','about'))],
+}
+TOOL_LABELS = {'speech-batch':'Batch transcription', 'subtitle-edit':'Edit subtitles',
+               'office-properties':'Document properties', 'office-set-properties':'Update document properties',
+               'print-import':'Import design files', 'print-fonts':'Inspect fonts',
+               'folder-manifest':'Create file manifest', 'folder-verify':'Verify file manifest',
+               'plugin-codec':'Plugin conversion', 'plugin-process':'Plugin processing'}
+
+
+def grouped_tools(tools, section):
+    remaining = {tool.key:tool for tool in tools}
+    groups = []
+    for name, keys in COLLECTION_GROUPS.get(section, ()):
+        entries = [remaining.pop(key) for key in keys if key in remaining]
+        if entries:groups.append((name, entries))
+    if remaining:groups.append(('More tools', sorted(remaining.values(), key=lambda t:t.title.casefold())))
+    return groups
+
+
 def section_for(tool):
     for title, (_, keys) in SECTIONS.items():
         if tool.key in keys: return title
+    if tool.group == 'Subtitles' and tool.key != 'text-translate': return 'Video'
     if tool.group in {'PDF', 'Office', 'Subtitles', 'Print', 'OCR'} or tool.key == 'convert-document': return 'Documents & PDF'
     if tool.group == 'Data': return 'Data'
     if tool.group in {'Archives', 'Delivery'}: return 'Archives & delivery'
@@ -28,10 +61,8 @@ def section_for(tool):
 
 
 def in_section(tool, section):
-    if section_for(tool) == section: return True
-    if section == 'Video' and tool.key in {'transcribe', 'speech-batch', 'audio-isolate', 'subtitle-edit', 'subtitle-translate'}: return True
-    if section == 'Documents & PDF' and tool.key in {'speak', 'print-cmyk'}: return True
-    return False
+    keys = {key for _, items in COLLECTION_GROUPS.get(section, ()) for key in items}
+    return section_for(tool) == section or tool.key in keys
 
 
 def section_icon(name):
@@ -80,6 +111,13 @@ class FileWorkspace:
         self.mode = 'files'
         self.converting = False
         self._signature = None
+        self._render_signature = None
+        self._tool_rows = {}
+        self._headings = {}
+        self._featured = {}
+        self._layout_items = []
+        self._search_job = None
+        self._layout_job = None
         self.expanded = False
         self.section = None
         self._icons = {name: section_icon(name) for name in SECTIONS}
@@ -122,6 +160,7 @@ class FileWorkspace:
                          text_color=('#777785', '#9493A3')).pack(fill='x', padx=18, pady=(0, 12))
         self.browser = ctk.CTkFrame(parent, fg_color='transparent')
         self.browser.grid_columnconfigure(0, weight=1)
+        self.browser.bind('<Configure>', self._schedule_layout, add='+')
         self.title = ctk.CTkLabel(self.browser, text='', font=ctk.CTkFont(family='Outfit', size=30, weight='bold'), anchor='w')
         self.title.grid(row=0, column=0, sticky='ew', pady=(0, 3))
         self.summary = ctk.CTkLabel(self.browser, text='', anchor='w', text_color=('#777785', '#9493A3'))
@@ -134,7 +173,7 @@ class FileWorkspace:
         self.query = tk.StringVar(master=app)
         self.search = ctk.CTkEntry(filters, textvariable=self.query, placeholder_text='Search tools, e.g. subtitles, PDF, voice…', height=36)
         self.search.grid(row=0, column=1, sticky='ew', padx=(0, 10))
-        self.search.bind('<KeyRelease>', lambda _: self.render_tools())
+        self.search.bind('<KeyRelease>', self._schedule_search)
         self.group = tk.StringVar(master=app, value='All categories')
         self.group_menu = ctk.CTkOptionMenu(filters, variable=self.group, values=['All categories'], command=lambda _: self.render_tools(), width=180)
         # Categories are visible tiles, rather than a filter hiding a long list.
@@ -163,14 +202,23 @@ class FileWorkspace:
         return selected or list(self.app.selected_files)
 
     def reset_scroll(self):
-        self.app._content_shell._parent_canvas.yview_moveto(0)
+        shell = self.app._content_shell
+        if hasattr(shell, 'stop_scroll'):shell.stop_scroll()
+        shell._parent_canvas.yview_moveto(0)
 
-    def show_library(self):
+    def show_library(self, section=None):
         if self.app.conversion_running: return
+        if self.mode == 'library' and not self.converting:
+            self.section = section
+            self.query.set('')
+            self.expanded = False
+            self.render_tools()
+            self.reset_scroll()
+            return
         self.mode = 'library'
         self.converting = False
         self.query.set('')
-        self.section = None
+        self.section = section
         self.expanded = False
         self.group.set('All categories')
         self._signature = None
@@ -193,8 +241,12 @@ class FileWorkspace:
     def _sync_navigation(self):
         if not hasattr(self, 'nav_buttons'):return
         name = ('Explore tools' if self.section is None else self.section) if self.mode == 'library' else 'Preferences' if self.mode == 'preferences' else 'Home' if self.mode == 'home' or not self.app.selected_files else 'Files'
+        if getattr(self, '_active_navigation', None) == name:return
+        previous = getattr(self, '_active_navigation', None)
+        self._active_navigation = name
         self.breadcrumb.configure(text='Workspace  /  '+name)
-        for title, button in self.nav_buttons.items():
+        for title in {previous, name} & self.nav_buttons.keys():
+            button = self.nav_buttons[title]
             button.configure(fg_color=('#E2DDF3', '#2B2639') if title == name else 'transparent',
                              text_color=('#6652C2', '#C8BEF3') if title == name else ('#777785', '#a8a5b5'))
 
@@ -209,8 +261,7 @@ class FileWorkspace:
             return
         if self.mode == 'library':
             self.browser.grid(row=0, column=0, sticky='ew', padx=0, pady=(28, 24))
-            self.title.configure(text='Tools')
-            self.summary.configure(text='Choose a category, or search for a tool.')
+
         elif self.mode == 'home' or not has_files:
             self.converting = False
             self.home.grid(row=0, column=0, sticky='nsew')
@@ -228,16 +279,11 @@ class FileWorkspace:
                 return
             self.browser.grid(row=1, column=0, sticky='ew', padx=0, pady=(24, 24))
             paths = self.selected_inputs()
-            self.title.configure(text=paths[0].name if len(paths) == 1 else f'{len(paths)} files selected')
-            self.summary.configure(text='Choose what to do with your file.' if len(paths) == 1 else 'Choose an action. Select rows above to work on fewer files.')
-        signature = (self.mode, tuple(self.selected_inputs()))
+
+        signature = (self.mode, self.section, tuple(self.selected_inputs()))
         if signature != self._signature:
             self._signature = signature
             self.expanded = False
-            candidates = self.candidates()
-            groups = ['All categories', *sorted({t.group for t in candidates})]
-            self.group_menu.configure(values=groups)
-            if self.group.get() not in groups: self.group.set('All categories')
             self.render_tools()
 
     def candidates(self):
@@ -246,7 +292,11 @@ class FileWorkspace:
 
     def render_tools(self):
         self._sync_navigation()
-        for child in self.cards.winfo_children(): child.destroy()
+        signature = (self.mode, self.section, self.query.get().strip().casefold(), self.expanded, tuple(self.selected_inputs()))
+        if signature == self._render_signature:return
+        self._render_signature = signature
+        self._layout_items = []
+        for child in self.cards.winfo_children(): child.grid_remove()
         self.file_identity.grid_remove()
         if self.mode == 'files' and len(self.selected_inputs()) == 1:
             path = self.selected_inputs()[0]
@@ -259,6 +309,9 @@ class FileWorkspace:
             self.file_identity.grid(row=2, column=0, sticky='ew', pady=(4, 22))
             self.title.configure(text='Your file is ready.')
             self.summary.configure(text='Pick a direction. We’ll handle the details.')
+        if self.mode == 'files' and len(self.selected_inputs()) > 1:
+            self.title.configure(text=f'{len(self.selected_inputs())} files selected')
+            self.summary.configure(text='Choose an action. Select rows above to work on fewer files.')
         query = self.query.get().strip().casefold()
         if self.mode == 'library' or self.expanded or query:
             self.filters.grid()
@@ -275,14 +328,19 @@ class FileWorkspace:
             featured = ('speak', 'transcribe', 'pdf-merge', 'convert-image', 'convert-video', 'archive-extract')
             for index, key in enumerate(featured):
                 tool = next(t for t in self.tools if t.key == key)
-                tile = ctk.CTkFrame(self.cards, fg_color=('#ffffff', '#1C1C23'), corner_radius=12)
-                tile.grid(row=index//3, column=index%3, sticky='nsew', padx=(0, 12), pady=(0, 12))
-                ctk.CTkLabel(tile, text='', image=self._icons[section_for(tool)], anchor='w').pack(fill='x', padx=18, pady=(18, 8))
-                ctk.CTkButton(tile, text=tool.title+'  ›', anchor='w', height=42, font=ctk.CTkFont(size=12, weight='bold'),
-                              fg_color='transparent', text_color=('#282833', '#F0EFF6'), hover_color=('#EEEEF4', '#292932'),
-                              command=lambda t=tool:self.open(t)).pack(fill='x', padx=8)
-                ctk.CTkLabel(tile, text=tool.description, anchor='w', justify='left', wraplength=210,
-                             font=ctk.CTkFont(size=11), text_color=('#777785', '#9493A3')).pack(fill='x', padx=18, pady=(0, 20))
+                if key not in self._featured:
+                    tile = ctk.CTkFrame(self.cards, fg_color=('#ffffff', '#1C1C23'), corner_radius=12)
+                    ctk.CTkLabel(tile, text='', image=self._icons[section_for(tool)], anchor='w').pack(fill='x', padx=18, pady=(18, 8))
+                    ctk.CTkButton(tile, text=tool.title+'  \u203a', anchor='w', height=42, font=ctk.CTkFont(size=12, weight='bold'),
+                                  fg_color='transparent', text_color=('#282833', '#F0EFF6'), hover_color=('#EEEEF4', '#292932'),
+                                  command=lambda t=tool:self.open(t)).pack(fill='x', padx=8)
+                    ctk.CTkLabel(tile, text=tool.description, anchor='w', justify='left', wraplength=210,
+                                 font=ctk.CTkFont(size=11), text_color=('#777785', '#9493A3')).pack(fill='x', padx=18, pady=(0, 20))
+                    self._featured[key] = tile
+                self._featured[key].grid(row=index//3, column=index%3, sticky='nsew', padx=(0, 12), pady=(0, 12))
+            self.tool_groups = []
+            self._layout_items = [('featured', self._featured[key]) for key in featured]
+            self._relayout_tools()
             return
         if self.mode == 'library':
             self.library_back.grid()
@@ -297,39 +355,100 @@ class FileWorkspace:
         all_matches = matches
         if self.mode != 'library' and not query and not self.expanded:
             matches = matches[:4]
-        self.visible_tools = [t.key for t in matches]
-        self.cards.grid_columnconfigure(2, weight=0, uniform='', minsize=0)
-        self.cards.grid_columnconfigure((0, 1), weight=1, uniform='tools')
+        groups = grouped_tools(matches, self.section) if self.mode == 'library' and not query else [('', matches)]
+        self.tool_groups = [name for name, _ in groups if name]
+        self.visible_tools = [t.key for _, entries in groups for t in entries]
         if not matches:
-            ctk.CTkLabel(self.cards, text='No matching tools. Try another search or category.').grid(row=0, column=0, sticky='w')
-        for index, tool in enumerate(matches):
-            card = ctk.CTkFrame(self.cards, fg_color='transparent')
-            card.grid(row=index // 2, column=index % 2, sticky='ew', padx=(0, 12), pady=(0, 8))
-            button = ctk.CTkButton(card, text=f'{tool.title}   ›', image=self._icons[section_for(tool)], compound='left',
-                                  anchor='w', font=ctk.CTkFont(size=14), corner_radius=9,
-                                  fg_color=('#ffffff', '#1C1C23'), text_color=('#282833', '#F0EFF6'), hover_color=('#EEEEF4', '#292932'),
-                                  height=54, command=lambda t=tool: self.open(t))
-            button.pack(fill='x')
-            if self.mode == 'files' and not self.expanded and not query:
-                ctk.CTkLabel(card, text=tool.description, font=ctk.CTkFont(size=11), anchor='w', justify='left',
-                             wraplength=360, text_color=('#777785', '#9493A3')).pack(fill='x', padx=16, pady=(6, 14))
-            inputs = tool.inputs(self.selected_inputs())
-            hint = ''
-            if len(inputs) > 1 and not tool.multiple and self.mode != 'library':
-                hint = 'Select one file above'
-                button.configure(state='disabled')
-            elif self.mode != 'library' and len(inputs) < len(self.selected_inputs()):
-                hint = f'Applies to {len(inputs)} selected file(s)'
-            if hint:
-                ctk.CTkLabel(card, text=hint, font=ctk.CTkFont(size=11), text_color=('#777785', '#9493A3'), anchor='w').pack(fill='x', padx=12)
+            label = self._heading('No matching tools. Try another search.')
+            self._layout_items.append(('heading', label))
+        for name, entries in groups:
+            if name:self._layout_items.append(('heading', self._heading(name)))
+            for tool in entries:
+                if tool.key not in self._tool_rows:
+                    card = ctk.CTkFrame(self.cards, fg_color='transparent')
+                    button = ctk.CTkButton(card, text=TOOL_LABELS.get(tool.key,tool.title)+'   \u203a', image=self._icons[section_for(tool)], compound='left',
+                                          anchor='w', font=ctk.CTkFont(size=13), corner_radius=9, width=140,
+                                          fg_color=('#ffffff', '#1C1C23'), text_color=('#282833', '#F0EFF6'), hover_color=('#EEEEF4', '#292932'),
+                                          height=56, command=lambda t=tool:self.open(t))
+                    button.pack(fill='x')
+                    description = ctk.CTkLabel(card, text=tool.description, font=ctk.CTkFont(size=11), anchor='w', justify='left',
+                                                wraplength=300, text_color=('#777785', '#9493A3'))
+                    hint_label = ctk.CTkLabel(card, text='', font=ctk.CTkFont(size=11), anchor='w', text_color=('#777785', '#9493A3'))
+                    self._tool_rows[tool.key] = (card,button,description,hint_label)
+                card,button,description,hint_label = self._tool_rows[tool.key]
+                if description.winfo_manager():description.pack_forget()
+                if hint_label.winfo_manager():hint_label.pack_forget()
+                if self.mode == 'files' and not self.expanded and not query:
+                    description.pack(fill='x', padx=16, pady=(6, 14))
+                inputs = tool.inputs(self.selected_inputs())
+                disabled = len(inputs) > 1 and not tool.multiple and self.mode != 'library'
+                state = 'disabled' if disabled else 'normal'
+                if button.cget('state') != state:button.configure(state=state)
+                hint = 'Select one file above' if disabled else f'Applies to {len(inputs)} selected file(s)' if self.mode != 'library' and len(inputs) < len(self.selected_inputs()) else ''
+                if hint:
+                    hint_label.configure(text=hint);hint_label.pack(fill='x',padx=12)
+                self._layout_items.append(('tool',card))
         if self.mode != 'library' and not query:
-            extras = ctk.CTkFrame(self.cards, fg_color='transparent')
-            extras.grid(row=(len(matches)+1)//2, column=0, columnspan=2, sticky='w', pady=(12, 0))
+            if not hasattr(self, '_extras'):
+                self._extras = ctk.CTkFrame(self.cards, fg_color='transparent')
+                self._more = ctk.CTkButton(self._extras, text='More actions', width=120, height=30, fg_color='transparent',
+                                           text_color=('#7561D4', '#B9ADF3'), command=self._toggle_more)
+                self._change = ctk.CTkButton(self._extras,text='Change files',width=120,height=30,fg_color='transparent',
+                                             text_color=('#777785','#9493A3'),command=self._change_files)
+                self._change.pack(side='left')
+            self._more.pack_forget()
             if len(all_matches) > 4:
-                ctk.CTkButton(extras, text='Fewer actions' if self.expanded else 'More actions', width=120, height=30,
-                              fg_color='transparent', text_color=('#7561D4', '#B9ADF3'), command=self._toggle_more).pack(side='left', padx=(0, 16))
-            ctk.CTkButton(extras, text='Change files', width=120, height=30, fg_color='transparent',
-                          text_color=('#777785', '#9493A3'), command=self._change_files).pack(side='left')
+                self._more.configure(text='Fewer actions' if self.expanded else 'More actions')
+                self._more.pack(side='left',before=self._change,padx=(0,16))
+            self._layout_items.append(('footer',self._extras))
+        self._relayout_tools()
+
+    def _heading(self, name):
+        if name not in self._headings:
+            self._headings[name] = ctk.CTkLabel(self.cards,text=name,anchor='w',font=ctk.CTkFont(size=11,weight='bold'),text_color=('#777785','#9493A3'))
+        return self._headings[name]
+
+    def _schedule_search(self, _event=None):
+        if self._search_job:self.app.after_cancel(self._search_job)
+        def apply():
+            self._search_job = None
+            self.render_tools()
+        self._search_job = self.app.after(120,apply)
+
+    def _schedule_layout(self, _event=None):
+        if self._layout_job:self.app.after_cancel(self._layout_job)
+        def apply():
+            self._layout_job = None
+            self._relayout_tools()
+        self._layout_job = self.app.after(30,apply)
+
+    def _relayout_tools(self):
+        if not self._layout_items:return
+        scale = self.browser._get_widget_scaling()
+        width = max(300,self.browser.winfo_width()/scale)
+        featured = self._layout_items[0][0] == 'featured'
+        columns = 1 if width < 560 else 3 if featured and width >= 960 else 2
+        self.cards.grid_columnconfigure(2,weight=1 if columns==3 else 0,uniform='tools' if columns==3 else '',minsize=0)
+        self.cards.grid_columnconfigure(0,weight=1,uniform='tools')
+        self.cards.grid_columnconfigure(1,weight=1 if columns==2 else 0,uniform='tools' if columns==2 else '',minsize=0)
+        row,index=0,0
+        button_width=(width-12*(columns-1))/columns
+        for kind,widget in self._layout_items:
+            if kind not in {'tool', 'featured'}:
+                if index:row+=1;index=0
+                widget.grid(row=row,column=0,columnspan=columns,sticky='ew',pady=(16,8) if kind=='heading' else (12,0))
+                row+=1
+            else:
+                widget.grid(row=row,column=index,columnspan=1,sticky='ew',padx=(0,12) if index < columns-1 else 0,pady=(0,8))
+                for child in widget.winfo_children():
+                    if isinstance(child,ctk.CTkButton):
+                        wrap = max(100,int((button_width-80)*scale))
+                        if int(str(child._text_label.cget('wraplength'))) != wrap:child._text_label.configure(wraplength=wrap)
+                    elif isinstance(child,ctk.CTkLabel):
+                        wrap = max(120,int(button_width-32))
+                        if child.cget('wraplength') != wrap:child.configure(wraplength=wrap)
+                index+=1
+                if index==columns:row+=1;index=0
 
     def _show_section(self, name):
         self.section = name
@@ -435,10 +554,7 @@ def install_workspace(app, parent, queue, header, output, footer, header_right):
     def choose(name, command):
         if app.conversion_running:return
         command()
-        w.breadcrumb.configure(text='Workspace  /  '+name)
-        for title, button in w.nav_buttons.items():
-            button.configure(fg_color=('#E2DDF3', '#2B2639') if title == name else 'transparent',
-                             text_color=('#6652C2', '#C8BEF3') if title == name else ('#777785', '#a8a5b5'))
+        w._sync_navigation()
     def nav_button(container, name, command, image=None):
         button=ctk.CTkButton(container, text=name, image=image, compound='left', anchor='w', height=36,
                              font=ctk.CTkFont(size=12), fg_color='transparent', text_color=('#777785', '#a8a5b5'),
@@ -454,7 +570,7 @@ def install_workspace(app, parent, queue, header, output, footer, header_right):
                  text_color=('#9993A6', '#757180')).pack(fill='x', padx=12, pady=(28, 10))
     for name in SECTIONS:
         if name == 'Settings':continue
-        nav_button(nav, name, lambda n=name:(w.show_library(), w._show_section(n)), w._icons[name])
+        nav_button(nav, name, lambda n=name:w.show_library(n), w._icons[name])
     bottom = ctk.CTkFrame(sidebar, fg_color='transparent');bottom.grid(row=4, column=0, sticky='ew', padx=12, pady=20)
     w.preferences = ctk.CTkFrame(parent, fg_color='transparent')
     w.preferences.grid_columnconfigure(0, weight=1)

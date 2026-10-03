@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from design_system import (ELEVATED_DARK, style_dialog, ACCENT, ACCENT_HOVER, BORDER_DARK, BORDER_LIGHT, DANGER_LIGHT, ELEVATED_LIGHT, MUTED_DARK, MUTED_LIGHT, PRIMARY_TEXT, SURFACE_DARK, TEXT_LIGHT)
+
 import os
 from urllib.parse import urlparse
 import webbrowser
@@ -24,6 +26,7 @@ def valid_purchase_url(url: str) -> bool:
 class LicenseDialog(ctk.CTkToplevel):
     def __init__(self, parent: ctk.CTk, on_status_changed: object | None = None) -> None:
         super().__init__(parent)
+        style_dialog(self, parent)
         self.title("Shadow Media Studio Pro - License Manager")
         self.geometry("560x520")
         self.minsize(520, 480)
@@ -35,7 +38,7 @@ class LicenseDialog(ctk.CTkToplevel):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        card = ctk.CTkFrame(self, corner_radius=14, fg_color=("#ffffff", "#191c20"))
+        card = ctk.CTkFrame(self, corner_radius=14, fg_color=("#ffffff", SURFACE_DARK))
         card.grid(row=0, column=0, padx=24, pady=24, sticky="nsew")
         card.grid_columnconfigure(0, weight=1)
 
@@ -45,16 +48,16 @@ class LicenseDialog(ctk.CTkToplevel):
         is_vip = info.get("is_vip", False)
 
         if is_vip:
-            badge_color = "#D4A03C"
-            badge_text_color = "#171308"
+            badge_color = ACCENT
+            badge_text_color = PRIMARY_TEXT
             badge_text = "VIP MASTER ACTIVATED"
         elif is_pro:
-            badge_color = "#16a34a"
+            badge_color = ACCENT
             badge_text_color = "#ffffff"
             badge_text = "PRO LIFETIME ACTIVATED"
         else:
-            badge_color = "#d97706"
-            badge_text_color = "#171308"
+            badge_color = ACCENT
+            badge_text_color = PRIMARY_TEXT
             badge_text = "FREE EVALUATION MODE"
 
         ctk.CTkLabel(
@@ -72,7 +75,7 @@ class LicenseDialog(ctk.CTkToplevel):
             card,
             text="Shadow Media Studio Pro",
             font=ctk.CTkFont(family=DISPLAY_FONT, size=21, weight="bold"),
-            text_color=("#101828", "#f2f4f7"),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
         ).pack()
 
         # Pro Benefits list
@@ -88,7 +91,7 @@ class LicenseDialog(ctk.CTkToplevel):
             card,
             text=benefits,
             justify="left",
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
             font=ctk.CTkFont(size=12),
         ).pack(pady=(12, 14), padx=24, anchor="w")
 
@@ -105,14 +108,14 @@ class LicenseDialog(ctk.CTkToplevel):
             card,
             text="Paste your full key: PRO-XXXXXXXX-... or VIP-XXXXXXXX-...",
             font=ctk.CTkFont(size=10),
-            text_color=("#98a2b3", "#667085"),
+            text_color=(MUTED_DARK, MUTED_LIGHT),
         ).pack(padx=28, anchor="w")
 
         self.msg_label = ctk.CTkLabel(
             card,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color="#d92d20",
+            text_color=DANGER_LIGHT,
         )
         self.msg_label.pack(pady=(0, 12))
 
@@ -127,8 +130,9 @@ class LicenseDialog(ctk.CTkToplevel):
                 command=self._do_activate,
                 width=120,
                 height=34,
-                fg_color="#12877A",
-                hover_color="#17A594",
+                fg_color=ACCENT,
+                hover_color=ACCENT_HOVER,
+                text_color=PRIMARY_TEXT,
             ).pack(side="left", padx=6)
             ctk.CTkButton(
                 actions,
@@ -138,8 +142,8 @@ class LicenseDialog(ctk.CTkToplevel):
                 height=34,
                 fg_color="transparent",
                 border_width=1,
-                border_color=("#d0d5dd", "#475467"),
-                text_color=("#344054", "#f2f4f7"),
+                border_color=(BORDER_LIGHT, BORDER_DARK),
+                text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             ).pack(side="left", padx=6)
         else:
             ctk.CTkButton(
@@ -148,7 +152,7 @@ class LicenseDialog(ctk.CTkToplevel):
                 command=self._do_deactivate,
                 width=120,
                 height=34,
-                fg_color="gray40",
+                fg_color=ELEVATED_DARK,
             ).pack(side="left", padx=6)
 
         ctk.CTkButton(
@@ -159,8 +163,8 @@ class LicenseDialog(ctk.CTkToplevel):
             height=34,
             fg_color="transparent",
             border_width=1,
-            border_color=("#d0d5dd", "#475467"),
-            text_color=("#344054", "#f2f4f7"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
         ).pack(side="left", padx=6)
 
         enable_keyboard_navigation(self)
@@ -174,13 +178,13 @@ class LicenseDialog(ctk.CTkToplevel):
         if not valid_purchase_url(PURCHASE_URL):
             self.msg_label.configure(
                 text="The purchase page has not been configured. Contact the publisher for a license.",
-                text_color="#d97706",
+                text_color=ACCENT,
             )
             return
         if not webbrowser.open_new_tab(PURCHASE_URL):
             self.msg_label.configure(
                 text="Could not open the purchase page in your browser.",
-                text_color="#d92d20",
+                text_color=DANGER_LIGHT,
             )
 
     def destroy(self) -> None:
@@ -197,17 +201,17 @@ class LicenseDialog(ctk.CTkToplevel):
         key = self.entry.get("1.0", "end").strip()
         ok, msg = activate_license(key)
         if ok:
-            self.msg_label.configure(text=msg, text_color="#16a34a")
+            self.msg_label.configure(text=msg, text_color=ACCENT)
             if callable(self.on_status_changed):
                 self.on_status_changed()
             self.after(1200, self.destroy)
         else:
-            self.msg_label.configure(text=msg, text_color="#d92d20")
+            self.msg_label.configure(text=msg, text_color=DANGER_LIGHT)
 
     def _do_deactivate(self) -> None:
         deactivate_license()
         self.entry.delete("1.0", "end")
-        self.msg_label.configure(text="License deactivated.", text_color="#d97706")
+        self.msg_label.configure(text="License deactivated.", text_color=ACCENT)
         if callable(self.on_status_changed):
             self.on_status_changed()
         self.after(1000, self.destroy)

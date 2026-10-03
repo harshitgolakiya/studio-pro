@@ -3,6 +3,8 @@ frontier and a recommendation, and apply the chosen setting to the main
 window."""
 from __future__ import annotations
 
+from design_system import (style_dialog, ACCENT, ACCENT_HOVER, ACCENT_TEXT_LIGHT, MUTED_DARK, MUTED_LIGHT, PRIMARY_TEXT, SURFACE_DARK)
+
 from pathlib import Path
 import threading
 import tkinter as tk
@@ -26,9 +28,9 @@ from optimizer import (
 from ui_dispatch import TkEventBridge, set_dialog_owner
 from utils import format_file_size
 
-_MUTED = ("#607181", "#91A0AE")
-_ACCENT = "#16A394"
-_CTA = "#D4A03C"
+_MUTED = (MUTED_LIGHT, MUTED_DARK)
+_ACCENT = ACCENT
+_CTA = ACCENT
 
 
 class OptimizerDialog(ctk.CTkToplevel):
@@ -40,6 +42,7 @@ class OptimizerDialog(ctk.CTkToplevel):
         initial_destination: str = "Web (modern browsers)",
     ) -> None:
         super().__init__(master)
+        style_dialog(self, master)
         self.title(f"Optimize · {source_path.name}")
         self.geometry("880x640")
         self.minsize(760, 540)
@@ -67,7 +70,7 @@ class OptimizerDialog(ctk.CTkToplevel):
         ctk.CTkSlider(top, from_=0.85, to=0.99, number_of_steps=14, variable=self.min_ssim, width=140, command=self._floor_changed).pack(side="left")
         self.floor_label.pack(side="left", padx=(4, 14))
         ctk.CTkCheckBox(top, text="Fast (≤1024 px working copy)", variable=self.fast_mode, font=ctk.CTkFont(size=11)).pack(side="left")
-        self.analyze_btn = ctk.CTkButton(top, text="Analyze", width=100, height=30, fg_color=_ACCENT, command=self.run_analysis)
+        self.analyze_btn = ctk.CTkButton(top, text="Analyze", width=100, height=30, fg_color=_ACCENT, command=self.run_analysis, text_color=PRIMARY_TEXT)
         self.analyze_btn.pack(side="right")
 
         self.progress = ctk.CTkProgressBar(self, height=6)
@@ -107,7 +110,7 @@ class OptimizerDialog(ctk.CTkToplevel):
 
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.pack(fill="x", padx=16, pady=(0, 14))
-        self.apply_reco_btn = ctk.CTkButton(actions, text="Apply recommendation", width=180, height=32, fg_color=_CTA, hover_color="#E8B750", text_color="#1a1a1a", state="disabled", command=self._apply_recommendation)
+        self.apply_reco_btn = ctk.CTkButton(actions, text="Apply recommendation", width=180, height=32, fg_color=_CTA, hover_color=ACCENT_HOVER, text_color=PRIMARY_TEXT, state="disabled", command=self._apply_recommendation)
         self.apply_reco_btn.pack(side="left", padx=(0, 8))
         self.apply_sel_btn = ctk.CTkButton(actions, text="Apply selected", width=130, height=32, state="disabled", command=self._apply_selected)
         self.apply_sel_btn.pack(side="left")
@@ -214,8 +217,8 @@ class OptimizerDialog(ctk.CTkToplevel):
         if w < 60 or h < 60:
             return
         dark = ctk.get_appearance_mode().lower() == "dark"
-        bg = "#11161D" if dark else "#FFFFFF"
-        fg = "#91A0AE" if dark else "#607181"
+        bg = SURFACE_DARK if dark else "#FFFFFF"
+        fg = MUTED_DARK if dark else MUTED_LIGHT
         c.configure(bg=bg)
         pad_l, pad_r, pad_t, pad_b = 46, 12, 14, 30
         c.create_text(w / 2, 8, text="File size vs SSIM (★ = Pareto frontier)", fill=fg, font=("TkDefaultFont", 9))
@@ -248,7 +251,7 @@ class OptimizerDialog(ctk.CTkToplevel):
         if y0 <= floor <= y1:
             c.create_line(pad_l, py(floor), w - pad_r, py(floor), fill=_CTA, dash=(3, 3))
 
-        colours = {"WEBP": "#16A394", "AVIF": "#6D28D9", "HEIC": "#1D4ED8", "JPEG": "#B45309", "JPEG 2000": "#0369A1"}
+        colours = {'WEBP': ACCENT, 'AVIF': '#A799EA', 'HEIC': '#6652C2', 'JPEG': '#C4BCDE', 'JPEG 2000': '#9185AA'}
         frontier = sorted((cand for cand in self._candidates if cand.pareto), key=lambda cand: cand.size_bytes)
         if len(frontier) > 1:
             c.create_line(*[coord for cand in frontier for coord in (px(cand.estimated_full_bytes), py(cand.ssim))], fill=fg, width=1)

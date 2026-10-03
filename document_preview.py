@@ -1,6 +1,8 @@
 """Native local document viewer: rendered Office/PDF pages and extracted text."""
 from __future__ import annotations
 
+from design_system import style_dialog
+
 from pathlib import Path
 import tempfile
 import threading
@@ -20,6 +22,7 @@ from utils import open_file_or_folder
 class DocumentPreviewDialog(ctk.CTkToplevel):
     def __init__(self, master, source: Path):
         super().__init__(master)
+        style_dialog(self, master)
         self.title(f"Document Preview — {source.name}")
         self.geometry("900x740")
         self.minsize(650, 520)

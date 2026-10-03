@@ -8,6 +8,8 @@ owning a format list of its own.
 """
 from __future__ import annotations
 
+from design_system import (style_dialog, ACCENT, ACCENT_TEXT_DARK, ACCENT_TEXT_LIGHT, BORDER_LIGHT, DANGER_DARK, DANGER_LIGHT, DANGER_SURFACE_DARK, DANGER_SURFACE_LIGHT, ELEVATED_DARK, ELEVATED_LIGHT, MUTED_DARK, MUTED_LIGHT, SELECTION_DARK, SELECTION_LIGHT, SURFACE_DARK, TEXT_LIGHT)
+
 from dataclasses import dataclass
 import sys
 from typing import Any, Callable, Sequence
@@ -67,14 +69,14 @@ for _target, _description in {
 # badge says about the format so alpha/animation/lossless/etc. read
 # consistently across the app.
 _BADGE_FAMILIES: dict[str, tuple[tuple[str, str], tuple[str, str]]] = {
-    "alpha": (("#DBEAFE", "#1E3A5F"), ("#1D4ED8", "#93C5FD")),
-    "animation": (("#EDE9FE", "#312E81"), ("#6D28D9", "#C4B5FD")),
-    "hdr": (("#FFEDD5", "#7C2D12"), ("#C2410C", "#FDBA74")),
-    "lossless": (("#DCFCE7", "#14532D"), ("#15803D", "#86EFAC")),
-    "lossy": (("#FEF3C7", "#78350F"), ("#B45309", "#FDE68A")),
-    "metadata": (("#E2E8F0", "#1E293B"), ("#334155", "#CBD5E1")),
-    "compat": (("#E8F7F4", "#17312E"), ("#0E756B", "#70E1D4")),
-    "warning": (("#FEE2E2", "#7F1D1D"), ("#B91C1C", "#FCA5A5")),
+    "alpha": ((SELECTION_LIGHT, SELECTION_DARK), (ACCENT, ACCENT_TEXT_DARK)),
+    "animation": ((SELECTION_LIGHT, SELECTION_DARK), (ACCENT, ACCENT_TEXT_DARK)),
+    "hdr": ((SELECTION_LIGHT, SELECTION_DARK), (DANGER_LIGHT, ACCENT_TEXT_DARK)),
+    "lossless": ((SELECTION_LIGHT, SELECTION_DARK), (ACCENT, ACCENT_TEXT_DARK)),
+    "lossy": ((SELECTION_LIGHT, SELECTION_DARK), (ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK)),
+    "metadata": ((BORDER_LIGHT, ELEVATED_DARK), (TEXT_LIGHT, BORDER_LIGHT)),
+    "compat": ((SELECTION_LIGHT, SELECTION_DARK), (ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK)),
+    "warning": ((DANGER_SURFACE_LIGHT, DANGER_SURFACE_DARK), (DANGER_LIGHT, DANGER_DARK)),
 }
 
 _BADGE_TO_FAMILY: dict[str, str] = {
@@ -153,6 +155,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
         on_select: Callable[[str], None],
     ) -> None:
         super().__init__(master)
+        style_dialog(self, master)
         self.title("Choose Output Format")
         self.geometry("640x560")
         self.minsize(520, 420)
@@ -167,9 +170,9 @@ class FormatBrowserDialog(ctk.CTkToplevel):
         self._rows: dict[str, ctk.CTkFrame] = {}
         self._cursor = -1
         self._current = current
-        self._row_fill = ("#FFFFFF", "#11161D")
-        self._row_hover = ("#E9EEF3", "#1A2029")
-        self._row_active = ("#D8F3EF", "#123A36")
+        self._row_fill = ("#FFFFFF", SURFACE_DARK)
+        self._row_hover = (ELEVATED_LIGHT, ELEVATED_DARK)
+        self._row_active = (SELECTION_LIGHT, SELECTION_DARK)
 
         self.query = ctk.StringVar()
         search = ctk.CTkEntry(
@@ -181,7 +184,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
         search.bind("<KeyRelease>", lambda _event: self.query.set(search.get()))
         self.query.trace_add("write", lambda *_: self._render())
 
-        self.count_label = ctk.CTkLabel(self, text="", anchor="w", font=ctk.CTkFont(size=10), text_color=("#607181", "#91A0AE"))
+        self.count_label = ctk.CTkLabel(self, text="", anchor="w", font=ctk.CTkFont(size=10), text_color=(MUTED_LIGHT, MUTED_DARK))
         self.count_label.pack(fill="x", padx=18, pady=(0, 4))
 
         self.list_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -191,7 +194,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
             self,
             text="↑ ↓ to move   ·   Enter to choose   ·   Esc to close",
             font=ctk.CTkFont(size=10),
-            text_color=("#607181", "#91A0AE"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         )
         hint.pack(pady=(0, 10))
 
@@ -244,7 +247,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
             ctk.CTkLabel(
                 self.list_frame,
                 text="No formats match. Try a capability like “alpha” or a category like “video”.",
-                text_color=("#607181", "#91A0AE"),
+                text_color=(MUTED_LIGHT, MUTED_DARK),
             ).pack(pady=24)
             self._cursor = -1
             return
@@ -255,7 +258,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
                 text=category.upper(),
                 anchor="w",
                 font=ctk.CTkFont(size=10, weight="bold"),
-                text_color=("#607181", "#91A0AE"),
+                text_color=(MUTED_LIGHT, MUTED_DARK),
             ).pack(fill="x", padx=8, pady=(10, 2))
             for entry in entries:
                 self._rows[entry.label] = self._build_row(entry)
@@ -284,7 +287,7 @@ class FormatBrowserDialog(ctk.CTkToplevel):
                 justify="left",
                 wraplength=560,
                 font=ctk.CTkFont(size=11),
-                text_color=("#607181", "#91A0AE"),
+                text_color=(MUTED_LIGHT, MUTED_DARK),
             ).pack(fill="x", padx=10, pady=(0, 7))
         else:
             ctk.CTkFrame(row, fg_color="transparent", height=6).pack()

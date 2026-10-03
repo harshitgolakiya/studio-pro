@@ -1,6 +1,8 @@
 """Recipe library window: apply, save, duplicate, delete, import and export."""
 from __future__ import annotations
 
+from design_system import (style_dialog, MUTED_DARK, MUTED_LIGHT, SELECTION_DARK, SELECTION_LIGHT, SURFACE_DARK)
+
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Any, Callable
@@ -21,9 +23,9 @@ from recipes import (
     save_recipe,
 )
 
-_MUTED = ("#607181", "#91A0AE")
-_ROW = ("#FFFFFF", "#11161D")
-_ROW_ACTIVE = ("#D8F3EF", "#123A36")
+_MUTED = (MUTED_LIGHT, MUTED_DARK)
+_ROW = ("#FFFFFF", SURFACE_DARK)
+_ROW_ACTIVE = (SELECTION_LIGHT, SELECTION_DARK)
 
 
 class RecipeManagerDialog(ctk.CTkToplevel):
@@ -34,6 +36,7 @@ class RecipeManagerDialog(ctk.CTkToplevel):
         apply_settings: Callable[[dict[str, Any]], None],
     ) -> None:
         super().__init__(master)
+        style_dialog(self, master)
         self.title("Processing Recipes")
         self.geometry("620x520")
         self.minsize(520, 400)

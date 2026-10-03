@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from design_system import (ELEVATED_DARK, style_dialog, ACCENT, ACCENT_HOVER, ACCENT_TEXT_DARK, ACCENT_TEXT_LIGHT, BACKGROUND_DARK, BACKGROUND_LIGHT, BORDER_DARK, BORDER_LIGHT, DANGER_DARK, DANGER_LIGHT, MUTED_DARK, MUTED_LIGHT, SELECTION_DARK, SELECTION_LIGHT, SURFACE_DARK, TEXT_DARK, TEXT_LIGHT)
+
 from dataclasses import dataclass
 import io
 import math
@@ -23,9 +25,9 @@ from utils import format_file_size, open_file_or_folder, reveal_in_file_manager
 from ui_dispatch import TkEventBridge, set_dialog_owner
 
 _SEVERITY_COLOURS = {
-    "high": ("#b91c1c", "#fca5a5"),
-    "medium": ("#b45309", "#fde68a"),
-    "info": ("#667085", "#98a2b3"),
+    "high": (DANGER_LIGHT, DANGER_DARK),
+    "medium": (ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
+    "info": (MUTED_LIGHT, MUTED_DARK),
 }
 
 
@@ -178,6 +180,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         on_apply: Callable[[str, int], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        style_dialog(self, parent)
         self.title(f"Image Inspection & Diff - {source_path.name}")
         self.geometry("1100x740")
         self.minsize(920, 600)
@@ -259,7 +262,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             title_frame,
             text=f"Original: {orig_size_str}",
             font=ctk.CTkFont(size=12),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         )
         self._header_info_label.pack(anchor="w")
 
@@ -327,7 +330,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             ):
                 chip = ctk.CTkFrame(
                     self.metrics_frame,
-                    fg_color=("#E8F7F4", "#17312E"),
+                    fg_color=(SELECTION_LIGHT, SELECTION_DARK),
                     corner_radius=6,
                 )
                 chip.pack(side="left", padx=(0, 6))
@@ -335,7 +338,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                     chip,
                     text=f"{label}  {value}",
                     font=ctk.CTkFont(size=10, weight="bold"),
-                    text_color=("#0E756B", "#70E1D4"),
+                    text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
                 ).pack(padx=8, pady=4)
 
     def _build_content_area(self) -> None:
@@ -382,9 +385,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         container = ctk.CTkFrame(
             self.content_frame,
             corner_radius=10,
-            fg_color=("#ffffff", "#191c20"),
+            fg_color=("#ffffff", SURFACE_DARK),
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure(0, weight=1)
@@ -398,21 +401,21 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             top_bar,
             text="◀ ORIGINAL",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#17A594",
+            text_color=ACCENT_HOVER,
         ).pack(side="left")
 
         ctk.CTkLabel(
             top_bar,
             text="Drag line horizontally to inspect compression quality",
             font=ctk.CTkFont(size=11),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(side="left", padx=16)
 
         ctk.CTkLabel(
             top_bar,
             text="COMPRESSED ▶",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#16a34a",
+            text_color=ACCENT,
         ).pack(side="right")
 
         # Zoom Controls
@@ -461,7 +464,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             container,
             width=disp_w,
             height=disp_h,
-            bg="#0f1115",
+            bg=BACKGROUND_DARK,
             highlightthickness=0,
             cursor="sb_h_double_arrow",
         )
@@ -475,7 +478,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             container,
             text=format_probe(None),
             font=ctk.CTkFont(family="Menlo" if sys.platform == "darwin" else "Consolas", size=11),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         )
         self.probe_lbl.grid(row=2, column=0, padx=16, pady=(0, 12), sticky="w")
 
@@ -549,9 +552,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         container = ctk.CTkFrame(
             self.content_frame,
             corner_radius=10,
-            fg_color=("#ffffff", "#191c20"),
+            fg_color=("#ffffff", SURFACE_DARK),
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure(0, weight=1)
@@ -561,7 +564,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             container,
             text="Pixel Difference Map (Amplified x10 to highlight compression artifacts)",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#d97706", "#f59e0b"),
+            text_color=(ACCENT, ACCENT_TEXT_DARK),
         ).grid(row=0, column=0, padx=16, pady=(10, 4), sticky="w")
 
         self._prepare_display_images(max_w=740, max_h=440)
@@ -591,9 +594,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         container = ctk.CTkFrame(
             self.content_frame,
             corner_radius=10,
-            fg_color=("#ffffff", "#191c20"),
+            fg_color=("#ffffff", SURFACE_DARK),
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure(0, weight=1)
@@ -641,7 +644,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             text="⟳ Re-encode",
             width=100,
             height=28,
-            fg_color="#16a394",
+            fg_color=ACCENT,
             command=self._trigger_variant_generation,
         )
         self.refresh_btn.pack(side="left", padx=(0, 14))
@@ -650,7 +653,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             top_bar,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         )
         self.variant_status_lbl.pack(side="left")
 
@@ -764,9 +767,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 self.cards_scroll,
                 width=260,
                 corner_radius=10,
-                fg_color=("#ffffff", "#16191d"),
+                fg_color=("#ffffff", SURFACE_DARK),
                 border_width=1,
-                border_color=("#e2e8f0", "#2d333b"),
+                border_color=(BORDER_LIGHT, BORDER_DARK),
             )
             card.pack(side="left", padx=8, pady=8, fill="y")
             card.pack_propagate(False)
@@ -779,7 +782,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 hdr_row,
                 text=f"#{idx + 1}",
                 font=ctk.CTkFont(size=12, weight="bold"),
-                text_color=("#667085", "#98a2b3"),
+                text_color=(MUTED_LIGHT, MUTED_DARK),
             ).pack(side="left", padx=(0, 6))
 
             codec_var = tk.StringVar(value=codec)
@@ -798,7 +801,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                     hdr_row,
                     text="q:",
                     font=ctk.CTkFont(size=11),
-                    text_color=("#667085", "#98a2b3"),
+                    text_color=(MUTED_LIGHT, MUTED_DARK),
                 ).pack(side="left", padx=(0, 2))
                 q_entry = ctk.CTkEntry(hdr_row, width=42, height=26, font=ctk.CTkFont(size=11))
                 q_entry.insert(0, str(quality))
@@ -818,7 +821,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 width=236,
                 height=160,
                 corner_radius=8,
-                fg_color=("#0f1115", "#0f1115"),
+                fg_color=(BACKGROUND_DARK, BACKGROUND_DARK),
             )
             thumb_box.pack(padx=12, pady=4)
             thumb_box.pack_propagate(False)
@@ -830,7 +833,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                         thumb_box,
                         text=f"Encode Error:\n{res.error}",
                         font=ctk.CTkFont(size=10),
-                        text_color="#ef4444",
+                        text_color=DANGER_LIGHT,
                         wraplength=210,
                     ).pack(expand=True, padx=8)
                 else:
@@ -844,17 +847,17 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                         )
                         ctk.CTkLabel(thumb_box, text="", image=ctk_img).pack(expand=True)
                     except Exception as err:
-                        ctk.CTkLabel(thumb_box, text=f"Preview error:\n{err}", text_color="gray60").pack(expand=True)
+                        ctk.CTkLabel(thumb_box, text=f"Preview error:\n{err}", text_color=MUTED_DARK).pack(expand=True)
             else:
                 ctk.CTkLabel(
                     thumb_box,
                     text="Rendering variant…",
                     font=ctk.CTkFont(size=11),
-                    text_color="#94a3b8",
+                    text_color=MUTED_DARK,
                 ).pack(expand=True)
 
             # Metrics container
-            metrics_box = ctk.CTkFrame(card, fg_color=("#f8fafc", "#121417"), corner_radius=6)
+            metrics_box = ctk.CTkFrame(card, fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK), corner_radius=6)
             metrics_box.pack(fill="x", padx=12, pady=6)
 
             if res is not None and not res.error:
@@ -862,23 +865,23 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 if orig_size > 0:
                     pct = ((orig_size - res.estimated_full_bytes) / orig_size) * 100.0
                     saved_text = f"-{pct:.1f}%" if pct >= 0 else f"+{abs(pct):.1f}%"
-                    saved_color = ("#16a34a", "#4ade80") if pct >= 0 else ("#d97706", "#fbbf24")
+                    saved_color = (ACCENT, ACCENT_TEXT_DARK) if pct >= 0 else (ACCENT, ACCENT_TEXT_DARK)
                 else:
                     saved_text = ""
-                    saved_color = ("#64748b", "#94a3b8")
+                    saved_color = (MUTED_LIGHT, MUTED_DARK)
 
                 if res.ssim >= 0.98:
                     q_badge = "Near-lossless"
-                    q_color = ("#0284c7", "#38bdf8")
+                    q_color = (ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK)
                 elif res.ssim >= 0.94:
                     q_badge = "High fidelity"
-                    q_color = ("#16a34a", "#4ade80")
+                    q_color = (ACCENT, ACCENT_TEXT_DARK)
                 elif res.ssim >= 0.88:
                     q_badge = "Good quality"
-                    q_color = ("#d97706", "#fbbf24")
+                    q_color = (ACCENT, ACCENT_TEXT_DARK)
                 else:
                     q_badge = "Lossy"
-                    q_color = ("#dc2626", "#f87171")
+                    q_color = (DANGER_LIGHT, DANGER_DARK)
 
                 psnr_txt = "∞ dB" if math.isinf(res.psnr) else f"{res.psnr:.1f} dB"
 
@@ -902,7 +905,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                     metrics_box,
                     text=f"PSNR: {psnr_txt} · {res.encode_ms:.0f} ms",
                     font=ctk.CTkFont(size=10),
-                    text_color=("#64748b", "#94a3b8"),
+                    text_color=(MUTED_LIGHT, MUTED_DARK),
                     anchor="w",
                 ).pack(anchor="w", padx=8, pady=(1, 4))
             else:
@@ -910,7 +913,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                     metrics_box,
                     text="Metrics unavailable" if (res and res.error) else "Computing metrics…",
                     font=ctk.CTkFont(size=10),
-                    text_color=("#64748b", "#94a3b8"),
+                    text_color=(MUTED_LIGHT, MUTED_DARK),
                 ).pack(padx=8, pady=12)
 
             # Actions row
@@ -923,7 +926,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 text="🔍 Split Slider",
                 font=ctk.CTkFont(size=11, weight="bold"),
                 height=26,
-                fg_color="#16a394" if can_act else "gray50",
+                fg_color=ACCENT if can_act else ELEVATED_DARK,
                 state="normal" if can_act else "disabled",
                 command=lambda r=res, c=codec, q=quality: self._compare_variant_in_slider(r, c, q) if r else None,
             ).pack(fill="x", pady=(0, 4))
@@ -937,7 +940,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                     text="✓ Apply",
                     font=ctk.CTkFont(size=10),
                     height=24,
-                    fg_color=("#2563eb", "#1d4ed8") if can_act else "gray50",
+                    fg_color=(ACCENT, ACCENT) if can_act else ELEVATED_DARK,
                     state="normal" if can_act else "disabled",
                     command=lambda c=codec, q=quality: self._apply_variant_to_app(c, q),
                 ).pack(side="left", expand=True, fill="x", padx=(0, 2))
@@ -949,8 +952,8 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 height=24,
                 fg_color="transparent",
                 border_width=1,
-                border_color=("#cbd5e1", "#334155"),
-                text_color=("#334155", "#f1f5f9"),
+                border_color=(BORDER_LIGHT, TEXT_LIGHT),
+                text_color=(TEXT_LIGHT, TEXT_DARK),
                 state="normal" if can_act else "disabled",
                 command=lambda r=res: self._save_variant_as(r) if r else None,
             ).pack(side="left", expand=True, fill="x", padx=(2, 0))
@@ -1035,8 +1038,8 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             parent,
             corner_radius=10,
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
-            fg_color=("#ffffff", "#191c20"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
+            fg_color=("#ffffff", SURFACE_DARK),
         )
         card.grid(row=0, column=col, padx=8, pady=4, sticky="nsew")
         card.grid_rowconfigure(1, weight=1)
@@ -1050,10 +1053,10 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             card,
             text=panel_title,
             font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=("#1d2939", "#f2f4f7"),
+            text_color=(TEXT_LIGHT, TEXT_DARK),
         ).grid(row=0, column=0, padx=16, pady=(12, 4), sticky="w")
 
-        preview_area = ctk.CTkFrame(card, fg_color=("#f8fafc", "#121417"), corner_radius=8)
+        preview_area = ctk.CTkFrame(card, fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK), corner_radius=8)
         preview_area.grid(row=1, column=0, padx=14, pady=6, sticky="nsew")
         preview_area.grid_rowconfigure(0, weight=1)
         preview_area.grid_columnconfigure(0, weight=1)
@@ -1089,7 +1092,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 ctk.CTkLabel(
                     preview_area,
                     text=f"Cannot preview image:\n{err}",
-                    text_color="gray60",
+                    text_color=MUTED_DARK,
                 ).grid(row=0, column=0)
         elif is_output and self.conv_pil:
             try:
@@ -1113,18 +1116,18 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 ctk.CTkLabel(
                     preview_area,
                     text=f"Cannot preview variant:\n{err}",
-                    text_color="gray60",
+                    text_color=MUTED_DARK,
                 ).grid(row=0, column=0)
         else:
             msg = "Not yet converted" if is_output else "Image not found"
-            ctk.CTkLabel(preview_area, text=msg, text_color="gray60").grid(row=0, column=0)
+            ctk.CTkLabel(preview_area, text=msg, text_color=MUTED_DARK).grid(row=0, column=0)
 
         if info_text:
             ctk.CTkLabel(
                 card,
                 text=info_text,
                 font=ctk.CTkFont(size=11),
-                text_color=("#667085", "#98a2b3"),
+                text_color=(MUTED_LIGHT, MUTED_DARK),
             ).grid(row=2, column=0, padx=16, pady=(4, 12), sticky="w")
         else:
             ctk.CTkLabel(card, text="").grid(row=2, column=0, pady=4)
@@ -1150,8 +1153,8 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             height=32,
             fg_color="transparent",
             border_width=1,
-            border_color=("#d0d5dd", "#475467"),
-            text_color=("#344054", "#f2f4f7"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
+            text_color=(BORDER_DARK, TEXT_DARK),
         ).pack(side="left")
 
         ctk.CTkButton(
@@ -1172,9 +1175,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         container = ctk.CTkScrollableFrame(
             self.content_frame,
             corner_radius=10,
-            fg_color=("#ffffff", "#191c20"),
+            fg_color=("#ffffff", SURFACE_DARK),
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure((0, 1), weight=1)
@@ -1183,7 +1186,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             container,
             text="Technical Metadata & EXIF Audit",
             font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=("#1d2939", "#f2f4f7"),
+            text_color=(TEXT_LIGHT, TEXT_DARK),
         ).grid(row=0, column=0, columnspan=2, padx=16, pady=(12, 10), sticky="w")
 
         # Original Details
@@ -1198,9 +1201,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         card = ctk.CTkFrame(
             parent,
             corner_radius=8,
-            fg_color=("#f8fafc", "#121417"),
+            fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK),
             border_width=1,
-            border_color=("#e2e8f0", "#2d333b"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         card.grid(row=2, column=0, columnspan=2, padx=8, pady=(8, 4), sticky="ew")
         ctk.CTkLabel(
@@ -1228,7 +1231,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 card,
                 text=warning.detail,
                 font=ctk.CTkFont(size=11),
-                text_color=("#475467", "#cbd5e1"),
+                text_color=(BORDER_DARK, BORDER_LIGHT),
                 wraplength=860,
                 justify="left",
             ).pack(anchor="w", padx=24, pady=(0, 2))
@@ -1240,9 +1243,9 @@ class ImagePreviewDialog(ctk.CTkToplevel):
         card = ctk.CTkFrame(
             parent,
             corner_radius=8,
-            fg_color=("#f8fafc", "#121417"),
+            fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK),
             border_width=1,
-            border_color=("#e2e8f0", "#2d333b"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         card.grid(row=1, column=col, padx=8, pady=4, sticky="nsew")
         card.grid_columnconfigure(1, weight=1)
@@ -1251,12 +1254,12 @@ class ImagePreviewDialog(ctk.CTkToplevel):
             card,
             text=title,
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#17A594" if col == 0 else "#16a34a",
+            text_color=ACCENT_HOVER if col == 0 else ACCENT,
         ).grid(row=0, column=0, columnspan=2, padx=12, pady=(10, 6), sticky="w")
 
         if not path or not path.exists():
             ctk.CTkLabel(
-                card, text="File not generated or missing", text_color="gray60"
+                card, text="File not generated or missing", text_color=MUTED_DARK
             ).grid(row=1, column=0, padx=12, pady=8)
             return
 
@@ -1297,7 +1300,7 @@ class ImagePreviewDialog(ctk.CTkToplevel):
                 card,
                 text=f"{k}:",
                 font=ctk.CTkFont(size=11, weight="bold"),
-                text_color=("#667085", "#98a2b3"),
+                text_color=(MUTED_LIGHT, MUTED_DARK),
                 anchor="w",
             ).grid(row=idx, column=0, padx=(12, 6), pady=2, sticky="w")
             ctk.CTkLabel(

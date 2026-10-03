@@ -10,6 +10,7 @@ import time
 import customtkinter as ctk
 import main
 from settings import load_settings, update_setting
+from design_system import SURFACE_DARK, TEXT_LIGHT, TEXT_DARK
 
 
 class ThemeSwitcherTests(unittest.TestCase):
@@ -47,15 +48,15 @@ class ThemeSwitcherTests(unittest.TestCase):
         light_style = self.app.table_style.lookup("Treeview", "background")
         light_fg = self.app.table_style.lookup("Treeview", "foreground")
         self.assertEqual(light_style, "#ffffff")
-        self.assertEqual(light_fg, "#14212b")
+        self.assertEqual(light_fg, TEXT_LIGHT)
 
         # In Dark mode, table background must be dark and text light
         self.app._apply_appearance_mode_change("Dark")
         self.app.update()
         dark_style = self.app.table_style.lookup("Treeview", "background")
         dark_fg = self.app.table_style.lookup("Treeview", "foreground")
-        self.assertEqual(dark_style, "#11161d")
-        self.assertEqual(dark_fg, "#f4f7fa")
+        self.assertEqual(dark_style, SURFACE_DARK)
+        self.assertEqual(dark_fg, TEXT_DARK)
 
     def test_initial_window_is_positioned_on_screen(self):
         geometry = self.app.geometry()

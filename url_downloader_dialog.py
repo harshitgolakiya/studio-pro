@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from design_system import (style_dialog, ACCENT, ACCENT_HOVER, ACCENT_TEXT_DARK, ACCENT_TEXT_LIGHT, BACKGROUND_DARK, BACKGROUND_LIGHT, BORDER_DARK, BORDER_LIGHT, DANGER_DARK, DANGER_LIGHT, DANGER_SURFACE_DARK, DANGER_SURFACE_LIGHT, ELEVATED_LIGHT, MUTED_DARK, MUTED_LIGHT, PRIMARY_TEXT, SELECTION_DARK, SELECTION_LIGHT, TEXT_LIGHT)
+
 from pathlib import Path
 import threading
 import tkinter as tk
@@ -52,6 +54,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         on_download_complete: Callable[[Path], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        style_dialog(self, parent)
         self.on_download_complete = on_download_complete
         self.cancel_event = threading.Event()
         self.download_thread: threading.Thread | None = None
@@ -93,7 +96,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         self.grab_set()
 
     def _build_ui(self) -> None:
-        self.configure(fg_color=("#f8f9fa", "#1a1d20"))
+        self.configure(fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK))
 
         container = ctk.CTkFrame(self, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=24, pady=18)
@@ -102,8 +105,8 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             container,
             text="VIP POWER FEATURE",
-            fg_color="#D4A03C",
-            text_color="#171308",
+            fg_color=ACCENT,
+            text_color=PRIMARY_TEXT,
             font=ctk.CTkFont(size=11, weight="bold"),
             corner_radius=6,
             width=140,
@@ -120,7 +123,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
             container,
             text="Save videos, members-only streams & audio locally for private offline watching.",
             font=ctk.CTkFont(size=12),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(pady=(0, 12))
 
         # URL Input Row
@@ -216,7 +219,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
             auth_frame,
             text="Required for Member-Only content",
             font=ctk.CTkFont(size=10),
-            text_color=("#64748b", "#94a3b8"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(side="left")
 
         # Custom cookies.txt picker frame
@@ -283,7 +286,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
             container,
             textvariable=self.status_var,
             font=ctk.CTkFont(size=11),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
             anchor="w",
         )
         self.status_label.pack(fill="x", pady=(0, 8))
@@ -291,16 +294,16 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         # Alert / Guidance Card (hidden by default, surfaces on member-only or authentication errors)
         self.alert_card = ctk.CTkFrame(
             container,
-            fg_color=("#fefce8", "#422006"),
+            fg_color=(SELECTION_LIGHT, SELECTION_DARK),
             border_width=1,
-            border_color=("#facc15", "#ca8a04"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
             corner_radius=8,
         )
         self.alert_title = ctk.CTkLabel(
             self.alert_card,
             text="🔒 Channel Members-Only Video Detected",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#854d0e", "#fef08a"),
+            text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
             anchor="w",
         )
         self.alert_title.pack(fill="x", padx=12, pady=(6, 2))
@@ -309,7 +312,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
             self.alert_card,
             text="",
             font=ctk.CTkFont(size=11),
-            text_color=("#713f12", "#fde047"),
+            text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
             anchor="w",
             justify="left",
             wraplength=540,
@@ -323,11 +326,12 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         self.download_btn = ctk.CTkButton(
             btn_frame,
             text="Download & Add to Queue",
-            fg_color="#12877A",
-            hover_color="#17A594",
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
             height=36,
             font=ctk.CTkFont(weight="bold"),
             command=self._start_download,
+            text_color=PRIMARY_TEXT,
         )
         self.download_btn.pack(side="right", padx=(8, 0))
 
@@ -338,8 +342,8 @@ class URLDownloaderDialog(ctk.CTkToplevel):
             state="disabled",
             fg_color="transparent",
             border_width=1,
-            border_color=("#d0d5dd", "#475467"),
-            text_color=("#344054", "#f2f4f7"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             command=self._cancel_download,
         )
         self.cancel_btn.pack(side="right")
@@ -350,7 +354,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
             height=36,
             width=80,
             fg_color="transparent",
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
             command=self._on_close_request,
         )
         self.close_btn.pack(side="left")
@@ -509,12 +513,12 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         self.cancel_btn.configure(state="disabled")
 
         self.alert_card.configure(
-            fg_color=("#fefce8", "#422006"),
-            border_color=("#facc15", "#ca8a04"),
+            fg_color=(SELECTION_LIGHT, SELECTION_DARK),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
         )
         self.alert_title.configure(
             text="🔒 Channel Members-Only Video Detected",
-            text_color=("#854d0e", "#fef08a"),
+            text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
         )
         self.alert_body.configure(
             text=(
@@ -524,7 +528,7 @@ class URLDownloaderDialog(ctk.CTkToplevel):
                 "1. Under 'Cookies / Auth' above, select your browser (Edge / Chrome / Firefox) or 'Custom cookies.txt File'.\n"
                 "2. If Chrome locks its live store, export your cookies using the free Chrome/Edge extension 'Get cookies.txt locally' and select the file."
             ),
-            text_color=("#713f12", "#fde047"),
+            text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
         )
         self.alert_card.pack(fill="x", pady=(0, 10), before=self.status_label.master.winfo_children()[-1])
 
@@ -546,12 +550,12 @@ class URLDownloaderDialog(ctk.CTkToplevel):
         is_cookie_locked = "cookie store locked" in err_msg.lower() or "dpapi" in err_msg.lower() or "could not copy" in err_msg.lower()
         if is_cookie_locked:
             self.alert_card.configure(
-                fg_color=("#fff7ed", "#431407"),
-                border_color=("#fb923c", "#c2410c"),
+                fg_color=(SELECTION_LIGHT, SELECTION_DARK),
+                border_color=(DANGER_DARK, BORDER_DARK),
             )
             self.alert_title.configure(
                 text="🔑 Browser Cookie Database Locked",
-                text_color=("#9a3412", "#fdba74"),
+                text_color=(DANGER_LIGHT, ACCENT_TEXT_DARK),
             )
             self.alert_body.configure(
                 text=(
@@ -559,22 +563,22 @@ class URLDownloaderDialog(ctk.CTkToplevel):
                     "👉 Fix: Close your browser and retry, OR export cookies to 'cookies.txt' (using 'Get cookies.txt locally') "
                     "and select 'Custom cookies.txt File' under 'Cookies / Auth'."
                 ),
-                text_color=("#7c2d12", "#fed7aa"),
+                text_color=(ACCENT_TEXT_LIGHT, ACCENT_TEXT_DARK),
             )
             self.alert_card.pack(fill="x", pady=(0, 10), before=self.status_label.master.winfo_children()[-1])
             messagebox.showwarning("Browser Cookies Locked", err_msg, parent=self)
         else:
             self.alert_card.configure(
-                fg_color=("#fef2f2", "#450a0a"),
-                border_color=("#f87171", "#991b1b"),
+                fg_color=(DANGER_SURFACE_LIGHT, DANGER_SURFACE_DARK),
+                border_color=(DANGER_DARK, DANGER_SURFACE_DARK),
             )
             self.alert_title.configure(
                 text="⚠️ Stream Download Error",
-                text_color=("#b91c1c", "#fca5a5"),
+                text_color=(DANGER_LIGHT, DANGER_DARK),
             )
             self.alert_body.configure(
                 text=err_msg,
-                text_color=("#7f1d1d", "#fecaca"),
+                text_color=(DANGER_SURFACE_DARK, DANGER_DARK),
             )
             self.alert_card.pack(fill="x", pady=(0, 10), before=self.status_label.master.winfo_children()[-1])
             messagebox.showerror("Download Error", f"Failed to download media stream:\n\n{err_msg}", parent=self)

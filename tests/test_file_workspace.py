@@ -156,3 +156,33 @@ class WorkspaceFlowTests(unittest.TestCase):
             self.assertEqual(workspace.section, 'Audio')
         finally:
             self.app.conversion_running = False
+
+    def test_collection_groups_and_cached_rows_stay_in_order(self):
+        workspace = self.app._file_workspace
+        with patch.object(workspace, 'render_tools', wraps=workspace.render_tools) as render:
+            workspace.nav_buttons['Video'].invoke()
+        self.assertEqual(render.call_count, 1)
+        self.assertEqual(workspace.tool_groups, ['Convert & edit', 'Audio & transcription', 'Subtitles'])
+        keys = workspace.visible_tools
+        self.assertLess(keys.index('trim'), keys.index('transcribe'))
+        self.assertLess(keys.index('transcribe'), keys.index('subtitle-edit'))
+        previous = workspace._tool_rows['trim'][0]
+        workspace.nav_buttons['Audio'].invoke()
+        workspace.nav_buttons['Video'].invoke()
+        self.assertIs(workspace._tool_rows['trim'][0], previous)
+        self.assertEqual(workspace.visible_tools, keys)
+
+    def test_search_coalesces_fast_typing(self):
+        import time
+        workspace = self.app._file_workspace
+        workspace.show_library()
+        with patch.object(workspace, 'render_tools') as render:
+            for query in ('s', 'su', 'sub', 'subtitle'):
+                workspace.query.set(query)
+                workspace._schedule_search()
+            self.assertEqual(render.call_count, 0)
+            deadline = time.monotonic() + .2
+            while time.monotonic() < deadline:
+                self.app.update()
+                time.sleep(.005)
+            render.assert_called_once()

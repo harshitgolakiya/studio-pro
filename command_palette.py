@@ -1,6 +1,8 @@
 """Command palette (Ctrl+K): type-to-filter list of every major action."""
 from __future__ import annotations
 
+from design_system import (style_dialog, MUTED_DARK, MUTED_LIGHT, SELECTION_DARK, SELECTION_LIGHT, SURFACE_DARK)
+
 from dataclasses import dataclass
 import sys
 from typing import Any, Callable, Sequence
@@ -9,9 +11,9 @@ import customtkinter as ctk
 
 from accessibility import enable_keyboard_navigation
 
-_MUTED = ("#607181", "#91A0AE")
-_ROW = ("#FFFFFF", "#11161D")
-_ROW_ACTIVE = ("#D8F3EF", "#123A36")
+_MUTED = (MUTED_LIGHT, MUTED_DARK)
+_ROW = ("#FFFFFF", SURFACE_DARK)
+_ROW_ACTIVE = (SELECTION_LIGHT, SELECTION_DARK)
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ def filter_actions(actions: Sequence[PaletteAction], query: str) -> list[Palette
 class CommandPalette(ctk.CTkToplevel):
     def __init__(self, master: Any, actions: Sequence[PaletteAction]) -> None:
         super().__init__(master)
+        style_dialog(self, master)
         self.title("Command Palette")
         self.geometry("560x440")
         self.minsize(420, 300)

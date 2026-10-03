@@ -274,3 +274,39 @@ after the user closed it: three files, 36,959,381 bytes, with backups and shared
 assets retained. The installed executable passed the same native UI checks;
 the desktop shortcut targets this copy. Published archives and Mac DMGs have
 not been rebuilt.
+
+### Palette consistency, tool organization and responsiveness on 2026-10-03
+
+All twelve auxiliary windows now share the graphite/violet design tokens,
+including the downloader, watch folder, license, recipes, optimizer charts,
+format browser, image previews and command palette. Windows dialog title bars
+follow the current theme, and new dialogs are centered within the display.
+The queue table's selected colors also use the current palette. Warning and
+failure states use new violet/rose roles rather than the old yellow/green/teal.
+
+Collections have purpose-based sections and a deterministic action order.
+Subtitle editing belongs to Video; text translation stays with documents.
+Shared preview and audio tools appear in relevant collections. Shorter labels
+and responsive wrapping prevent tool titles from clipping at smaller sizes.
+
+Tool cards and headings are reused across navigation. Collection clicks render
+once; search coalesces typing over 120ms and layout skips unchanged wrapping.
+Scrollable panels share one wheel dispatcher per root, route to the nearest
+panel, retain text-box/table scrolling, and animate coalesced movement with
+cleanup on close. Tests cover stable bindings after repeated panel creation,
+nested wheel routing, queued-animation cancellation, cached navigation,
+ordered groups, search coalescing and legacy palette regressions.
+
+The desktop update build reuses the existing shared assets. Packaging skips
+Office temporary locks, including locks created by engine tests.
+
+The engine-enabled full suite passed 461 tests with two skips. The packaged
+runtime passed the five polish captures plus all workspace routes: every
+catalog tool remains reachable, all 40 Studio actions open, and speech controls
+remain visible. Native navigation measurements after warm-up were 76.13ms
+median and 114.69ms maximum for the tested collections. Repeated dialog
+creation/closure leaves the single wheel binding unchanged. Verification is in
+`release/verification/ui-polish*` and `polish-*.png` under the build directory.
+The ready desktop update is described by `ui-polish-update-manifest.json`;
+`polish_update.py` backs up and replaces only changed runtime files after the
+running application closes. Published archives and Mac DMGs remain unchanged.

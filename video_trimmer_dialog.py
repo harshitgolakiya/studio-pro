@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from design_system import (style_dialog, PRIMARY_TEXT, ACCENT, ACCENT_HOVER, BACKGROUND_DARK, BACKGROUND_LIGHT, BORDER_DARK, BORDER_LIGHT, ELEVATED_LIGHT, MUTED_DARK, MUTED_LIGHT, SURFACE_DARK, TEXT_LIGHT)
+
 from pathlib import Path
 import threading
 import tkinter as tk
@@ -33,6 +35,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         on_trim_complete: Callable[[Path], None] | None = None,
     ) -> None:
         super().__init__(parent)
+        style_dialog(self, parent)
         self.video_path = video_path
         self.on_trim_complete = on_trim_complete
         self._closed = False
@@ -67,7 +70,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         self.after(50, lambda: self.grab_set() if self.winfo_exists() and self.winfo_viewable() else None)
 
     def _build_ui(self) -> None:
-        self.configure(fg_color=("#f8f9fa", "#1a1d20"))
+        self.configure(fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK))
 
         container = ctk.CTkFrame(self, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=24, pady=20)
@@ -76,7 +79,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             container,
             text="FAST LOSSLESS VIDEO TRIMMER",
-            fg_color="#12877A",
+            fg_color=ACCENT,
             text_color="#ffffff",
             font=ctk.CTkFont(size=11, weight="bold"),
             corner_radius=6,
@@ -94,16 +97,16 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
             container,
             text=f"Total Duration: {format_seconds(self.duration)} ({self.duration:.1f}s) • Lossless cut with zero quality loss",
             font=ctk.CTkFont(size=11),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(pady=(0, 16))
 
         # Timeline Card
         card = ctk.CTkFrame(
             container,
-            fg_color=("#ffffff", "#191c20"),
+            fg_color=("#ffffff", SURFACE_DARK),
             corner_radius=10,
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
+            border_color=(BORDER_LIGHT, TEXT_LIGHT),
         )
         card.pack(fill="x", pady=(0, 16), padx=4)
 
@@ -147,7 +150,7 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
             container,
             textvariable=self.clip_duration_text,
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#16a34a",
+            text_color=ACCENT,
         ).pack(pady=(0, 16))
 
         # Action Buttons
@@ -157,21 +160,23 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
         self.frame_btn = ctk.CTkButton(
             btn_frame,
             text="📸 Capture Frame",
-            fg_color="#059669",
-            hover_color="#047857",
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
             height=36,
             command=self._do_capture_frame,
+            text_color=PRIMARY_TEXT,
         )
         self.frame_btn.pack(side="left")
 
         self.trim_btn = ctk.CTkButton(
             btn_frame,
             text="⚡ Trim & Add to Queue",
-            fg_color="#12877A",
-            hover_color="#17A594",
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
             height=36,
             font=ctk.CTkFont(weight="bold"),
             command=self._do_trim,
+            text_color=PRIMARY_TEXT,
         )
         self.trim_btn.pack(side="right", padx=(8, 0))
 
@@ -182,8 +187,8 @@ class VideoTrimmerDialog(ctk.CTkToplevel):
             width=80,
             fg_color="transparent",
             border_width=1,
-            border_color=("#d0d5dd", "#475467"),
-            text_color=("#344054", "#f2f4f7"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             command=self._on_close_request,
         ).pack(side="right")
 

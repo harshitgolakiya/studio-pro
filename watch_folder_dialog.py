@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from design_system import (style_dialog, PRIMARY_TEXT, ACCENT, BACKGROUND_DARK, BACKGROUND_LIGHT, BORDER_DARK, BORDER_LIGHT, DANGER_LIGHT, ELEVATED_LIGHT, MUTED_DARK, MUTED_LIGHT, SURFACE_DARK, TEXT_LIGHT)
+
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -21,6 +23,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
         on_watcher_changed: object | None = None,
     ) -> None:
         super().__init__(parent)
+        style_dialog(self, parent)
         self.watcher = watcher
         self.on_watcher_changed = on_watcher_changed
         self._closed = False
@@ -59,7 +62,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
             self._log(f"Reattached to active monitoring: {self.watcher.watch_dir.name}")
 
     def _build_ui(self) -> None:
-        self.configure(fg_color=("#f8f9fa", "#1a1d20"))
+        self.configure(fg_color=(BACKGROUND_LIGHT, BACKGROUND_DARK))
 
         container = ctk.CTkFrame(self, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=24, pady=20)
@@ -68,7 +71,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             container,
             text="AUTO-WATCH FOLDER PIPELINE",
-            fg_color="#059669",
+            fg_color=ACCENT,
             text_color="#ffffff",
             font=ctk.CTkFont(size=11, weight="bold"),
             corner_radius=6,
@@ -86,16 +89,16 @@ class WatchFolderDialog(ctk.CTkToplevel):
             container,
             text="Automatically converts any images or videos dropped into the watch folder.",
             font=ctk.CTkFont(size=11),
-            text_color=("#667085", "#98a2b3"),
+            text_color=(MUTED_LIGHT, MUTED_DARK),
         ).pack(pady=(0, 14))
 
         # Config Card
         card = ctk.CTkFrame(
             container,
-            fg_color=("#ffffff", "#191c20"),
+            fg_color=("#ffffff", SURFACE_DARK),
             corner_radius=10,
             border_width=1,
-            border_color=("#eaecf0", "#344054"),
+            border_color=(BORDER_LIGHT, TEXT_LIGHT),
         )
         card.pack(fill="x", pady=(0, 12))
 
@@ -136,7 +139,7 @@ class WatchFolderDialog(ctk.CTkToplevel):
             status_bar,
             textvariable=self.status_indicator,
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#16a34a" if (self.watcher and self.watcher.is_running) else "#667085",
+            text_color=ACCENT if (self.watcher and self.watcher.is_running) else MUTED_LIGHT,
         )
         self.status_label.pack(side="left")
 
@@ -144,11 +147,12 @@ class WatchFolderDialog(ctk.CTkToplevel):
         self.toggle_btn = ctk.CTkButton(
             status_bar,
             text="Stop Monitoring" if is_run else "▶ Start Monitoring",
-            fg_color="#dc2626" if is_run else "#16a34a",
-            hover_color="#b91c1c" if is_run else "#15803d",
+            fg_color=DANGER_LIGHT if is_run else ACCENT,
+            hover_color=DANGER_LIGHT if is_run else ACCENT,
             font=ctk.CTkFont(weight="bold"),
             height=30,
             command=self._toggle_monitoring,
+            text_color=PRIMARY_TEXT,
         )
         self.toggle_btn.pack(side="right")
 
@@ -175,8 +179,8 @@ class WatchFolderDialog(ctk.CTkToplevel):
             height=32,
             fg_color="transparent",
             border_width=1,
-            border_color=("#d0d5dd", "#475467"),
-            text_color=("#344054", "#f2f4f7"),
+            border_color=(BORDER_LIGHT, BORDER_DARK),
+            text_color=(TEXT_LIGHT, ELEVATED_LIGHT),
             command=self._on_close_request,
         ).pack(side="right")
 
@@ -224,8 +228,8 @@ class WatchFolderDialog(ctk.CTkToplevel):
         if self.watcher and self.watcher.is_running:
             self.watcher.stop()
             self.status_indicator.set("⚪ Monitoring Inactive")
-            self.status_label.configure(text_color="#667085")
-            self.toggle_btn.configure(text="▶ Start Monitoring", fg_color="#16a34a", hover_color="#15803d")
+            self.status_label.configure(text_color=MUTED_LIGHT)
+            self.toggle_btn.configure(text="▶ Start Monitoring", fg_color=ACCENT, hover_color=ACCENT)
             self._log("Stopped monitoring.")
         else:
             w_dir = Path(self.watch_dir_var.get().strip())
@@ -243,8 +247,8 @@ class WatchFolderDialog(ctk.CTkToplevel):
             )
             self.watcher.start()
             self.status_indicator.set("🟢 Active Monitoring")
-            self.status_label.configure(text_color="#16a34a")
-            self.toggle_btn.configure(text="Stop Monitoring", fg_color="#dc2626", hover_color="#b91c1c")
+            self.status_label.configure(text_color=ACCENT)
+            self.toggle_btn.configure(text="Stop Monitoring", fg_color=DANGER_LIGHT, hover_color=DANGER_LIGHT)
             self._log(f"Started monitoring: {w_dir.name} ➔ {o_dir.name}")
 
         if callable(self.on_watcher_changed):
