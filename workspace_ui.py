@@ -121,6 +121,27 @@ class FileWorkspace:
         self.expanded = False
         self.section = None
         self._icons = {name: section_icon(name) for name in SECTIONS}
+        self._batch_result = None
+        self.result_card = ctk.CTkFrame(parent, corner_radius=14, fg_color=('#E2DDF3', '#2B2639'))
+        self.result_card.grid_columnconfigure(0, weight=1)
+        self.result_title = ctk.CTkLabel(self.result_card, text='', anchor='w',
+                                       font=ctk.CTkFont(size=20, weight='bold'))
+        self.result_title.grid(row=0, column=0, sticky='ew', padx=22, pady=(18, 4))
+        self.result_detail = ctk.CTkLabel(self.result_card, text='', anchor='w', justify='left',
+                                        text_color=('#777785', '#B9ADF3'), wraplength=480)
+        self.result_detail.grid(row=1, column=0, sticky='ew', padx=22)
+        actions = ctk.CTkFrame(self.result_card, fg_color='transparent')
+        actions.grid(row=2, column=0, sticky='w', padx=22, pady=(14, 18))
+        self.result_open = ctk.CTkButton(actions, text='Open output', width=130, height=34,
+                                        fg_color='#7561D4', hover_color='#8975E4', text_color='#FFFFFF',
+                                        command=self._open_batch_output)
+        self.result_retry = ctk.CTkButton(actions, text='Retry failed', width=110, height=34,
+                                         fg_color='transparent', border_width=1,
+                                         border_color=('#DDDDE7', '#33333E'), command=app._retry_failed)
+        self.result_done = ctk.CTkButton(actions, text='Back to files', width=110, height=34,
+                                        fg_color='transparent', text_color=('#6652C2', '#B9ADF3'),
+                                        command=self.back_to_actions)
+        self.result_done.pack(side='left')
         self.home = ctk.CTkFrame(parent, fg_color='transparent')
         self.home.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(self.home, text='YOUR CREATIVE WORKSPACE', anchor='w', text_color=('#81758f', '#a99bcf'),
@@ -201,6 +222,49 @@ class FileWorkspace:
         selected = self.app._selected_paths()
         return selected or list(self.app.selected_files)
 
+    def clear_batch_result(self):
+        self._batch_result = None
+        self.result_card.grid_remove()
+
+    def show_batch_result(self, results, cancelled, elapsed):
+        from utils import format_file_size
+        completed = [r for r in results if r.status == 'Completed']
+        failed = sum(r.status == 'Failed' for r in results)
+        saved = max(0, sum((r.original_size or 0) - (r.output_size or 0) for r in completed))
+        self._batch_result = list(results)
+        title = 'Conversion stopped' if cancelled else 'Your files are ready' if completed and not failed else 'Some files need attention' if completed else 'Conversion needs attention'
+        self.result_title.configure(text=title)
+        detail = f'{len(completed)} ready'
+        if failed:detail += f'  ·  {failed} failed'
+        unfinished = len(results) - len(completed) - failed
+        if unfinished:detail += f'  ·  {unfinished} skipped or cancelled'
+        detail += f'  ·  {elapsed:.1f}s'
+        if saved:detail += f'  ·  {format_file_size(saved)} saved'
+        if failed:detail += '\nDouble-click a failed row below to see the reason.'
+        self.result_detail.configure(text=detail)
+        self.result_open.pack_forget()
+        self.result_retry.pack_forget()
+        outputs = self._batch_outputs()
+        if outputs:
+            folders = {p.parent for p in outputs}
+            self.result_open.configure(text='Open output' if len(outputs) == 1 else 'Open output folder' if len(folders) == 1 else 'Open first folder')
+            self.result_open.pack(side='left', before=self.result_done, padx=(0, 10))
+        if failed:self.result_retry.pack(side='left', before=self.result_done, padx=(0, 10))
+        self.refresh()
+        self.reset_scroll()
+
+    def _batch_outputs(self):
+        return [Path(r.output_path) for r in self._batch_result or ()
+                if r.status == 'Completed' and r.output_path and Path(r.output_path).exists()]
+
+    def _open_batch_output(self):
+        from utils import open_file_or_folder
+        outputs = self._batch_outputs()
+        if not outputs:
+            self.app.status_text.set('The output has been moved or deleted. Check History for its original location.')
+            return
+        open_file_or_folder(outputs[0] if len(outputs) == 1 else outputs[0].parent)
+
     def reset_scroll(self):
         shell = self.app._content_shell
         if hasattr(shell, 'stop_scroll'):shell.stop_scroll()
@@ -254,7 +318,7 @@ class FileWorkspace:
         self._sync_navigation()
         if hasattr(self, 'preferences'):self.preferences.grid_remove()
         has_files = bool(self.app.selected_files)
-        for widget in (self.home, self.browser, self.back, self.queue, self.output, self.footer, self.app.settings_tabview):
+        for widget in (self.home, self.browser, self.back, self.queue, self.output, self.footer, self.result_card, self.app.settings_tabview):
             widget.grid_remove()
         if self.mode == 'preferences':
             self.preferences.grid(row=0, column=0, sticky='ew')
@@ -268,14 +332,17 @@ class FileWorkspace:
             return
         else:
             if len(self.app.selected_files) > 1 or self.converting:
-                self.queue.grid()
+                self.queue.grid(row=1 if self.converting else 0)
             self.app.empty_state.grid_remove()
             self.app.table_frame.grid(row=1, column=0, sticky='ew', pady=(0, 8))
             if self.converting:
-                self.back.grid(row=1, column=0, sticky='w', padx=32, pady=(0, 8))
-                self.app.settings_tabview.grid(row=2, column=0, sticky='ew', padx=32, pady=(0, 8))
-                self.output.grid(row=3, column=0, sticky='ew', padx=32, pady=(0, 10))
-                self.footer.grid(row=4, column=0, sticky='ew', padx=32, pady=(0, 20))
+                if self._batch_result is not None and not self.app.conversion_running:
+                    self.result_card.grid(row=0, column=0, sticky='ew', padx=32, pady=(24, 18))
+                    return
+                self.back.grid(row=2, column=0, sticky='w', padx=32, pady=(0, 8))
+                self.app.settings_tabview.grid(row=3, column=0, sticky='ew', padx=32, pady=(0, 8))
+                self.output.grid(row=4, column=0, sticky='ew', padx=32, pady=(0, 10))
+                self.footer.grid(row=5, column=0, sticky='ew', padx=32, pady=(0, 20))
                 return
             self.browser.grid(row=1, column=0, sticky='ew', padx=0, pady=(24, 24))
             paths = self.selected_inputs()
@@ -490,6 +557,7 @@ class FileWorkspace:
                 if not paths: return
             self.mode = 'files'
             self.converting = True
+            self.clear_batch_result()
             app._conversion_inputs = paths
             app.table.selection_set([app.row_ids[p] for p in paths])
             app._adapt_settings_to_selection()

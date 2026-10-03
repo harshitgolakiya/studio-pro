@@ -320,3 +320,23 @@ retained. The desktop shortcut continues to target `D:\Shadow-Agency-Studio`.
 
 Native checks on the installed desktop copy also passed: grouped Video tools,
 minimum-window label fitting, updated dialog colors and stable wheel bindings.
+
+### Conversion results experience
+
+Completed conversions now show a compact results card above the queue. It
+reports ready and failed counts, cancellations, elapsed time and space saved.
+Conversion settings are hidden while reviewing results; Back to files returns
+to file actions. Partial failures offer Retry failed and point to row details.
+The output action opens the actual generated file for a single output, its
+folder for a batch, or explicitly the first folder for multiple destinations.
+Missing or moved outputs produce a helpful status message rather than opening
+an unrelated destination. A new conversion or cleared queue resets the card.
+
+Validation passed 32 focused workspace, batch-control, queue-store and palette
+tests. Native staged and installed checks performed a real PNG-to-WebP
+conversion and verified its dimensions, output opening, partial-failure and
+cancellation states. Four minimum-size dark/light captures were reviewed.
+The desktop update replaced two runtime files (36,970,111 bytes), retaining
+shared engines and models, with backup under `release/ui-fix/results-update-backup`.
+Receipts and captures are in `release/verification/results-*` in the build
+directory. Published release archives remain unchanged.

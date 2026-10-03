@@ -186,3 +186,52 @@ class WorkspaceFlowTests(unittest.TestCase):
                 self.app.update()
                 time.sleep(.005)
             render.assert_called_once()
+
+    def test_completion_opens_actual_output_and_handles_removed_file(self):
+        from converter import ConversionResult
+        source = self.add(['photo.png'])[0]
+        output = Path(self.tmp.name) / 'actual-output.webp'
+        output.write_bytes(b'output')
+        workspace = self.app._file_workspace
+        workspace.open(next(t for t in workspace.tools if t.key == 'convert-image'))
+        result = ConversionResult(source, output, 100, 60, '40%', 'Completed')
+        workspace.show_batch_result([result], False, 1.2)
+        self.assertEqual(workspace.result_card.winfo_manager(), 'grid')
+        self.assertNotEqual(workspace.result_card.grid_info()['row'], workspace.queue.grid_info()['row'])
+        self.assertEqual(workspace.result_title.cget('text'), 'Your files are ready')
+        self.assertEqual(self.app.settings_tabview.winfo_manager(), '')
+        self.assertEqual(workspace.output.winfo_manager(), '')
+        with patch('utils.open_file_or_folder') as opened:
+            workspace.result_open.invoke()
+            opened.assert_called_once_with(output)
+            output.unlink()
+            workspace.result_open.invoke()
+            self.assertEqual(opened.call_count, 1)
+        self.assertIn('moved or deleted', self.app.status_text.get())
+        workspace.back_to_actions()
+        self.assertEqual(workspace.result_card.winfo_manager(), '')
+
+    def test_partial_and_cancelled_batches_do_not_claim_all_files_ready(self):
+        from converter import ConversionResult
+        source, second = self.add(['first.png', 'second.png'])
+        output = Path(self.tmp.name) / 'first.webp'
+        output.write_bytes(b'output')
+        workspace = self.app._file_workspace
+        workspace.open(next(t for t in workspace.tools if t.key == 'convert-image'))
+        results = [ConversionResult(source, output, 100, 50, '50%', 'Completed'),
+                   ConversionResult(second, None, 100, None, '-', 'Failed', 'bad input')]
+        for result in results:self.app._display_result(result)
+        self.app.events.put(('complete', (results, False, 2.0)))
+        with patch('main.record_batch'), patch('main.play_completion_sound'):
+            self.app._process_events()
+        self.assertEqual(workspace.result_title.cget('text'), 'Some files need attention')
+        self.assertIn('1 failed', workspace.result_detail.cget('text'))
+        with patch.object(self.app, '_start_conversion') as start:
+            workspace.result_retry.invoke()
+        start.assert_called_once_with(only=[second])
+        workspace.show_batch_result([], True, .1)
+        self.assertEqual(workspace.result_title.cget('text'), 'Conversion stopped')
+        self.assertEqual(workspace.result_open.winfo_manager(), '')
+        self.assertEqual(workspace.result_card.winfo_manager(), 'grid')
+        self.app._clear_all()
+        self.assertIsNone(workspace._batch_result)

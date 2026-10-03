@@ -3809,6 +3809,8 @@ class WebPCompressorApp(ctk.CTk):
         self._schedule_queue_save()
 
     def _clear_all(self) -> None:
+        if hasattr(self, '_file_workspace'):
+            self._file_workspace.clear_batch_result()
         if self.selected_files:
             self._remember_queue_state()
         self.selected_files.clear()
@@ -5000,6 +5002,8 @@ class WebPCompressorApp(ctk.CTk):
                 self.table.set(row_id, "status", "In queue")
 
         self.conversion_running = True
+        if hasattr(self, '_file_workspace'):
+            self._file_workspace.clear_batch_result()
         self.cancel_event.clear()
         self.pause_event.clear()
         self.log.info("batch start: %d items -> %s", len(selected_batch), self.target_format.get())
@@ -5649,6 +5653,9 @@ class WebPCompressorApp(ctk.CTk):
                         self.retry_button.grid(row=2, column=1, sticky="w", padx=(8, 0))
                     else:
                         self.retry_button.grid_remove()
+
+                    if hasattr(self, '_file_workspace'):
+                        self._file_workspace.show_batch_result(results, cancelled, elapsed)
 
                     if self.play_sound.get() and not cancelled:
                         play_completion_sound()
