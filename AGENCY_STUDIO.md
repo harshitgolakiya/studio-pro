@@ -246,3 +246,19 @@ action routes. The desktop installation at `D:\Shadow-Agency-Studio` received
 two changed files (36,947,564 bytes); shared models and runtimes were retained.
 Screenshots and the update manifest are in the release verification folder.
 Published Windows archives and Mac DMGs still predate these UI changes.
+
+### Cohesive desktop design on 2026-10-03
+
+The desktop shell now has a permanent 204-pixel sidebar, compact top bar,
+and a curated home with file import and three creation shortcuts. Tool
+collections live in the sidebar; Explore offers common tools and global
+search. Home preserves imported files. Preferences contains inline appearance
+controls and access to local voices and engines. The native navigation popup
+has been removed.
+
+A graphite/violet and soft light palette, shared control styling, restrained
+primary actions, Outfit headings, and consistent navigation carry through the
+conversion settings and Studio forms. Single-file actions include a file
+identity strip and short descriptions. Seventeen focused tests passed,
+including sidebar navigation without losing the queue, eligible conversion
+inputs, speech controls, and access to every catalog entry.

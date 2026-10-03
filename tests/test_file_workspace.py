@@ -132,3 +132,27 @@ class WorkspaceFlowTests(unittest.TestCase):
         with patch('tkinter.filedialog.askopenfilenames', return_value=()):
             workspace._change_files()
         self.assertEqual(self.app.selected_files, before)
+
+    def test_sidebar_navigation_preserves_files_and_opens_preferences(self):
+        self.add(['recording.wav'])
+        workspace = self.app._file_workspace
+        before = list(self.app.selected_files)
+        workspace.nav_buttons['Preferences'].invoke()
+        self.assertEqual(workspace.preferences.winfo_manager(), 'grid')
+        self.assertEqual(workspace.browser.winfo_manager(), '')
+        workspace.nav_buttons['Home'].invoke()
+        self.assertEqual(workspace.home.winfo_manager(), 'grid')
+        self.assertEqual(workspace.preferences.winfo_manager(), '')
+        self.assertEqual(self.app.selected_files, before)
+        workspace.nav_buttons['Audio'].invoke()
+        self.assertEqual(workspace.section, 'Audio')
+        self.assertIn('speak', workspace.visible_tools)
+        self.assertEqual(workspace.home.winfo_manager(), '')
+        self.assertTrue(workspace.breadcrumb.cget('text').endswith('Audio'))
+        self.app.conversion_running = True
+        try:
+            workspace.nav_buttons['Preferences'].invoke()
+            self.assertEqual(workspace.mode, 'library')
+            self.assertEqual(workspace.section, 'Audio')
+        finally:
+            self.app.conversion_running = False

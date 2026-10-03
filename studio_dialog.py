@@ -69,7 +69,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.status = tk.StringVar(value="Ready. All file processing stays on this computer.")
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(self, text="Studio workspace", font=ctk.CTkFont(size=25, weight="bold"), anchor="w").grid(row=0, column=0, columnspan=2, sticky="ew", padx=24, pady=(20, 4))
+        ctk.CTkLabel(self, text="Creative studio", font=ctk.CTkFont(family="Outfit", size=25, weight="bold"), anchor="w").grid(row=0, column=0, columnspan=2, sticky="ew", padx=24, pady=(20, 4))
         tabs = NavigationTabs(self)
         self.tabs = tabs
         tabs.grid(row=1, column=1, sticky="nsew", padx=(4, 20), pady=8)
@@ -90,7 +90,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
                              ("Data", "Data / sheets"), ("Archives", "Archives / delivery"), ("Advanced workflows", "Advanced tools"),
                              ("Projects", "Projects / brands"), ("Integrations", "Integrations / API"), ("Models", "Voices / models"), ("Engines", "Engine status")):
             button = ctk.CTkButton(navigation, text=label, width=150, height=34, anchor="w", fg_color="transparent",
-                                  text_color=("#243746", "#deebf5"), command=lambda name=title: self.show_page(name))
+                                  text_color=("#777785", "#aaa7b8"), hover_color=("#EEEEF4", "#292932"), command=lambda name=title: self.show_page(name))
             button.pack(fill="x", pady=3)
             self._navigation[title] = button
         self.show_page("Documents")
@@ -110,7 +110,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
     def show_page(self, name):
         self.tabs.set(name)
         for title, button in getattr(self, "_navigation", {}).items():
-            button.configure(fg_color="#0e756b" if title == name else "transparent")
+            button.configure(fg_color=("#E2DDF3", "#2B2639") if title == name else "transparent")
 
     def open_tool(self, key, paths=()):
         if self._busy:
@@ -161,6 +161,8 @@ class StudioToolsDialog(ctk.CTkToplevel):
 
     def _button(self, parent, text, command, width=145):
         button = ctk.CTkButton(parent, text=text, command=command, width=width)
+        if text in {"Generate speech", "Transcribe", "Process PDFs", "Process audio"}:
+            button.configure(fg_color="#7561D4", hover_color="#8975E4", text_color="#ffffff")
         self._actions.append(button)
         return button
 
