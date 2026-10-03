@@ -57,6 +57,7 @@ class ProjectsPanel:
         dialog._button(row,'Retry unfinished',self.retry).pack(side='left',padx=(0,5))
         dialog._button(row,'Resume export',self.resume).pack(side='left',padx=(0,5))
         dialog._button(body,'Review this export',self.review_export).pack(anchor='w',padx=12,pady=5)
+        dialog._button(body,'Adjust social crops',self.adjust_crops).pack(anchor='w',padx=12,pady=5)
         self.report = ctk.CTkLabel(body, text="No delivery inputs selected", wraplength=650, justify="left", anchor="w")
         self.report.pack(fill="x", padx=12, pady=8)
         self.refresh()
@@ -146,6 +147,19 @@ class ProjectsPanel:
             self.dialog.status.set('Export a campaign first, or open Reviews to select an earlier export receipt.')
             return
         self.dialog.show_page('Reviews');self.dialog.panels['Reviews'].import_export(self.last_receipt)
+
+    def adjust_crops(self):
+        try:
+            from campaign_exports import plan_exports
+            from campaign_crops import SOCIAL_SIZES
+            from crop_ui import CropDialog
+            profile=self.current();jobs=plan_exports(profile,self.sources)
+            if not any(job['preset'] in SOCIAL_SIZES for job in jobs):raise ValueError('Choose a social image preset or social image set first')
+            def save(positions):
+                self.profile['crop_positions']=positions
+                self.dialog.status.set('Crop positions ready. Save the project to keep them for later exports.')
+            self.crop_dialog=CropDialog(self.dialog,profile,jobs,save)
+        except Exception as exc:self.dialog.status.set(str(exc))
 
     def preview(self):
         from campaign_exports import plan_exports

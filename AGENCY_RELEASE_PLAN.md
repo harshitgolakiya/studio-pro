@@ -50,6 +50,13 @@ into actual tools, not access restrictions. All teams retain the full catalog.
 - The Office preview runtime now prepares its own profile in the background
   and reuses it within the app process. Export conversions retain isolated
   profiles. This reduces repeated initialization without changing sources.
+- Visual review displays image, PDF and rendered Office snapshots beside comments.
+  Feedback can carry a page/slide and normalized point pin; earlier versions can
+  be compared side by side with page navigation, zoom and scrolling.
+- Social image exports support source framing and an export preview for square,
+  portrait and story variants. Positions persist with the project and are tied
+  to source and processing hashes. The full transformed image stays available
+  until the final crop; source files remain unchanged.
 
 Bundled LibreOffice provides offline layout rendering. Exact Microsoft Office
 pixel parity, font substitutions, animation playback and advanced workbook
@@ -66,7 +73,7 @@ original-application viewing. Marketing must describe these limits accurately.
    image/video/document deliverables with a single preset. Show exact outputs,
    preserve source files by default, and retry only failed outputs. The first
    built-in sets and retry receipts are implemented; custom set editing,
-   visual crop positioning, video sizing controls and campaign milestones remain.
+   video sizing controls and campaign milestones remain.
 3. **Local review and handoff.** Package files and a review index with stable
    version IDs/checksums. Export/import review comments locally; approvals must
    be attributable and show which version was reviewed. No public uploads.

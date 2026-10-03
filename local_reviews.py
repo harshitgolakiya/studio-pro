@@ -146,12 +146,18 @@ def add_revision(path,asset_id,source):
         asset['versions'].append(_snapshot(path.parent,source));_write(path,data)
 
 
-def add_comment(path,asset_id,version_id,author,text):
+def add_comment(path,asset_id,version_id,author,text,anchor=None):
     if not str(author).strip() or not str(text).strip():raise ValueError('Enter your name and a comment')
+    if anchor is not None:
+        import math
+        if not isinstance(anchor,dict) or type(anchor.get('page')) is not int or anchor['page']<1 or any(type(anchor.get(key)) not in (int,float) or not math.isfinite(anchor[key]) or not 0<=anchor[key]<=1 for key in ('x','y')):raise ValueError('Invalid comment location')
+        anchor={key:anchor[key] for key in ('page','x','y')}
     path=Path(path).resolve()
     with _lock(path):
         data=load_review(path);_,version=find_version(data,asset_id,version_id)
-        version['comments'].append({'author':str(author).strip(),'text':str(text).strip(),'created':_now()});_write(path,data)
+        comment={'author':str(author).strip(),'text':str(text).strip(),'created':_now()}
+        if anchor is not None:comment['anchor']=anchor
+        version['comments'].append(comment);_write(path,data)
 
 
 def decide(path,asset_id,version_id,author,status):

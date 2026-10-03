@@ -29,7 +29,7 @@ class ReviewsPanel:
         self.version_menu=ctk.CTkOptionMenu(detail,values=['Select a file'],command=self.select_version)
         self.version_menu.grid(row=0,column=0,sticky='ew',pady=(0,6))
         row=ctk.CTkFrame(detail,fg_color='transparent');row.grid(row=1,column=0,sticky='ew',pady=(0,6))
-        dialog._button(row,'Open version',self.open_version,width=120).pack(side='left',padx=(0,6))
+        dialog._button(row,'Visual review',self.open_visual,width=120).pack(side='left',padx=(0,6))
         dialog._button(row,'Add revision',self.revise,width=120).pack(side='left')
         self.history=ctk.CTkTextbox(detail,wrap='word');self.history.grid(row=2,column=0,sticky='nsew');self.history.configure(state='disabled')
         ctk.CTkEntry(detail,textvariable=self.author,placeholder_text='Your reviewer name').grid(row=3,column=0,sticky='ew',pady=(8,6))
@@ -129,7 +129,9 @@ class ReviewsPanel:
         def date(value):return datetime.fromisoformat(value).astimezone().strftime('%d %b %Y, %H:%M %Z')
         text=f"{version['name']}\n{self.statuses[version['id']]} · {date(version['created'])}\n"
         for decision in version['decisions']:text+=f"\n{decision['author']} · {decision['status']} · {date(decision['created'])}"
-        for comment in version['comments']:text+=f"\n\n{comment['author']} · {date(comment['created'])}\n{comment['text']}"
+        for comment in version['comments']:
+            location=f" · page {comment['anchor']['page']}" if comment.get('anchor') else ''
+            text+=f"\n\n{comment['author']}{location} · {date(comment['created'])}\n{comment['text']}"
         if not version['comments']:text+='\n\nNo comments on this version.'
         self.history.configure(state='normal');self.history.delete('1.0','end');self.history.insert('1.0',text);self.history.configure(state='disabled')
 
@@ -170,6 +172,18 @@ class ReviewsPanel:
             from media_engine import SUPPORTED_AUDIO_EXTENSIONS,SUPPORTED_VIDEO_EXTENSIONS
             from utils import open_file_or_folder
             open_file_or_folder(source if source.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS|SUPPORTED_VIDEO_EXTENSIONS else source.parent)
+        except Exception as exc:self.dialog.status.set(str(exc))
+
+    def open_visual(self):
+        try:
+            path,asset,version=self._selection();_,selected=reviews.find_version(self.data,asset,version)
+            from office_engine import OFFICE_EXTENSIONS
+            from converter import SUPPORTED_EXTENSIONS
+            if Path(selected['name']).suffix.lower() not in OFFICE_EXTENSIONS|SUPPORTED_EXTENSIONS|{'.pdf'}:self.open_version();return
+            from visual_review_ui import VisualReviewDialog
+            def changed():
+                if self.dialog.winfo_exists() and not self.dialog._busy:self._task(lambda:None)
+            self.visual=VisualReviewDialog(self.dialog,path,asset,version,self.author.get(),changed)
         except Exception as exc:self.dialog.status.set(str(exc))
 
     def package(self):

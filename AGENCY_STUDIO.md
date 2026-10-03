@@ -467,8 +467,8 @@ changed/missing completed outputs. Cancellation retains completed work. A ZIP
 is created only after every planned export succeeds; packaging can be retried
 independently. Variant folders, a public delivery index and checksums are
 included. Internal receipts, local source paths and private settings are excluded.
-Cropping currently centers each social image; manual crop positioning and
-custom editable sets remain future refinements.
+Social image crops default to center; the visual framing update below adds
+manual positioning. Custom editable export sets remain a future refinement.
 
 Validation passed 50 focused campaign, project, action-dispatch and workspace
 tests (two optional engine skips). Staged native checks exercised saved-profile
@@ -528,3 +528,46 @@ copies under `release/ui-fix/reviews-update-backup`. Native reports, the board
 capture and the update manifest are under `release/verification/reviews-*` in
 the build directory. Shared runtime/model assets and published release archives
 remain unchanged. No paid service, network sharing or publishing is introduced.
+
+### Visual feedback, revision comparison and campaign framing
+
+Campaign reviews now offers Visual review for images, PDFs and rendered Office
+files. A wider read-only workspace puts the selected version beside its feedback.
+Choose another version to compare it side by side; page/slide navigation, Fit,
+100%, 150% and 200% zoom, scrollbars and mouse-wheel scrolling are available.
+Raster previews are bounded to 2400 pixels; these zoom values refer to the
+loaded preview, not a full-resolution pixel inspection guarantee.
+
+Click the selected preview to pin a comment to a normalized point and page or
+slide. Pins and comments stay attached to the exact snapshot version; Go to pin
+returns to its page. Clear pin allows a version-wide comment. Earlier-version
+comments remain visible with that version. Point pins are implemented; rectangle
+annotations, video timeline review and portable comment exchange remain pending.
+
+Projects > Adjust social crops shows the full transformed image beside its
+export preview. Select a source and square, portrait or story variant, then
+click/drag or use the horizontal/vertical sliders to position its crop. Use these
+crops applies the selections; Save project persists them. Closing the framing
+window discards unsaved adjustments. Existing recipes and brand watermarks appear
+in the framing preview, and the final export retains the full transformed image
+until its single final crop and JPEG encode. Transparent JPEG areas use white.
+
+Crop positions are tied to source and processing hashes, including logo contents.
+Changed inputs/settings require framing again instead of silently applying an old
+position. Sources stay unchanged; private crop settings and receipts remain
+excluded from delivery ZIPs.
+
+Validation passed 61 focused review, crop, campaign, project and workspace tests
+(two optional engine skips). Native staged checks exercised the actual review
+and project routes, two-version image comparison, zoomed/scrolled pins, a page-two
+PDF comment, Word and PowerPoint previews, three positioned social sizes, ZIP
+checksums, private-settings exclusion and identical source hashes. Screenshots
+were inspected at both default and minimum window sizes.
+
+The installed executable passed the same native checks. Two runtime files
+(37,063,812 bytes) were replaced, with rollback copies under
+`release/ui-fix/visual-review-update-backup`. Reports, captures and the update
+manifest are under `release/verification/visual-*` and `campaign-framing-*.png`
+in the build directory. Shared models/engines and published release archives
+were not rebuilt. The new review and crop features work locally without a paid
+service, public upload or mandatory account.

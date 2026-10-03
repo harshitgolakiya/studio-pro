@@ -47,6 +47,13 @@ def validate_profile(profile):
         raise ValueError("Choose a supported delivery preset")
     if profile.get('export_set', 'Single preset') not in {'Single preset','Social image set','Web + social images','Mixed client handoff'}:
         raise ValueError('Choose a supported export set')
+    positions=profile.get('crop_positions',{})
+    if not isinstance(positions,dict):raise ValueError('Invalid crop positions')
+    import math
+    for source,variants in positions.items():
+        if not isinstance(source,str) or not isinstance(variants,dict):raise ValueError('Invalid crop positions')
+        for preset,point in variants.items():
+            if preset not in {'Social square','Social portrait','Social story'} or not isinstance(point,dict) or any(type(point.get(key)) not in (int,float) or not math.isfinite(point[key]) or not 0<=point[key]<=1 for key in ('x','y')) or any(not isinstance(point.get(key),str) or not re.fullmatch(r'[a-f0-9]{64}',point[key]) for key in ('source_sha256','settings_sha256')):raise ValueError('Invalid crop positions')
     identifier = str(profile.get("id", ""))
     if identifier and not re.fullmatch(r"[a-f0-9]{32}", identifier):
         raise ValueError("Invalid project identifier")
@@ -100,6 +107,9 @@ def run_project(profile, sources, output_dir, package=True, cancel_check=None, p
     settings = coerce_settings({**profile.get("settings", {}), **PRESETS[profile.get("preset", "Web images")]})
     settings["replace_source"] = False
     settings["overwrite"] = False
+    from campaign_crops import SOCIAL_SIZES,social_settings,crop_position,social_rgb
+    social=profile.get('preset') in SOCIAL_SIZES
+    if social:settings=social_settings(profile,profile['preset'])
     logo = profile.get("logo", "")
     if profile.get("watermark"):
         if not logo or not Path(logo).is_file():
@@ -119,13 +129,12 @@ def run_project(profile, sources, output_dir, package=True, cancel_check=None, p
                 failures.append({"source": str(source), "error": result.error})
                 continue
             check_cancel(cancel_check)
-            with StagedOutput(output_dir / (delivery_name(profile, source, index) + result.output_path.suffix)) as stage:
+            with StagedOutput(output_dir / (delivery_name(profile, source, index) + ('.jpg' if social else result.output_path.suffix))) as stage:
                 import shutil
-                social_sizes = {"Social square": (1080, 1080), "Social portrait": (1080, 1350), "Social story": (1080, 1920)}
-                if profile.get("preset") in social_sizes:
+                if social:
                     from PIL import Image, ImageOps
                     with Image.open(result.output_path) as image:
-                        fitted = ImageOps.fit(image.convert("RGB"), social_sizes[profile["preset"]], method=Image.Resampling.LANCZOS)
+                        fitted = ImageOps.fit(social_rgb(image), SOCIAL_SIZES[profile["preset"]], method=Image.Resampling.LANCZOS,centering=crop_position(profile,source,profile['preset']))
                         fitted.save(stage.path, format="JPEG", quality=90, optimize=True)
                 else:
                     shutil.copy2(result.output_path, stage.path)
