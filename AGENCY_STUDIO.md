@@ -340,3 +340,23 @@ The desktop update replaced two runtime files (36,970,111 bytes), retaining
 shared engines and models, with backup under `release/ui-fix/results-update-backup`.
 Receipts and captures are in `release/verification/results-*` in the build
 directory. Published release archives remain unchanged.
+
+### Favorite tools
+
+Each tool row now has a star for saving a shortcut. Favorites has a dedicated
+sidebar entry, keeps the user's saved order and scopes search to saved tools.
+Explore tools shows favorites before its usual suggestions. Stars stay in sync
+between collections and the Favorites view without rebuilding cached rows.
+Favorites persist atomically through the existing settings store; unknown,
+duplicate and malformed saved keys are ignored. If saving fails, shortcuts
+remain available for the current session with an explanatory status message.
+
+Validation passed 17 workspace tests and the palette regression check. Native
+staged and installed checks saved favorites, restarted the executable, restored
+their order, opened voiceover and conversion routes, carried selected inputs
+through and removed all favorites. Four dark/light captures were reviewed at
+the minimum window size. Test settings were isolated from user preferences.
+The desktop update replaced two runtime files (36,971,940 bytes), with backup
+under `release/ui-fix/favorites-update-backup`; shared engines/models were
+retained. Receipts and captures are under `release/verification/favorites-*`.
+Published release archives remain unchanged.

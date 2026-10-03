@@ -38,6 +38,7 @@ class WorkspaceFlowTests(unittest.TestCase):
         import main
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        self.enterContext(patch('settings.SETTINGS_FILE', Path(self.tmp.name) / 'settings.json'))
         with patch.object(main.WebPCompressorApp, '_show_setup_status_if_needed'), patch.object(main.WebPCompressorApp, '_show_missing_runtime_warning_if_needed'):
             self.app = main.WebPCompressorApp()
         self.app.withdraw()
@@ -235,3 +236,51 @@ class WorkspaceFlowTests(unittest.TestCase):
         self.assertEqual(workspace.result_card.winfo_manager(), 'grid')
         self.app._clear_all()
         self.assertIsNone(workspace._batch_result)
+
+    def test_favorites_save_order_and_remove_without_losing_other_settings(self):
+        import settings
+        settings.update_setting('theme', 'Light')
+        workspace = self.app._file_workspace
+        workspace.nav_buttons['Audio'].invoke()
+        workspace._favorite_buttons['speak'].invoke()
+        workspace._favorite_buttons['transcribe'].invoke()
+        workspace.nav_buttons['Favorites'].invoke()
+        self.assertEqual(workspace.visible_tools, ['speak', 'transcribe'])
+        self.assertEqual(settings.load_settings()['favorite_tools'], ['speak', 'transcribe'])
+        self.assertEqual(settings.load_settings()['theme'], 'Light')
+        workspace._favorite_buttons['speak'].invoke()
+        self.assertEqual(workspace.visible_tools, ['transcribe'])
+        self.assertEqual(settings.load_settings()['favorite_tools'], ['transcribe'])
+        workspace._favorite_buttons['transcribe'].invoke()
+        self.assertEqual(workspace.visible_tools, [])
+        self.assertIn('No favorites yet', workspace._layout_items[0][1].cget('text'))
+
+    def test_favorites_survive_restart_and_ignore_obsolete_or_invalid_keys(self):
+        import settings, main
+        settings.update_setting('favorite_tools', ['speak', 'removed-tool', 'speak', None, 'transcribe'])
+        self.app.destroy()
+        with patch.object(main.WebPCompressorApp, '_show_setup_status_if_needed'), patch.object(main.WebPCompressorApp, '_show_missing_runtime_warning_if_needed'):
+            restored = main.WebPCompressorApp()
+        restored.withdraw()
+        try:
+            workspace = restored._file_workspace
+            workspace.nav_buttons['Favorites'].invoke()
+            self.assertEqual(workspace.visible_tools, ['speak', 'transcribe'])
+            with patch.object(restored, '_open_studio_tools', wraps=restored._open_studio_tools):
+                workspace._tool_rows['speak'][1].invoke()
+            self.assertEqual(restored._studio_dialog.tabs.get(), 'Text to Audio')
+            restored._studio_dialog.destroy()
+        finally:restored.destroy()
+
+    def test_favorite_search_is_scoped_and_write_failure_keeps_session_working(self):
+        workspace = self.app._file_workspace
+        with patch('settings.update_setting', return_value=False):
+            workspace._toggle_favorite('speak')
+        self.assertIn('this session', self.app.status_text.get())
+        workspace.nav_buttons['Favorites'].invoke()
+        workspace.query.set('transcribe');workspace.render_tools()
+        self.assertEqual(workspace.visible_tools, [])
+        workspace.query.set('voice');workspace.render_tools()
+        self.assertEqual(workspace.visible_tools, ['speak'])
+        workspace.show_library('Audio')
+        self.assertEqual(workspace._favorite_buttons['speak'].cget('text'), '\u2605')

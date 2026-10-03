@@ -108,6 +108,11 @@ class FileWorkspace:
         self.app, self.queue, self.header = app, queue, header
         self.output, self.footer = output, footer
         self.tools = tool_catalog()
+        stored_favorites = app.settings.get('favorite_tools', [])
+        valid_keys = {tool.key for tool in self.tools}
+        self.favorites = list(dict.fromkeys(key for key in stored_favorites
+                                           if isinstance(key, str) and key in valid_keys)) if isinstance(stored_favorites, list) else []
+        self._favorite_buttons = {}
         self.mode = 'files'
         self.converting = False
         self._signature = None
@@ -359,7 +364,7 @@ class FileWorkspace:
 
     def render_tools(self):
         self._sync_navigation()
-        signature = (self.mode, self.section, self.query.get().strip().casefold(), self.expanded, tuple(self.selected_inputs()))
+        signature = (self.mode, self.section, self.query.get().strip().casefold(), self.expanded, tuple(self.selected_inputs()), tuple(self.favorites))
         if signature == self._render_signature:return
         self._render_signature = signature
         self._layout_items = []
@@ -392,7 +397,8 @@ class FileWorkspace:
             self.visible_tools = []
             self.title.configure(text='Find your next shortcut.')
             self.summary.configure(text='Useful tools for everyday creative work. Browse a collection in the sidebar.')
-            featured = ('speak', 'transcribe', 'pdf-merge', 'convert-image', 'convert-video', 'archive-extract')
+            featured = tuple(dict.fromkeys(self.favorites + ['speak', 'transcribe', 'pdf-merge', 'convert-image', 'convert-video', 'archive-extract']))[:6]
+            if self.favorites:self.summary.configure(text='Your favorites first. Browse a collection in the sidebar for more tools.')
             for index, key in enumerate(featured):
                 tool = next(t for t in self.tools if t.key == key)
                 if key not in self._featured:
@@ -412,8 +418,8 @@ class FileWorkspace:
         if self.mode == 'library':
             self.library_back.grid()
             self.title.configure(text='Search results' if query else self.section or 'Tools')
-            self.summary.configure(text='')
-        matches = [t for t in self.candidates() if (query or self.section is None or in_section(t, self.section))
+            self.summary.configure(text='Your shortcuts, across every collection. Click a star to remove a favorite.' if self.section == 'Favorites' else '')
+        matches = [t for t in self.candidates() if (t.key in self.favorites if self.section == 'Favorites' else query or self.section is None or in_section(t, self.section))
                    and query in f'{t.title} {t.description} {t.group} {t.key}'.casefold()]
         if self.mode != 'library':
             priority = {'transcribe': 1, 'pdf-merge': 1, 'data-convert': 1, 'subtitle-edit': 1, 'archive-extract': 1,
@@ -422,11 +428,12 @@ class FileWorkspace:
         all_matches = matches
         if self.mode != 'library' and not query and not self.expanded:
             matches = matches[:4]
-        groups = grouped_tools(matches, self.section) if self.mode == 'library' and not query else [('', matches)]
+        if self.section == 'Favorites':matches.sort(key=lambda tool:self.favorites.index(tool.key))
+        groups = grouped_tools(matches, self.section) if self.mode == 'library' and not query and self.section != 'Favorites' else [('', matches)]
         self.tool_groups = [name for name, _ in groups if name]
         self.visible_tools = [t.key for _, entries in groups for t in entries]
         if not matches:
-            label = self._heading('No matching tools. Try another search.')
+            label = self._heading('No favorites yet. Star a tool in any collection to keep it here.' if self.section == 'Favorites' and not query else 'No matching tools. Try another search.')
             self._layout_items.append(('heading', label))
         for name, entries in groups:
             if name:self._layout_items.append(('heading', self._heading(name)))
@@ -437,12 +444,22 @@ class FileWorkspace:
                                           anchor='w', font=ctk.CTkFont(size=13), corner_radius=9, width=140,
                                           fg_color=('#ffffff', '#1C1C23'), text_color=('#282833', '#F0EFF6'), hover_color=('#EEEEF4', '#292932'),
                                           height=56, command=lambda t=tool:self.open(t))
-                    button.pack(fill='x')
+                    button.pack(fill='x', padx=(0, 44))
+                    favorite = ctk.CTkButton(card, text='\u2606', width=38, height=56, corner_radius=9,
+                                             font=ctk.CTkFont(size=22), fg_color=('#FFFFFF', '#1C1C23'),
+                                             hover_color=('#EEEEF4', '#292932'), text_color=('#777785', '#9493A3'),
+                                             command=lambda key=tool.key:self._toggle_favorite(key))
+                    favorite.place(relx=1, y=0, anchor='ne')
+                    self._favorite_buttons[tool.key] = favorite
                     description = ctk.CTkLabel(card, text=tool.description, font=ctk.CTkFont(size=11), anchor='w', justify='left',
                                                 wraplength=300, text_color=('#777785', '#9493A3'))
                     hint_label = ctk.CTkLabel(card, text='', font=ctk.CTkFont(size=11), anchor='w', text_color=('#777785', '#9493A3'))
                     self._tool_rows[tool.key] = (card,button,description,hint_label)
                 card,button,description,hint_label = self._tool_rows[tool.key]
+                favorite = self._favorite_buttons[tool.key]
+                star = '\u2605' if tool.key in self.favorites else '\u2606'
+                if favorite.cget('text') != star:
+                    favorite.configure(text=star, text_color=('#6652C2', '#B9ADF3') if tool.key in self.favorites else ('#777785', '#9493A3'))
                 if description.winfo_manager():description.pack_forget()
                 if hint_label.winfo_manager():hint_label.pack_forget()
                 if self.mode == 'files' and not self.expanded and not query:
@@ -474,6 +491,16 @@ class FileWorkspace:
         if name not in self._headings:
             self._headings[name] = ctk.CTkLabel(self.cards,text=name,anchor='w',font=ctk.CTkFont(size=11,weight='bold'),text_color=('#777785','#9493A3'))
         return self._headings[name]
+
+    def _toggle_favorite(self, key):
+        from settings import update_setting
+        if key not in {tool.key for tool in self.tools}:return
+        if key in self.favorites:self.favorites.remove(key)
+        else:self.favorites.append(key)
+        self.app.settings['favorite_tools'] = list(self.favorites)
+        saved = update_setting('favorite_tools', list(self.favorites))
+        self.app.status_text.set('Favorites updated.' if saved else 'Favorites updated for this session. Settings could not be saved.')
+        self.render_tools()
 
     def _schedule_search(self, _event=None):
         if self._search_job:self.app.after_cancel(self._search_job)
@@ -509,7 +536,7 @@ class FileWorkspace:
                 widget.grid(row=row,column=index,columnspan=1,sticky='ew',padx=(0,12) if index < columns-1 else 0,pady=(0,8))
                 for child in widget.winfo_children():
                     if isinstance(child,ctk.CTkButton):
-                        wrap = max(100,int((button_width-80)*scale))
+                        wrap = max(100,int((button_width-(124 if kind == 'tool' else 80))*scale))
                         if int(str(child._text_label.cget('wraplength'))) != wrap:child._text_label.configure(wraplength=wrap)
                     elif isinstance(child,ctk.CTkLabel):
                         wrap = max(120,int(button_width-32))
@@ -632,6 +659,7 @@ def install_workspace(app, parent, queue, header, output, footer, header_right):
     def home():
         w.mode='home';w.converting=False;w.refresh();w.reset_scroll()
     nav_button(nav, 'Home', home)
+    nav_button(nav, 'Favorites', lambda:w.show_library('Favorites'))
     app.workspace_menu=nav_button(nav, 'Explore tools', w.show_library)
     nav_button(nav, 'History', app._open_history)
     ctk.CTkLabel(nav, text='TOOL COLLECTIONS', anchor='w', font=ctk.CTkFont(size=9, weight='bold'),
