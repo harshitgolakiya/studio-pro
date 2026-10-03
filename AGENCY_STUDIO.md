@@ -178,3 +178,19 @@ Spanish-to-English translation. Additional voices, OCR scripts, translation
 pairs, and larger transcription models can be installed through Models.
 Mac apps are ad-hoc signed. Apple Developer signing and notarization require
 the account's certificate and credentials, which are not configured in this repo.
+
+### Text-to-audio desktop update on 2026-10-03
+
+The speech editor now reserves space for Generate speech at shorter window
+heights and offers a dropdown of installed voices. Browse custom voice remains
+available for paired Piper `.onnx` and `.onnx.json` files. Two focused UI tests
+passed; the deployed executable showed all 13 voices and generated a real Amy
+WAV, with Generate speech visible at 100%, 125%, and 150% display scaling.
+
+Windows launch history identified an older Python 3.11 copy in
+`C:\Program Files\Shadow Media Studio Pro`, without bundled models. The current
+Python 3.12 app is deployed at `D:\Shadow-Agency-Studio\Shadow.exe`; the desktop
+and user Start menu shortcuts named Shadow Agency Studio point to this version.
+Its model, LibreOffice, and Ghostscript folders link to the existing assets in
+`D:\Shadow-Agency-Studio-Build\vendor`, which must be retained. The previously
+published Windows archive and Mac DMGs predate this desktop UI update.

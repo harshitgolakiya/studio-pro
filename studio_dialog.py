@@ -14,7 +14,7 @@ from audio_tools import ENCODERS, process_audio
 from document_preview import DocumentPreviewDialog
 from media_engine import SUPPORTED_AUDIO_EXTENSIONS, SUPPORTED_VIDEO_EXTENSIONS, get_ffmpeg_path
 from pdf_tools import process_pdf
-from speech_engine import available_voices, default_whisper_model, synthesize_speech, transcribe_media
+from speech_engine import available_voices, default_voice, default_whisper_model, synthesize_speech, transcribe_media
 from studio_runtime import StudioCancelled, find_libreoffice
 from ui_dispatch import TkEventBridge, cancel_widget_callbacks
 from utils import open_file_or_folder
@@ -81,8 +81,8 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.cancel.grid(row=1, column=2)
         self.protocol("WM_DELETE_WINDOW", self.destroy)
 
-    def _button(self, parent, text, command):
-        button = ctk.CTkButton(parent, text=text, command=command, width=145)
+    def _button(self, parent, text, command, width=145):
+        button = ctk.CTkButton(parent, text=text, command=command, width=width)
         self._actions.append(button)
         return button
 
@@ -189,24 +189,60 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self._run(work)
 
     def _synthesis(self, tab):
-        self._copy(tab, "Create English voiceovers from scripts or extracted document text. Export a WAV master, "
-                   "then use the audio converter for MP3, AAC, or Opus delivery.")
-        self.script = ctk.CTkTextbox(tab, height=220, wrap="word")
-        self.script.pack(fill="both", expand=True, padx=14, pady=10)
+        # Reserve the controls' rows; only the script editor shrinks on shorter
+        # screens. Packing the expanding editor first could clip the action.
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(tab, text="Create voiceovers from scripts or extracted document text. Choose a voice for your language. "
+                     "Export a WAV master, then use the audio converter for MP3, AAC, or Opus delivery.",
+                     wraplength=680, justify="left", anchor="w").grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 8))
+        self.script = ctk.CTkTextbox(tab, height=140, wrap="word")
+        self.script.grid(row=1, column=0, sticky="nsew", padx=14, pady=8)
         row = ctk.CTkFrame(tab, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=8)
+        row.grid(row=2, column=0, sticky="ew", padx=14, pady=6)
         self._button(row, "Load document text", self._load_script).pack(side="left", padx=(0, 8))
-        self._button(row, "Choose voice model", self._choose_voice).pack(side="left", padx=8)
         ctk.CTkOptionMenu(row, variable=self.speed, values=["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"], width=85).pack(side="right")
-        self.voice_label = ctk.CTkLabel(tab, text="Bundled English voice", anchor="w")
-        self.voice_label.pack(fill="x", padx=14)
-        self._button(tab, "Generate speech", self._speak).pack(anchor="w", padx=14, pady=12)
+        ctk.CTkLabel(row, text="Speed").pack(side="right", padx=8)
+        voices = ctk.CTkFrame(tab, fg_color="transparent")
+        voices.grid(row=3, column=0, sticky="ew", padx=14, pady=6)
+        voices.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(voices, text="Voice").grid(row=0, column=0, padx=(0, 8))
+        self.voice_choice = tk.StringVar(master=self)
+        self.voice_menu = ctk.CTkOptionMenu(voices, variable=self.voice_choice, values=["No installed voices"], command=self._select_voice)
+        self.voice_menu.grid(row=0, column=1, sticky="ew")
+        self._button(voices, "Refresh", self._refresh_voices, width=75).grid(row=0, column=2, padx=8)
+        self._button(voices, "Browse custom voice", self._choose_voice, width=175).grid(row=0, column=3)
+        self.voice_label = ctk.CTkLabel(voices, text="", anchor="w")
+        self.voice_label.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        self.generate_speech = self._button(tab, "Generate speech", self._speak)
+        self.generate_speech.grid(row=4, column=0, sticky="w", padx=14, pady=(4, 10))
+        self._refresh_voices()
+
+    def _refresh_voices(self):
+        from model_catalog import catalog
+        labels = {entry.marker.removesuffix(".onnx.json"): entry.label for entry in catalog() if entry.kind == "voice"}
+        paths = [voice for voice in available_voices() if Path(str(voice) + ".json").is_file()]
+        self._voices = {labels.get(voice.stem, voice.stem): voice for voice in paths}
+        if self._voice and self._voice.is_file() and Path(str(self._voice) + ".json").is_file() and self._voice not in self._voices.values():
+            self._voices[f"Custom: {self._voice.stem}"] = self._voice
+        selected = self._voice or default_voice()
+        choice = next((label for label, path in self._voices.items() if path == selected), next(iter(self._voices), "No installed voices"))
+        self.voice_menu.configure(values=list(self._voices) or ["No installed voices"])
+        self.voice_menu.set(choice)
+        self._select_voice(choice)
+        self.voice_label.configure(text=f"{len(paths)} installed voices available" if paths else "Install a voice in More Tools > Models, or browse for a custom voice.")
+
+    def _select_voice(self, choice):
+        self._voice = self._voices.get(choice)
 
     def _choose_voice(self):
         name = filedialog.askopenfilename(parent=self, title="Select Piper voice", filetypes=[("Piper voice", "*.onnx")])
         if name:
+            if not Path(name + ".json").is_file():
+                self.status.set("The voice needs its matching .onnx.json file in the same folder.")
+                return
             self._voice = Path(name)
-            self.voice_label.configure(text=Path(name).name)
+            self._refresh_voices()
 
     def _load_script(self):
         name = filedialog.askopenfilename(parent=self, title="Read script from document", filetypes=[("Documents", " ".join(f"*{e}" for e in sorted(SUPPORTED_DOCUMENT_EXTENSIONS)))])

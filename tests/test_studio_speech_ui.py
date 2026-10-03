@@ -1,0 +1,70 @@
+from pathlib import Path
+import tempfile
+import tkinter as tk
+import unittest
+from unittest.mock import patch
+
+import customtkinter as ctk
+from studio_dialog import StudioToolsDialog
+from ui_dispatch import cancel_widget_callbacks
+
+
+class SpeechUiTests(unittest.TestCase):
+    def make_dialog(self):
+        root = ctk.CTk()
+        root.withdraw()
+        root.output_directory = tk.StringVar(master=root, value=tempfile.gettempdir())
+        dialog = StudioToolsDialog(root)
+        tabs = dialog.generate_speech.master.master
+        tabs.set("Text to Audio")
+        root.update()
+        self.addCleanup(self.close_dialog, root, dialog)
+        return root, dialog
+
+    @staticmethod
+    def close_dialog(root, dialog):
+        dialog.destroy()
+        cancel_widget_callbacks(root)
+        root.destroy()
+
+    def test_generate_stays_inside_short_window_at_display_scales(self):
+        try:
+            for scale in (1.0, 1.25, 1.5):
+                with self.subTest(scale=scale):
+                    ctk.set_widget_scaling(scale)
+                    ctk.set_window_scaling(scale)
+                    root, dialog = self.make_dialog()
+                    dialog.minsize(0, 0)
+                    dialog.geometry("740x480")
+                    root.update()
+                    button = dialog.generate_speech
+                    tab = button.master
+                    self.assertTrue(button.winfo_ismapped())
+                    self.assertGreater(button.winfo_height(), 20)
+                    self.assertGreaterEqual(button.winfo_rooty(), tab.winfo_rooty())
+                    self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), tab.winfo_rooty() + tab.winfo_height())
+                    self.assertLessEqual(dialog.script.winfo_rooty() + dialog.script.winfo_height(), dialog.voice_menu.winfo_rooty())
+                    self.doCleanups()
+        finally:
+            ctk.set_widget_scaling(1.0)
+            ctk.set_window_scaling(1.0)
+
+    def test_selected_installed_voice_is_used_for_generation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root_dir = Path(temp)
+            voice = root_dir / "en_US-amy-medium.onnx"
+            voice.touch()
+            Path(str(voice) + ".json").write_text("{}")
+            with patch("studio_dialog.available_voices", return_value=[voice]), patch("studio_dialog.default_voice", return_value=voice):
+                _, dialog = self.make_dialog()
+            choice = next(iter(dialog._voices))
+            self.assertIn("Amy", choice)
+            dialog._select_voice(choice)
+            dialog.script.insert("1.0", "Hello from the installed voice.")
+            with patch("studio_dialog.filedialog.asksaveasfilename", return_value=str(root_dir / "voice.wav")), patch.object(dialog, "_run", side_effect=lambda work: work(lambda _: None)), patch("studio_dialog.synthesize_speech") as synthesize:
+                dialog.generate_speech.invoke()
+            self.assertEqual(synthesize.call_args.args[1:3], (root_dir / "voice.wav", voice))
+
+
+if __name__ == "__main__":
+    unittest.main()
