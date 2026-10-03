@@ -108,7 +108,9 @@ def default_whisper_model() -> Path:
 
 
 def available_voices() -> list[Path]:
-    return sorted((model_directory() / "voices").glob("*.onnx"))
+    from natural_speech import voice_ready
+    root = model_directory()
+    return [path for path in sorted((root / 'kokoro-v1' / 'voices').glob('*.voice.json')) if voice_ready(path)] + sorted((root / "voices").glob("*.onnx"))
 
 
 def default_voice() -> Path | None:
@@ -121,7 +123,8 @@ def default_voice() -> Path | None:
     for voice in voices:
         if voice.stem == preferred:
             return voice
-    return next((voice for voice in voices if voice.stem.startswith("en_US-lessac")), voices[0] if voices else None)
+    return next((voice for voice in voices if voice.name == 'af_heart.voice.json'),
+                next((voice for voice in voices if voice.stem.startswith("en_US-lessac")), voices[0] if voices else None))
 
 
 def diarization_models() -> tuple[Path, Path]:
@@ -294,9 +297,9 @@ def synthesize_speech(text: str, destination: Path, voice_path: Path | None = No
     if destination.suffix.lower() != ".wav":
         raise ValueError("Speech synthesis exports WAV; use the audio converter for MP3/AAC/Opus")
     voice_path = Path(voice_path) if voice_path else default_voice()
-    if voice_path is None or not voice_path.is_file() or not Path(str(voice_path) + ".json").is_file():
+    from natural_speech import voice_ready, synthesize_kokoro, speech_chunks
+    if voice_path is None or not voice_ready(voice_path):
         raise RuntimeError("Voice model missing. Run setup_studio.ps1 or select a Piper .onnx voice with its .onnx.json configuration.")
-    from piper import PiperVoice, SynthesisConfig
     destination.parent.mkdir(parents=True, exist_ok=True)
     reservations: set[Path] = set()
     output = reserve_output_path(destination, overwrite, reservations)
@@ -305,17 +308,21 @@ def synthesize_speech(text: str, destination: Path, voice_path: Path | None = No
             temporary = Path(td) / "voice.wav"
             with speech_slot(cancel_check):
                 check_cancel(cancel_check)
-                voice = PiperVoice.load(voice_path)
-                # Bound each synthesis call so cancellation is checked during long scripts.
-                chunks = textwrap.wrap(text, width=800, replace_whitespace=False)
-                with wave.open(str(temporary), "wb") as wav:
-                    for index, chunk in enumerate(chunks):
-                        check_cancel(cancel_check)
-                        if progress:
-                            progress(f"Generating speech {index + 1}/{len(chunks)}…")
-                        voice.synthesize_wav(chunk, wav, SynthesisConfig(length_scale=1 / speed),
-                                             set_wav_format=index == 0)
-                del voice
+                if voice_path.name.endswith('.voice.json'):
+                    synthesize_kokoro(text, temporary, voice_path, speed, cancel_check, progress)
+                else:
+                    from piper import PiperVoice, SynthesisConfig
+                    voice = PiperVoice.load(voice_path)
+                    # Bound each synthesis call so cancellation is checked during long scripts.
+                    chunks = speech_chunks(text)
+                    with wave.open(str(temporary), "wb") as wav:
+                        for index, chunk in enumerate(chunks):
+                            check_cancel(cancel_check)
+                            if progress:
+                                progress(f"Generating speech {index + 1}/{len(chunks)}…")
+                            voice.synthesize_wav(chunk, wav, SynthesisConfig(length_scale=1 / speed),
+                                                 set_wav_format=index == 0)
+                    del voice
             check_cancel(cancel_check)
             return publish_output_file(temporary, output, overwrite, reservations)
     finally:

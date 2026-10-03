@@ -38,6 +38,7 @@ class ModelEntry:
     files: tuple[tuple[str, str], ...] = ()         # (url, file name) pairs
     archive: tuple[str, str, str] | None = None     # (url, member suffix, saved file name)
     sha256: str = ""                                # for single-file entries
+    bundle_archive: str = ""                       # full, self-contained model directory
 
 
 def _voice(code: str, name: str, quality: str, language: str, size: int) -> ModelEntry:
@@ -106,6 +107,8 @@ def _ocr_entries() -> list[ModelEntry]:
 
 def catalog() -> list[ModelEntry]:
     entries = [
+        ModelEntry('voice-kokoro-v1', 'voice', 'Natural English voices — Kokoro', 'English (US / UK)',
+                   350, 'kokoro-v1', 'model.onnx', bundle_archive=_SHERPA + 'tts-models/kokoro-multi-lang-v1_0.tar.bz2'),
         _whisper("base.en", "Systran/faster-whisper-base.en", "English only", 145),
         _whisper("base", "Systran/faster-whisper-base", "99 languages, fastest", 145),
         _whisper("small", "Systran/faster-whisper-small", "99 languages, balanced", 485),
@@ -162,6 +165,8 @@ def entry_path(entry: ModelEntry) -> Path:
 
 
 def is_installed(entry: ModelEntry) -> bool:
+    if entry.bundle_archive:
+        return all((entry_path(entry) / name).exists() for name in ('model.onnx', 'voices.bin', 'tokens.txt', 'espeak-ng-data', 'voices/af_heart.voice.json'))
     return (entry_path(entry) / entry.marker).is_file()
 
 
@@ -177,7 +182,7 @@ def _owned_files(entry: ModelEntry) -> list[Path]:
 def installed_bytes(entry: ModelEntry) -> int:
     if not is_installed(entry):
         return 0
-    if entry.repo:
+    if entry.repo or entry.bundle_archive:
         return sum(p.stat().st_size for p in entry_path(entry).rglob("*") if p.is_file())
     return sum(p.stat().st_size for p in _owned_files(entry) if p.is_file())
 
@@ -188,7 +193,7 @@ def remove(entry: ModelEntry) -> None:
     root = model_directory().resolve()
     if root not in folder.parents:
         raise ValueError("Refusing to remove a path outside the model directory")
-    if entry.repo:
+    if entry.repo or entry.bundle_archive:
         shutil.rmtree(folder, ignore_errors=True)
     else:
         for path in _owned_files(entry):
@@ -238,7 +243,27 @@ def install(entry: ModelEntry, progress: Callable[[str], None] | None = None,
     folder = entry_path(entry)
     check_cancel(cancel_check)
     try:
-        if entry.repo:
+        if entry.bundle_archive:
+            with tempfile.TemporaryDirectory(prefix='shadow-voice-pack-') as td:
+                packed = Path(td) / 'voices.tar.bz2'
+                _download(entry.bundle_archive, packed, label=entry.label, progress=progress, cancel_check=cancel_check)
+                extracted = Path(td) / 'unpacked'
+                with tarfile.open(packed) as archive:
+                    archive.extractall(extracted, filter='data')
+                source = next(extracted.glob('*/model.onnx'), None)
+                if source is None:raise RuntimeError('Voice pack has no model.onnx')
+                from natural_speech import install_voice_descriptors
+                install_voice_descriptors(source.parent)
+                folder.mkdir(parents=True, exist_ok=True)
+                for path in sorted(source.parent.rglob('*'), key=lambda p:p.name == entry.marker):
+                    check_cancel(cancel_check)
+                    relative = path.relative_to(source.parent)
+                    target = folder / relative
+                    if path.is_dir():target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(path, target)
+        elif entry.repo:
             names = _repository_files(entry.repo)
             if entry.marker not in names:
                 raise RuntimeError(f"{entry.repo} does not provide {entry.marker}")

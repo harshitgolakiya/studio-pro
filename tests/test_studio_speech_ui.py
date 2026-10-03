@@ -71,6 +71,19 @@ class SpeechUiTests(unittest.TestCase):
                 dialog.generate_speech.invoke()
             self.assertEqual(synthesize.call_args.args[1:3], (root_dir / "voice.wav", voice))
 
+    def test_preview_uses_selected_voice_without_save_dialog(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root_dir = Path(temp)
+            _, dialog = self.make_dialog()
+            dialog._voice = root_dir / 'selected.voice.json'
+            dialog.script.insert('1.0', 'What wonderful news!')
+            with patch('settings.get_app_data_dir', return_value=root_dir), patch('studio_dialog.filedialog.asksaveasfilename') as save, patch.object(dialog, '_run', side_effect=lambda work:work(lambda _:None)), patch('studio_dialog.synthesize_speech') as synthesize:
+                dialog.preview_voice.invoke()
+            save.assert_not_called()
+            self.assertEqual(synthesize.call_args.args[:3], ('What wonderful news!', root_dir/'voice-previews'/'sample.wav', dialog._voice))
+            self.assertTrue(synthesize.call_args.kwargs['overwrite'])
+            self.assertTrue(dialog._auto_play_preview)
+
 
 if __name__ == "__main__":
     unittest.main()

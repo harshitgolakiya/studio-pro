@@ -106,7 +106,7 @@ class ModelCatalogTests(unittest.TestCase):
         from model_catalog import KIND_LABELS, catalog
         entries = catalog()
         self.assertEqual(len({e.key for e in entries}), len(entries))
-        self.assertTrue(all(e.kind in KIND_LABELS and e.marker and (e.repo or e.files or e.archive) for e in entries))
+        self.assertTrue(all(e.kind in KIND_LABELS and e.marker and (e.repo or e.files or e.archive or e.bundle_archive) for e in entries))
         self.assertTrue({"whisper", "voice", "translation", "diarization", "denoise", "color"} <= {e.kind for e in entries})
 
     def test_install_verify_remove_and_bad_checksum(self):

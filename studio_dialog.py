@@ -50,6 +50,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self._actions = []
         self._last_output = None
         self._preview_output = None
+        self._auto_play_preview = False
         from audio_preview import WavPlayer
         self._player = WavPlayer()
         self._pdfs: list[Path] = []
@@ -283,6 +284,8 @@ class StudioToolsDialog(ctk.CTkToplevel):
         row = ctk.CTkFrame(tab, fg_color="transparent")
         row.grid(row=2, column=0, sticky="ew", padx=14, pady=3)
         self._button(row, "Load document text", self._load_script).pack(side="left", padx=(0, 8))
+        self.preview_voice = self._button(row, 'Preview voice', self._try_voice, width=110)
+        self.preview_voice.pack(side='left')
         ctk.CTkOptionMenu(row, variable=self.speed, values=["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"], width=85).pack(side="right")
         ctk.CTkLabel(row, text="Speed").pack(side="right", padx=8)
         voices = ctk.CTkFrame(tab, fg_color="transparent")
@@ -339,9 +342,10 @@ class StudioToolsDialog(ctk.CTkToplevel):
 
     def _refresh_voices(self):
         from model_catalog import catalog
+        from natural_speech import voice_ready, voice_label
         labels = {entry.marker.removesuffix(".onnx.json"): entry.label for entry in catalog() if entry.kind == "voice"}
-        paths = [voice for voice in available_voices() if Path(str(voice) + ".json").is_file()]
-        self._voices = {labels.get(voice.stem, voice.stem): voice for voice in paths}
+        paths = [voice for voice in available_voices() if voice_ready(voice)]
+        self._voices = {voice_label(voice) or labels.get(voice.stem, voice.stem): voice for voice in paths}
         if self._voice and self._voice.is_file() and Path(str(self._voice) + ".json").is_file() and self._voice not in self._voices.values():
             self._voices[f"Custom: {self._voice.stem}"] = self._voice
         selected = self._voice or default_voice()
@@ -349,10 +353,24 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.voice_menu.configure(values=list(self._voices) or ["No installed voices"])
         self.voice_menu.set(choice)
         self._select_voice(choice)
-        self.voice_label.configure(text=f"{len(paths)} installed voices available" if paths else "Install a voice in Voices / models, or browse for a custom voice.")
+        self.voice_label.configure(text=f"{len(paths)} voices · Natural voices use Kokoro; other installed voices use Piper." if paths else "Install Natural English voices in Voices / models, or browse for a custom voice.")
 
     def _select_voice(self, choice):
         self._voice = self._voices.get(choice)
+
+    def _try_voice(self):
+        if self._busy:return
+        if not self._voice:
+            self.status.set('Install or choose a voice first.')
+            return
+        from settings import get_app_data_dir
+        sample = self.script.get('1.0', 'end-1c').strip()[:400] or 'Oh, that is wonderful news! Take your time, and tell me what happened. We will work it out together.'
+        voice, speed = self._voice, float(self.speed.get())
+        output = get_app_data_dir() / 'voice-previews' / 'sample.wav'
+        self._player.stop()
+        self._auto_play_preview = True
+        self._run(lambda progress:synthesize_speech(sample, output, voice, speed, overwrite=True,
+                                                    cancel_check=self._cancel.is_set, progress=progress))
 
     def _choose_voice(self):
         name = filedialog.askopenfilename(parent=self, title="Select Piper voice", filetypes=[("Piper voice", "*.onnx")])
@@ -377,6 +395,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         self.script.insert("1.0", text)
 
     def _speak(self):
+        self._auto_play_preview = False
         if not self.script.get("1.0", "end-1c").strip():
             self.status.set("Write or load a script first.")
             return
@@ -497,6 +516,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
         threading.Thread(target=worker, daemon=True).start()
 
     def _finish(self, output, error):
+        autoplay, self._auto_play_preview = self._auto_play_preview, False
         self._busy = False
         for action in self._actions:
             action.configure(state="normal")
@@ -518,6 +538,7 @@ class StudioToolsDialog(ctk.CTkToplevel):
                     message = f"{output.name} · {info['duration']:.1f}s audio ready · choose output and press Play"
                     if info['peak'] < 0.001: message = "This audio is silent or very quiet. Try another voice."
                     self.audio_preview_status.set(message)
+                    if autoplay and info['peak'] >= .001:self._play_audio()
 
     def destroy(self):
         self._player.stop()

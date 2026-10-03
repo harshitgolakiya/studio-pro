@@ -22,6 +22,9 @@ def main():
         if entry.repo:
             sources.append("https://huggingface.co/" + entry.repo)
             notice_url = f"https://huggingface.co/{entry.repo}/raw/main/README.md"
+        elif entry.bundle_archive:
+            sources.append(entry.bundle_archive)
+            notice_url = 'https://huggingface.co/hexgrad/Kokoro-82M/raw/main/README.md'
         elif entry.kind == "voice":
             notice_url = entry.files[0][0].rsplit("/", 1)[0] + "/MODEL_CARD"
         else:

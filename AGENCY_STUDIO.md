@@ -382,3 +382,32 @@ under the build directory. After the user closed Shadow, two runtime files
 Native checks on the installed copy passed the same phrases, typo handling,
 Favorites scope, descriptions and voiceover route. Shared engines/models and
 published release archives remain unchanged.
+
+### Natural offline voice upgrade
+
+Added Kokoro v1.0 through the existing sherpa-onnx runtime, with ten curated
+American/British English voices. Heart is the default when no voice preference
+is saved. Existing Piper voices and custom ONNX voices remain usable. Voice
+descriptors point to one shared model pack instead of duplicating neural weights
+per voice. The Models catalog supports explicit installation/removal of this
+self-contained pack; its original license is retained alongside the model.
+
+Preview voice generates a short sample from the current script (or a sample
+sentence) without a save dialog and plays it through the chosen output device.
+Samples use a single overwriteable app-data cache. Synthesis keeps paragraph
+and sentence boundaries, bounds long chunks, checks cancellation between native
+sentences, validates PCM output and publishes WAVs through the existing atomic
+output reservation. This is a naturalness upgrade; no artificial emotion labels
+are exposed for a model that does not offer explicit emotional direction.
+
+Focused tests passed (16 run, three optional engine skips). Staged and installed native
+checks generated Heart, Michael and Emma samples, measured audible PCM levels,
+verified spoken words through transcription, and checked the natural default,
+preview autoplay and compact-window controls. The shared installed model pack
+uses 382.7 MiB. The desktop runtime update replaced two files (36,982,375 bytes),
+backed up under `release/ui-fix/natural-voice-update-backup`. Verification,
+comparison WAVs and the UI capture are in `release/verification/natural-*` and
+`piper-comparison.wav` in the build directory. Published archives are unchanged.
+
+Model source: https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2
+Voice mapping: https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/kokoro.html
