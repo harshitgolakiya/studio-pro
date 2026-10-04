@@ -571,3 +571,56 @@ manifest are under `release/verification/visual-*` and `campaign-framing-*.png`
 in the build directory. Shared models/engines and published release archives
 were not rebuilt. The new review and crop features work locally without a paid
 service, public upload or mandatory account.
+
+### Delivery checks and reusable campaign templates
+
+Projects now includes a local template selector, Apply template, Save as template,
+a configurable delivery file-size limit and Check delivery. Templates retain
+client branding, naming, supported export sets/presets, processing recipes, ZIP
+preferences and limits. They exclude project IDs/names, source selections,
+per-source crop positions and receipts. Applying a template preserves the name
+entered for the new campaign and creates independent campaign state. Templates
+retain local logo-path references; they do not bundle fonts/logos or sync online.
+
+Loading a saved project/template now preserves its processing recipe instead of
+overwriting it with the current queue settings. Use current queue recipe is an
+explicit choice. Save project persists that choice. Templates require an explicit
+delivery preset for a Single preset campaign; legacy Current queue settings
+conversion remains separate from receipt-based campaign checks.
+
+Campaign export checks run after conversion and before ZIP packaging. They verify
+recorded output hashes, presence/completion of required files, missing variants,
+readable images and PDFs, social dimensions, web image maximum dimensions and
+expected formats. Media inspection uses the bundled ffprobe to check expected
+containers and audio/video streams. Missing media inspection gives a warning;
+it does not pretend playback was verified. Source image dimensions flag likely
+enlargement, and file-size warnings use a configurable limit (25 MB by default;
+0 disables it; one MB here means 1,048,576 bytes).
+
+Errors stop ZIP creation while preserving exports and receipts. Retry reruns the
+checks before packaging. Warnings permit packaging but stay visible in the export
+summary and report. Check delivery opens the latest receipt or a chosen existing
+receipt, offers Recheck and Save report, and writes a local delivery-checks.json.
+The receipt and private report remain excluded from client ZIPs. A report records
+its check time; changing files requires a recheck. Ready refers to these mechanical
+checks, not visual quality, listening to audio, brand compliance or reviewer
+approval. These remain human decisions.
+
+Validation passed 73 focused campaign, template, delivery-check, crop, review,
+project and workspace tests (two optional engine skips). Coverage includes hash,
+format and dimension failures, missing files/variants, size and resolution
+warnings, readable PDFs, path containment, cancellation, packaging blocked by
+errors and subsequent retry, template isolation and saved-recipe preservation.
+
+Staged and installed native checks passed the real template/save/load/export
+routes, automatic checks before packaging, ready/error report screens and recheck,
+changed-file/dimension detection, source preservation, private-report exclusion,
+and inspection of actual WAV and MP4 streams using the bundled engines. Screens
+were visually inspected at default and minimum dialog sizes.
+
+The installed update replaced two runtime files (37,083,430 bytes), with rollback
+copies under `release/ui-fix/delivery-checks-update-backup`. Native reports,
+captures, build logs and the manifest are under `release/verification/delivery-*`
+and `campaign-template-ui.png` in the build directory. Shared models/engines and
+published release archives were not rebuilt. No paid service, account connection
+or public upload was added.

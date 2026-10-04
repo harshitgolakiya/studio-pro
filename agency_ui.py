@@ -22,12 +22,17 @@ class ProjectsPanel:
         self.profile = {}
         self.profiles = []
         self.last_receipt = None
+        self._use_saved_settings = False
         body = ctk.CTkScrollableFrame(parent)
         body.pack(fill="both", expand=True)
         dialog._copy(body, "Save client projects and brand kits, apply social/web/print presets, and create named deliverables with a verified ZIP package. Naming supports {client}, {project}, {stem}, {preset}, {index}, {date}.")
         self.selected = tk.StringVar(master=parent)
         self.menu = ctk.CTkOptionMenu(body, variable=self.selected, values=["New project"], command=self.load_selected, width=400)
         self.menu.pack(anchor="w", padx=12, pady=5)
+        template_row=ctk.CTkFrame(body,fg_color='transparent');template_row.pack(fill='x',padx=12,pady=5)
+        self.template_menu=ctk.CTkOptionMenu(template_row,values=['Choose a template'],width=240);self.template_menu.pack(side='left',padx=(0,8))
+        dialog._button(template_row,'Apply template',self.apply_template,width=120).pack(side='left',padx=(0,8))
+        dialog._button(template_row,'Save as template',self.save_template,width=140).pack(side='left')
         self.variables = {key: tk.StringVar(master=parent, value=value) for key, value in
                           {"client": "", "project": "", "colors": "", "fonts": "", "logo": "",
                            "naming": "{client}-{project}-{stem}-{index}", "preset": "Web images", "export_set":"Single preset"}.items()}
@@ -44,6 +49,10 @@ class ProjectsPanel:
         self.package = tk.BooleanVar(master=parent, value=True)
         ctk.CTkCheckBox(body, text="Apply brand logo watermark to images", variable=self.watermark).pack(anchor="w", padx=12, pady=5)
         ctk.CTkCheckBox(body, text="Create delivery ZIP with checksums", variable=self.package).pack(anchor="w", padx=12, pady=5)
+        self.max_file_mb=tk.StringVar(master=parent,value='25')
+        entry(body,'Delivery file limit (MB, 0 = no limit)',self.max_file_mb)
+        dialog._copy(body,'Campaign file checks run before packaging for explicit delivery presets. Errors stop the ZIP; warnings flag size or likely image enlargement for review.')
+        dialog._button(body,'Use current queue recipe',self.use_queue_recipe).pack(anchor='w',padx=12,pady=5)
         row = ctk.CTkFrame(body, fg_color="transparent")
         row.pack(fill="x", padx=12, pady=5)
         for label, command in (("Save project", self.save), ("Import profile", self.import_profile), ("Export profile", self.export_profile)):
@@ -58,9 +67,11 @@ class ProjectsPanel:
         dialog._button(row,'Resume export',self.resume).pack(side='left',padx=(0,5))
         dialog._button(body,'Review this export',self.review_export).pack(anchor='w',padx=12,pady=5)
         dialog._button(body,'Adjust social crops',self.adjust_crops).pack(anchor='w',padx=12,pady=5)
+        dialog._button(body,'Check delivery',self.check_delivery).pack(anchor='w',padx=12,pady=5)
         self.report = ctk.CTkLabel(body, text="No delivery inputs selected", wraplength=650, justify="left", anchor="w")
         self.report.pack(fill="x", padx=12, pady=8)
         self.refresh()
+        self.refresh_templates()
 
     def refresh(self):
         from agency_projects import list_profiles
@@ -70,10 +81,17 @@ class ProjectsPanel:
 
     def load_selected(self, label):
         self.profile = dict(self.labels[label][1]) if label in self.labels else {}
+        self.load_profile_fields()
+
+    def load_profile_fields(self):
+        self._use_saved_settings='settings' in self.profile
+        self.last_receipt=None
         for key, variable in self.variables.items():
             value = self.profile.get(key, "Single preset" if key=='export_set' else "Web images" if key == "preset" else "{client}-{project}-{stem}-{index}" if key == "naming" else "")
             variable.set(", ".join(value) if isinstance(value, list) else value)
         self.watermark.set(self.profile.get("watermark", False))
+        self.package.set(self.profile.get('package',True))
+        self.max_file_mb.set(str(self.profile.get('delivery_rules',{}).get('max_file_mb',25)))
 
     def current(self):
         profile = dict(self.profile)
@@ -81,17 +99,61 @@ class ProjectsPanel:
         for key in ("colors", "fonts"):
             profile[key] = [v.strip() for v in profile[key].split(",") if v.strip()]
         profile["watermark"] = self.watermark.get()
+        profile['package']=self.package.get()
+        try:profile['delivery_rules']={'max_file_mb':float(self.max_file_mb.get())}
+        except ValueError:raise ValueError('Enter a numeric delivery file limit')
         collector = getattr(self.dialog._master, "_collect_recipe_settings", None)
-        if collector:
+        if collector and not self._use_saved_settings:
             profile["settings"] = collector()
         return profile
+
+    def refresh_templates(self):
+        from agency_templates import list_templates
+        self.templates={f'{data["name"][:38]}{ "…" if len(data["name"])>38 else ""} ({data["id"][:6]})':data for _,data in list_templates()}
+        self.template_menu.configure(values=list(self.templates) or ['Choose a template'])
+        if self.template_menu.get() not in self.templates:self.template_menu.set('Choose a template')
+
+    def save_template(self,name=None):
+        from agency_templates import save_template
+        if name is None:name=ctk.CTkInputDialog(text='Template name',title='Save campaign template').get_input()
+        if name is None:return
+        try:
+            profile=self.current()
+            if not profile.get('project'):profile['project']='Template'
+            save_template(name,profile,self.package.get());self.refresh_templates()
+            self.dialog.status.set('Campaign template saved. Reuse it for a new campaign.')
+        except Exception as exc:self.dialog.status.set(str(exc))
+
+    def apply_template(self):
+        from agency_templates import instantiate_template
+        template=self.templates.get(self.template_menu.get())
+        if not template:self.dialog.status.set('Choose a saved campaign template first.');return
+        self.profile=instantiate_template(template,self.variables['project'].get().strip())
+        self.profile['package']=template['package'];self.load_profile_fields();self.menu.set('New project')
+        self.dialog.status.set('Template applied. Enter the campaign name, choose files, then save or export.')
+
+    def use_queue_recipe(self):
+        self._use_saved_settings=False
+        self.dialog.status.set('This campaign will use the current queue recipe. Save the project to keep it.')
+
+    def check_delivery(self,receipt=None):
+        from delivery_checks_ui import DeliveryChecksDialog
+        if receipt is None:receipt=self.last_receipt
+        if receipt is None:
+            name=filedialog.askopenfilename(parent=self.dialog,title='Check campaign delivery',filetypes=[('Campaign receipt','campaign-receipt.json')])
+            if not name:return
+            receipt=Path(name)
+        try:self.check_dialog=DeliveryChecksDialog(self.dialog,receipt)
+        except Exception as exc:self.dialog.status.set(str(exc))
 
     def save(self):
         from agency_projects import save_profile, load_profile
         try:
             path = save_profile(self.current())
             self.profile = load_profile(path)
+            self._use_saved_settings=True
             self.refresh()
+            self.menu.set(next(label for label,(_,profile) in self.labels.items() if profile['id']==self.profile['id']))
             self.dialog.status.set("Project and brand kit saved")
         except Exception as exc:
             self.dialog.status.set(str(exc))
@@ -203,13 +265,16 @@ class ProjectsPanel:
                 message=f"{result.details['exported']}/{result.details['total']} exported · {result.details['status']}\n{result.details['folder']}"
                 for failed in result.details['failures'][:8]:message+=f"\n{Path(failed['source']).name} · {failed['preset']}: {failed.get('error','Not started')}"
                 if result.details.get('package_error'):message+='\nZIP: '+result.details['package_error']
+                if result.details.get('delivery_check'):
+                    checks=result.details['delivery_check'];message+=f'\nFile checks: {checks["status"]} · {checks["errors"]} errors · {checks["warnings"]} warnings'
+                if result.details.get('check_error'):message+='\n'+result.details['check_error']
                 self.report.configure(text=message)
             self.dialog._bridge.post(show)
             if not result.ok:
                 if result.details['status']=='cancelled':
                     from studio_runtime import StudioCancelled
                     raise StudioCancelled()
-                raise RuntimeError('Some exports are unfinished. Completed files were kept; use Retry unfinished. See the report.')
+                raise RuntimeError(result.details.get('check_error') or 'Some exports are unfinished. Completed files were kept; use Retry unfinished. See the report.')
             return Path(result.details['folder'])
         self.dialog._run(work)
 

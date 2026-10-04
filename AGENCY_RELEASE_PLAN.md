@@ -57,6 +57,15 @@ into actual tools, not access restrictions. All teams retain the full catalog.
   portrait and story variants. Positions persist with the project and are tied
   to source and processing hashes. The full transformed image stays available
   until the final crop; source files remain unchanged.
+- Delivery checks run before campaign ZIP packaging for explicit presets. They
+  inspect required files/variants, hashes, dimensions, readable image/PDF/media
+  formats, configured size limits and likely social-image enlargement. Errors
+  block packaging; warnings remain visible for human review. Reports stay local
+  and out of client ZIPs. File readiness is separate from reviewer approval.
+- Named local campaign templates reuse brand settings, export sets, naming,
+  recipes, ZIP preferences and file-size limits. Each campaign has its own name,
+  identity, source selection, crop positions and receipts. Loaded recipes stay
+  fixed unless the user explicitly switches to the current queue recipe.
 
 Bundled LibreOffice provides offline layout rendering. Exact Microsoft Office
 pixel parity, font substitutions, animation playback and advanced workbook
@@ -72,7 +81,8 @@ original-application viewing. Marketing must describe these limits accurately.
 2. **Campaign export sets.** Save a client/campaign profile and produce named
    image/video/document deliverables with a single preset. Show exact outputs,
    preserve source files by default, and retry only failed outputs. The first
-   built-in sets and retry receipts are implemented; custom set editing,
+   built-in sets, reusable templates, delivery checks and retry receipts are
+   implemented; custom set editing,
    video sizing controls and campaign milestones remain.
 3. **Local review and handoff.** Package files and a review index with stable
    version IDs/checksums. Export/import review comments locally; approvals must

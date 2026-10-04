@@ -43,6 +43,8 @@ def validate_profile(profile):
         raise ValueError("Brand colors must be #RRGGBB hex values")
     if not isinstance(profile.get("settings", {}), dict):
         raise ValueError("Project settings must be an object")
+    from campaign_checks import delivery_rules
+    delivery_rules(profile)
     if profile.get("preset", "Web images") not in PRESETS:
         raise ValueError("Choose a supported delivery preset")
     if profile.get('export_set', 'Single preset') not in {'Single preset','Social image set','Web + social images','Mixed client handoff'}:

@@ -118,7 +118,21 @@ def run_campaign(profile, sources, output_dir, package=True, cancel_check=None, 
     receipt['status'] = 'cancelled' if cancelled else 'completed' if all(j['status']=='completed' for j in receipt['jobs']) else 'partial'
     _write(receipt_path, receipt)
     outputs = [folder/j['relative_output'] for j in receipt['jobs'] if j['status']=='completed']
-    if receipt['status']=='completed' and package and not receipt.get('archive'):
+    from campaign_checks import check_delivery,save_check_report
+    report_path=folder/'delivery-checks.json'
+    check_report=None
+    receipt.pop('check_error',None)
+    receipt.pop('delivery_check',None)
+    if not cancelled:
+        try:
+            check_report=check_delivery(receipt_path,cancel_check=cancel_check,progress=progress)
+            save_check_report(check_report,report_path)
+            receipt['delivery_check']={key:check_report[key] for key in ('status','errors','warnings','checked')}
+            if check_report['errors']:receipt['check_error']='Delivery checks need attention. Open Check delivery for details.'
+        except StudioCancelled:receipt['status']='cancelled'
+        except Exception as exc:receipt['check_error']='Delivery checks could not finish: '+str(exc)
+        _write(receipt_path,receipt)
+    if receipt['status']=='completed' and not receipt.get('check_error') and package and not receipt.get('archive'):
         try:
             index_path=folder/'delivery-index.json'
             _write(index_path, {'client':profile.get('client',''),'project':profile['project'],
@@ -139,8 +153,10 @@ def run_campaign(profile, sources, output_dir, package=True, cancel_check=None, 
         except StudioCancelled:receipt['status']='cancelled';_write(receipt_path, receipt)
         except Exception as exc:receipt['package_error']=str(exc);_write(receipt_path, receipt)
     elif receipt.get('archive'):outputs.append(folder/receipt['archive'])
+    if check_report is not None:outputs.append(report_path)
     outputs.append(receipt_path)
     failures = [j for j in receipt['jobs'] if j['status']!='completed']
-    ok = receipt['status']=='completed' and (not package or bool(receipt.get('archive')))
+    ok = receipt['status']=='completed' and not receipt.get('check_error') and (not package or bool(receipt.get('archive')))
     return StudioResult(outputs, {'receipt':str(receipt_path),'folder':str(folder),'exported':len(receipt['jobs'])-len(failures),
-                                 'total':len(receipt['jobs']),'status':receipt['status'],'failures':failures,'package_error':receipt.get('package_error','')},ok)
+                                 'total':len(receipt['jobs']),'status':receipt['status'],'failures':failures,'package_error':receipt.get('package_error',''),
+                                 'check_error':receipt.get('check_error',''),'delivery_check':receipt.get('delivery_check'), 'check_report':str(report_path) if check_report is not None else ''},ok)
