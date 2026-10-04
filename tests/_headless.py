@@ -10,6 +10,7 @@ never touch the real app data.
 from __future__ import annotations
 
 import faulthandler
+import gc
 import os
 from pathlib import Path
 import sys
@@ -18,6 +19,14 @@ import atexit
 from tkinter import filedialog, messagebox
 
 import unittest
+
+# Tk objects must be finalized on the thread that created their interpreter.
+# A suite mixes destroyed windows with audio/export workers; automatic cyclic
+# collection can run inside a worker while it holds unittest.mock's lock. A Tk
+# finalizer then waits for the GUI thread, which can itself be waiting for that
+# same mock lock. Collect between tests on the GUI thread instead. This affects
+# only the test process, not application garbage collection.
+gc.disable()
 
 # Watchdog: if one test is still running after this long, something is blocked
 # (a Tk call that never returns, a modal we failed to stub). Dump every thread's
@@ -34,8 +43,10 @@ if not getattr(unittest.TestCase, "_shadow_watchdog", False):
     def _watched_run(self, result=None):
         faulthandler.dump_traceback_later(_WATCHDOG_SECONDS, exit=True, file=sys.stderr)
         try:
+            gc.collect()
             return _original_run(self, result)
         finally:
+            gc.collect()
             faulthandler.dump_traceback_later(_WATCHDOG_SECONDS * 2, exit=True, file=sys.stderr)
 
     unittest.TestCase.run = _watched_run
