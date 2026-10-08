@@ -112,9 +112,14 @@ def run_engine(args: list[str], timeout: float = 180,
     """Drain output to disk, cap diagnostics, and terminate the owned process tree."""
     check_cancel(cancel_check)
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    environment = os.environ.copy()
+    if sys.platform == "darwin":
+        # LibreOffice embeds Python. Its bytecode cache must not be written
+        # into the sealed Python framework inside its application bundle.
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
     with tempfile.TemporaryFile() as log:
         process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT,
-                                   creationflags=flags, start_new_session=sys.platform != "win32")
+                                   creationflags=flags, start_new_session=sys.platform != "win32", env=environment)
         started = time.monotonic()
         try:
             while process.poll() is None:

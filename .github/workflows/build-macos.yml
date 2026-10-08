@@ -20,6 +20,8 @@ jobs:
           - runner: macos-15-intel  # Intel (x86_64); macos-13 was retired and never gets a runner
             arch_label: intel
     runs-on: ${{ matrix.runner }}
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     # A healthy build takes 2-5 minutes. Without this, a hung step (e.g. a test
     # blocked on a modal dialog) runs to GitHub's 6-hour default.
     timeout-minutes: 90
@@ -69,6 +71,7 @@ jobs:
           mkdir -p dist/Shadow.app/Contents/Frameworks/vendor/libreoffice
           cp -R vendor/libreoffice/LibreOffice.app dist/Shadow.app/Contents/Frameworks/vendor/libreoffice/LibreOffice.app
           codesign --force --deep -s - dist/Shadow.app
+          codesign --verify --deep --strict --verbose=4 dist/Shadow.app
 
       - name: Packaged runtime regression
         timeout-minutes: 8
@@ -87,7 +90,7 @@ jobs:
       - name: Verify optional downloads and unchanged app signature
         run: |
           dist/Shadow.app/Contents/MacOS/Shadow --run-hook-script "$PWD/verify_macos_model_download.py"
-          codesign --verify --deep --strict dist/Shadow.app
+          codesign --verify --deep --strict --verbose=4 dist/Shadow.app
 
       - name: Upload verification reports
         if: always()

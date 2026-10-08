@@ -2,11 +2,19 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import studio_runtime
 
 
 class MacModelStorageTests(unittest.TestCase):
+    def test_mac_engine_disables_bundle_bytecode_writes_without_changing_parent(self):
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        with patch.dict(os.environ, {}, clear=True), patch.object(studio_runtime.sys, "platform", "darwin"), patch.object(studio_runtime.subprocess, "Popen", return_value=process) as launch:
+            studio_runtime.run_engine(["office-engine"])
+            self.assertEqual(launch.call_args.kwargs["env"]["PYTHONDONTWRITEBYTECODE"], "1")
+            self.assertNotIn("PYTHONDONTWRITEBYTECODE", os.environ)
+
     def test_signed_bundle_models_seed_writable_user_storage_without_overwriting(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
