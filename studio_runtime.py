@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 from typing import Callable
 
 
@@ -19,8 +20,39 @@ def resource_root() -> Path:
     return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 
 
+_model_seed_lock = threading.Lock()
+
+
 def model_directory() -> Path:
-    return Path(os.environ.get("SHADOW_MODEL_DIR") or resource_root() / "vendor" / "models")
+    override = os.environ.get("SHADOW_MODEL_DIR")
+    if override:
+        return Path(override)
+    bundled = resource_root() / "vendor" / "models"
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return bundled
+    # Downloaded weights must not change a signed or read-only .app bundle.
+    directory = Path.home() / "Library" / "Application Support" / "Shadow" / "models"
+    marker = directory / ".bundled-defaults-ready"
+    with _model_seed_lock:
+        if not marker.is_file():
+            directory.mkdir(parents=True, exist_ok=True)
+            if bundled.is_dir():
+                for source in bundled.rglob("*"):
+                    if not source.is_file():
+                        continue
+                    target = directory / source.relative_to(bundled)
+                    if target.exists():
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".shadow-seed-", delete=False) as stream:
+                        temporary = Path(stream.name)
+                    try:
+                        shutil.copy2(source, temporary)
+                        temporary.replace(target)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+            marker.touch()
+    return directory
 
 
 def find_libreoffice() -> str | None:

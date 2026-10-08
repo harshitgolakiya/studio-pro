@@ -1,4 +1,4 @@
-name: Build macOS App
+name: Build macOS Sharing App
 
 # Manual runs any time, plus automatic runs when a version tag is pushed
 # (e.g. `git tag v2.0.0 && git push --tags`) so tagged releases always have
@@ -50,18 +50,17 @@ jobs:
           cp "$(command -v gs)" vendor/ghostscript/bin/gs
           ditto "$(brew --prefix ghostscript)/share/ghostscript" vendor/ghostscript/share/ghostscript
 
-      - name: Stage speech and translation assets
+      - name: Stage default offline assets
         run: |
-          python setup_studio_models.py
-          python -c "from model_catalog import find_entry,install; install(find_entry('whisper-base')); install(find_entry('translate-es-en'))"
+          python setup_share_models.py
 
       - name: Source runtime regression
-        run: python -c "from pathlib import Path; from studio_smoke import run; raise SystemExit(run(Path('studio-verification/source-smoke.json')))"
+        run: python verify_share_smoke.py --report studio-verification/source-smoke.json
 
       - name: Run automated tests
         timeout-minutes: 25
         env:
-          SHADOW_TEST_FULL_STUDIO: "1"
+          SHADOW_TEST_FULL_STUDIO: "0"
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
       - name: Build Shadow.app with PyInstaller
@@ -76,7 +75,7 @@ jobs:
         run: |
           export SHADOW_LIBREOFFICE="$PWD/dist/Shadow.app/Contents/Frameworks/vendor/libreoffice/LibreOffice.app/Contents/MacOS/soffice"
           export SHADOW_SMOKE_TRACE=1
-          dist/Shadow.app/Contents/MacOS/Shadow --studio-smoke-report "$PWD/studio-verification/packaged-smoke.json" &
+          python verify_share_smoke.py --executable "$PWD/dist/Shadow.app/Contents/MacOS/Shadow" --report "$PWD/studio-verification/packaged-smoke.json" &
           task_smoke_pid=$!
           while kill -0 "$task_smoke_pid" 2>/dev/null; do
             if [[ -f studio-verification/packaged-smoke.json ]]; then cat studio-verification/packaged-smoke.json; fi
@@ -84,6 +83,11 @@ jobs:
             sleep 15
           done
           wait "$task_smoke_pid"
+
+      - name: Verify optional downloads and unchanged app signature
+        run: |
+          dist/Shadow.app/Contents/MacOS/Shadow --run-hook-script "$PWD/verify_macos_model_download.py"
+          codesign --verify --deep --strict dist/Shadow.app
 
       - name: Upload verification reports
         if: always()
@@ -124,7 +128,8 @@ jobs:
           hdiutil create -volname "Shadow Media Studio Pro" \
             -srcfolder dmg_staging \
             -ov -format UDZO \
-            "installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg"
+            "installer/Shadow-Setup-${{ matrix.arch_label }}.dmg"
+          shasum -a 256 "installer/Shadow-Setup-${{ matrix.arch_label }}.dmg" > "installer/Shadow-Setup-${{ matrix.arch_label }}.dmg.sha256"
 
       - name: Sign, Notarize, and Staple DMG
         env:
@@ -133,16 +138,17 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          ./sign_macos.sh "dist/Shadow.app" "installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg" "entitlements.plist"
+          ./sign_macos.sh "dist/Shadow.app" "installer/Shadow-Setup-${{ matrix.arch_label }}.dmg" "entitlements.plist"
+          shasum -a 256 "installer/Shadow-Setup-${{ matrix.arch_label }}.dmg" > "installer/Shadow-Setup-${{ matrix.arch_label }}.dmg.sha256"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Shadow-macOS-${{ matrix.arch_label }}
-          path: installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg
+          name: Shadow-macOS-sharing-${{ matrix.arch_label }}
+          path: installer/Shadow-Setup-${{ matrix.arch_label }}.dmg*
 
       - name: Attach DMG to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: installer/Shadow-Media-Studio-Setup-${{ matrix.arch_label }}.dmg
+          files: installer/Shadow-Setup-${{ matrix.arch_label }}.dmg*

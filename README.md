@@ -234,6 +234,15 @@ powershell -ExecutionPolicy Bypass -File .\build_release.ps1
 
 ## 🍎 macOS Build
 
+The sharing workflow produces one `Shadow-Setup-apple-silicon.dmg` or
+`Shadow-Setup-intel.dmg` per Mac architecture. It includes default speech/OCR
+assets; extra OCR scripts, translation pairs, and larger transcription models
+download through **Models** without an API key. A packaged Mac app seeds its
+default models into `~/Library/Application Support/Shadow/models` on first use,
+so downloads do not modify its signed app bundle. Open the DMG and drag
+`Shadow.app` to Applications. Apple signing/notarization uses the existing
+repository secrets when configured; otherwise the package is ad-hoc signed.
+
 Shadow also runs on macOS, but **PyInstaller cannot cross-compile** -- a
 `.app`/`.dmg` has to be built while actually running on macOS. Two ways to
 get one:
